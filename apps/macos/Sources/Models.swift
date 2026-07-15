@@ -94,7 +94,7 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
     static func make(_ kind: EffectKind, inputNodeID: UUID? = nil) -> EffectNode {
         switch kind {
         case .spaceTimeTranspose:
-            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 0, 0, 0])
+            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 1, 0, 0])
         case .lumaTimeShift:
             return .init(kind: kind, inputNodeID: inputNodeID, values: [20, 0, 0, 0], options: [0, 0, 0, 0])
         case .radialChronoFunnel:
@@ -141,7 +141,6 @@ struct RenderQueueItem: Identifiable, Sendable {
     let id: UUID
     let source: DecodedProxy
     let effects: [EffectNode]
-    let quality: RenderQuality
     let audioMode: AudioMode
     let destinationURL: URL
     var status: RenderQueueStatus
@@ -149,14 +148,12 @@ struct RenderQueueItem: Identifiable, Sendable {
     init(
         source: DecodedProxy,
         effects: [EffectNode],
-        quality: RenderQuality,
         audioMode: AudioMode,
         destinationURL: URL
     ) {
         id = UUID()
         self.source = source
         self.effects = effects
-        self.quality = quality
         self.audioMode = audioMode
         self.destinationURL = destinationURL
         status = .waiting
@@ -169,6 +166,15 @@ enum RenderQuality: String, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
     var title: String { self == .proxy ? "Proxy" : "Full quality" }
+}
+
+enum ProxyQuality: String, CaseIterable, Identifiable, Codable, Sendable {
+    case standard
+    case high
+
+    var id: String { rawValue }
+    var title: String { self == .standard ? "Standard" : "High" }
+    var detail: String { self == .standard ? "Up to 320 × 180 · 10 fps" : "Up to 480 × 270 · 15 fps" }
 }
 
 enum AudioMode: String, CaseIterable, Identifiable, Codable, Sendable {

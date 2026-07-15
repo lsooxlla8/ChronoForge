@@ -110,6 +110,21 @@ void test_fft_swap() {
         input,
         {chronoforge::SpectralSwapAxis::XTime, false, 1024 * 1024, chronoforge::SpectralResolution::FitSourceTensor});
     require(fitted.shape() == input.shape(), "Fitted FFT preserves the complete input tensor shape");
+
+    const auto zero_rotation = chronoforge::spectral_fft_swap(
+        input,
+        {chronoforge::SpectralSwapAxis::XTime, false, 1024 * 1024,
+         chronoforge::SpectralResolution::FitSourceTensor, chronoforge::SpectralTransform::Rotate, 0.0F});
+    require(zero_rotation.shape() == input.shape(), "Zero-degree spectral rotation preserves shape");
+    for (std::size_t i = 0; i < input.values().size(); ++i) {
+        require_near(zero_rotation.values()[i], input.values()[i], "Zero-degree spectral rotation is identity");
+    }
+    const auto rotated = chronoforge::spectral_fft_swap(
+        input,
+        {chronoforge::SpectralSwapAxis::XTime, false, 1024 * 1024,
+         chronoforge::SpectralResolution::FitSourceTensor, chronoforge::SpectralTransform::Rotate, 27.0F});
+    require(rotated.shape() == input.shape(), "Angled spectral rotation keeps the source tensor shape");
+    require(rotated.values() != input.values(), "Angled spectral rotation changes frequency geometry");
 }
 
 void test_cache_and_graph() {
@@ -244,6 +259,26 @@ void test_file_backed_effect_chain() {
     const auto fft_output = chronoforge::MappedTensor::open(fft_path, fft_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
     for (std::size_t i = 0; i < fft_expected.values().size(); ++i) {
         require_near(fft_output.data()[i], fft_expected.values()[i], "Out-of-core FFT matches the in-memory reference with a tiny RAM budget");
+    }
+
+    const auto fft_rotate_path = root / "fft-rotate.raw";
+    const std::vector<chronoforge::EffectSpec> fft_rotate_effects{
+        {chronoforge::EffectOperation::SpectralFftSwap, {0, 0, 0, 0}, {0, 0, 1, 1}},
+    };
+    const auto fft_rotate_result = chronoforge::render_file_effect_chain(
+        input_path,
+        fft_rotate_path,
+        root / "fft-rotate-scratch",
+        input.shape(),
+        input.metadata(),
+        fft_rotate_effects,
+        1024,
+        {});
+    require(fft_rotate_result.shape == input.shape(), "Out-of-core spectral rotation keeps the source shape");
+    const auto fft_rotate_output = chronoforge::MappedTensor::open(
+        fft_rotate_path, fft_rotate_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
+    for (std::size_t i = 0; i < input.values().size(); ++i) {
+        require_near(fft_rotate_output.data()[i], input.values()[i], "Zero-degree out-of-core spectral rotation is identity");
     }
 
     bool cancelled = false;

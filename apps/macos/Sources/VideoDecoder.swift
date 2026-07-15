@@ -30,11 +30,11 @@ enum VideoDecoderError: LocalizedError {
 }
 
 enum VideoDecoder {
-    private static let maximumProxyFrames = 180
-    private static let maximumWidth = 320
-    private static let maximumHeight = 180
-
-    static func decodeProxy(from url: URL) async throws -> DecodedProxy {
+    static func decodeProxy(from url: URL, quality: ProxyQuality = .standard) async throws -> DecodedProxy {
+        let maximumProxyFrames = 180
+        let maximumWidth = quality == .standard ? 320 : 480
+        let maximumHeight = quality == .standard ? 180 : 270
+        let maximumFPS = quality == .standard ? 10.0 : 15.0
         let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw VideoDecoderError.noVideoTrack
@@ -47,8 +47,8 @@ enum VideoDecoder {
         let sourceSize = displayBounds.size
         let nominalFPS = max(1.0, Double(try await track.load(.nominalFrameRate)))
         let estimatedFrameCount = max(1, Int((duration * nominalFPS).rounded()))
-        let targetSize = proxySize(for: sourceSize)
-        let proxyFPS = min(10.0, max(0.1, Double(maximumProxyFrames) / duration))
+        let targetSize = proxySize(for: sourceSize, maximumWidth: maximumWidth, maximumHeight: maximumHeight)
+        let proxyFPS = min(maximumFPS, max(0.1, Double(maximumProxyFrames) / duration))
 
         let reader = try AVAssetReader(asset: asset)
         let settings: [String: Any] = [
@@ -138,7 +138,7 @@ enum VideoDecoder {
         return count
     }
 
-    private static func proxySize(for source: CGSize) -> CGSize {
+    private static func proxySize(for source: CGSize, maximumWidth: Int, maximumHeight: Int) -> CGSize {
         guard source.width > 0, source.height > 0 else {
             return CGSize(width: maximumWidth, height: maximumHeight)
         }

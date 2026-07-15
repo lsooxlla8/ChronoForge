@@ -155,6 +155,52 @@ void parallel_for(std::size_t count, const LocalProgress& progress, Function&& f
     throw std::invalid_argument("Invalid edge behavior");
 }
 
+[[nodiscard]] float resolve_fractional(float coordinate, std::size_t count, EdgeBehavior behavior) {
+    if (count <= 1) return 0.0F;
+    const auto maximum = static_cast<float>(count - 1);
+    switch (behavior) {
+        case EdgeBehavior::Clamp: return std::clamp(coordinate, 0.0F, maximum);
+        case EdgeBehavior::Wrap: {
+            coordinate = std::fmod(coordinate, static_cast<float>(count));
+            return coordinate < 0.0F ? coordinate + static_cast<float>(count) : coordinate;
+        }
+        case EdgeBehavior::Mirror: {
+            const auto period = 2.0F * maximum;
+            coordinate = std::fmod(coordinate, period);
+            if (coordinate < 0.0F) coordinate += period;
+            return coordinate > maximum ? period - coordinate : coordinate;
+        }
+    }
+    return 0.0F;
+}
+
+[[nodiscard]] float sample_mapped(
+    const MappedTensor& input,
+    float t,
+    float y,
+    float x,
+    std::size_t channel,
+    EdgeBehavior edge) {
+    const auto& shape = input.shape();
+    t = resolve_fractional(t, shape.t, edge);
+    y = resolve_fractional(y, shape.h, edge);
+    x = resolve_fractional(x, shape.w, edge);
+    const auto t0 = static_cast<std::size_t>(std::floor(t));
+    const auto y0 = static_cast<std::size_t>(std::floor(y));
+    const auto x0 = static_cast<std::size_t>(std::floor(x));
+    const auto t1 = resolve_time(static_cast<std::ptrdiff_t>(t0 + 1), shape.t, edge);
+    const auto y1 = resolve_time(static_cast<std::ptrdiff_t>(y0 + 1), shape.h, edge);
+    const auto x1 = resolve_time(static_cast<std::ptrdiff_t>(x0 + 1), shape.w, edge);
+    const auto ft = t - static_cast<float>(t0);
+    const auto fy = y - static_cast<float>(y0);
+    const auto fx = x - static_cast<float>(x0);
+    const auto c00 = read(input, t0, y0, x0, channel) + (read(input, t0, y0, x1, channel) - read(input, t0, y0, x0, channel)) * fx;
+    const auto c01 = read(input, t0, y1, x0, channel) + (read(input, t0, y1, x1, channel) - read(input, t0, y1, x0, channel)) * fx;
+    const auto c10 = read(input, t1, y0, x0, channel) + (read(input, t1, y0, x1, channel) - read(input, t1, y0, x0, channel)) * fx;
+    const auto c11 = read(input, t1, y1, x0, channel) + (read(input, t1, y1, x1, channel) - read(input, t1, y1, x0, channel)) * fx;
+    return (c00 + (c01 - c00) * fy) + ((c10 + (c11 - c10) * fy) - (c00 + (c01 - c00) * fy)) * ft;
+}
+
 [[nodiscard]] float sort_key(
     const MappedTensor& input,
     std::size_t t,
@@ -220,6 +266,10 @@ void report(const FileRenderProgress& progress, double fraction, std::string_vie
         case EffectOperation::SpectralFftSwap:
             require_option(effect.options[0], 2, "FFT axis");
             require_option(effect.options[2], 1, "FFT resolution");
+            require_option(effect.options[3], 1, "FFT transform");
+            if (effect.options[3] == 1) {
+                return input;
+            }
             if (effect.options[2] == 1) {
                 return input;
             }
@@ -306,29 +356,43 @@ void radial(const MappedTensor& input, MappedTensor& output, const EffectSpec& e
                 const auto dy = (static_cast<float>(y) - center_y) / height;
                 const auto radius = std::sqrt(dx * dx + dy * dy);
                 const auto turns = std::atan2(dy, dx) / (2.0F * std::numbers::pi_v<float>);
+                const auto tau = 2.0F * std::numbers::pi_v<float>;
+                const auto warp_gain = std::clamp(std::abs(effect.values[2]) * 5.0F, 0.0F, 1.25F);
                 float weave{};
+                float source_radius = radius;
+                float source_turns = turns;
                 switch (topology) {
-                    case RadialTopology::TimeLoom:
-                        weave = radius + effect.values[3] * turns +
-                                0.25F * std::sin(2.0F * std::numbers::pi_v<float> * (4.0F * radius - 2.0F * turns + 2.0F * phase));
-                        break;
-                    case RadialTopology::KaleidoFold: {
-                        const auto folded = 2.0F * std::abs(std::fmod(turns * 6.0F + 100.5F, 1.0F) - 0.5F);
-                        weave = radius + effect.values[3] * folded +
-                                0.2F * std::sin(2.0F * std::numbers::pi_v<float> * (8.0F * radius + phase));
+                    case RadialTopology::TimeLoom: {
+                        const auto strand_a = std::sin(tau * (3.0F * turns + 2.0F * radius - 2.0F * phase));
+                        const auto strand_b = std::cos(tau * (5.0F * radius - turns + 3.0F * phase));
+                        source_turns += effect.values[3] * (0.055F + 0.10F * radius) * strand_a + 0.045F * warp_gain * strand_b;
+                        source_radius = std::max(0.0F, radius * (1.0F + 0.22F * warp_gain * strand_b) + 0.035F * warp_gain * strand_a);
+                        weave = radius + effect.values[3] * turns + 0.34F * strand_a + 0.18F * strand_b;
                         break;
                     }
-                    case RadialTopology::EventHorizon:
-                        weave = std::clamp(0.15F * (1.0F / (radius + 0.08F) - 1.0F / 1.08F), -3.0F, 3.0F) +
-                                effect.values[3] *
-                                    std::sin(12.0F * std::numbers::pi_v<float> * turns + 2.0F * std::numbers::pi_v<float> * phase) *
-                                    std::exp(-2.0F * radius);
+                    case RadialTopology::KaleidoFold: {
+                        const auto segment = std::fmod(turns * 7.0F + 1000.0F, 1.0F);
+                        const auto folded = std::abs(segment - 0.5F) * 2.0F;
+                        source_turns = (std::floor(turns * 7.0F) + folded + 0.18F * std::sin(tau * (phase + radius))) / 7.0F;
+                        source_radius = std::max(0.0F, radius + 0.08F * warp_gain * std::sin(tau * (14.0F * turns - 2.0F * phase)));
+                        weave = 1.4F * folded + radius + effect.values[3] * std::sin(tau * (7.0F * turns + phase));
                         break;
+                    }
+                    case RadialTopology::EventHorizon: {
+                        const auto gravity = std::exp(-4.0F * radius);
+                        source_turns += (0.12F + 0.18F * effect.values[3]) * gravity / (radius + 0.045F) + 0.08F * phase;
+                        source_radius = std::max(0.0F, radius + warp_gain * gravity * (0.11F * std::sin(tau * (phase * 3.0F - radius * 6.0F)) - 0.07F));
+                        weave = std::clamp(0.18F / (radius + 0.045F), 0.0F, 3.5F) +
+                                effect.values[3] * std::sin(tau * (6.0F * turns + 2.0F * phase)) * gravity;
+                        break;
+                    }
                 }
-                const auto amount = static_cast<std::ptrdiff_t>(std::lround(effect.values[2] * static_cast<float>(s.t) * weave));
-                const auto source_t = resolve_time(static_cast<std::ptrdiff_t>(t) + amount, s.t, edge);
+                const auto source_angle = tau * source_turns;
+                const auto source_x = center_x + std::cos(source_angle) * source_radius * width;
+                const auto source_y = center_y + std::sin(source_angle) * source_radius * height;
+                const auto source_t = static_cast<float>(t) + effect.values[2] * static_cast<float>(s.t) * weave;
                 for (std::size_t c = 0; c < s.c; ++c) {
-                    destination[linear(t, y, x, c, s)] = read(input, source_t, y, x, c);
+                    destination[linear(t, y, x, c, s)] = sample_mapped(input, source_t, source_y, source_x, c, edge);
                 }
             }
         }
@@ -693,6 +757,84 @@ void transpose_disk_spectrum(
     });
 }
 
+[[nodiscard]] float wrap_float(float value, std::size_t extent) {
+    value = std::fmod(value, static_cast<float>(extent));
+    return value < 0.0F ? value + static_cast<float>(extent) : value;
+}
+
+[[nodiscard]] Complex sample_complex_periodic(
+    const MappedTensor& input,
+    const TensorShape& shape,
+    float t,
+    float y,
+    float x,
+    std::size_t channel) {
+    t = wrap_float(t, shape.t);
+    y = wrap_float(y, shape.h);
+    x = wrap_float(x, shape.w);
+    const auto t0 = static_cast<std::size_t>(std::floor(t));
+    const auto y0 = static_cast<std::size_t>(std::floor(y));
+    const auto x0 = static_cast<std::size_t>(std::floor(x));
+    const auto t1 = (t0 + 1) % shape.t;
+    const auto y1 = (y0 + 1) % shape.h;
+    const auto x1 = (x0 + 1) % shape.w;
+    const auto ft = t - static_cast<float>(t0);
+    const auto fy = y - static_cast<float>(y0);
+    const auto fx = x - static_cast<float>(x0);
+    const auto value = [&](std::size_t st, std::size_t sy, std::size_t sx) {
+        return read_complex(input, shape, st, sy, sx, channel);
+    };
+    const auto c00 = value(t0, y0, x0) + (value(t0, y0, x1) - value(t0, y0, x0)) * fx;
+    const auto c01 = value(t0, y1, x0) + (value(t0, y1, x1) - value(t0, y1, x0)) * fx;
+    const auto c10 = value(t1, y0, x0) + (value(t1, y0, x1) - value(t1, y0, x0)) * fx;
+    const auto c11 = value(t1, y1, x0) + (value(t1, y1, x1) - value(t1, y1, x0)) * fx;
+    return (c00 + (c01 - c00) * fy) + ((c10 + (c11 - c10) * fy) - (c00 + (c01 - c00) * fy)) * ft;
+}
+
+void rotate_disk_spectrum(
+    const MappedTensor& input,
+    const TensorShape& shape,
+    MappedTensor& output,
+    SpectralSwapAxis plane,
+    float angle_degrees,
+    const LocalProgress& progress) {
+    const auto radians = -angle_degrees * std::numbers::pi_v<float> / 180.0F;
+    const auto cosine = std::cos(radians);
+    const auto sine = std::sin(radians);
+    const auto frequency = [](std::size_t index, std::size_t extent) {
+        const auto signed_index = index <= extent / 2
+                                      ? static_cast<float>(index)
+                                      : static_cast<float>(static_cast<std::ptrdiff_t>(index) - static_cast<std::ptrdiff_t>(extent));
+        return signed_index / static_cast<float>(extent);
+    };
+    const auto coordinate = [](float normalized, std::size_t extent) {
+        return wrap_float(normalized * static_cast<float>(extent), extent);
+    };
+    parallel_for(shape.t, progress, [&](std::size_t t) {
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                auto source_t = frequency(t, shape.t);
+                auto source_y = frequency(y, shape.h);
+                auto source_x = frequency(x, shape.w);
+                auto rotate_pair = [&](float& first, float& second) {
+                    const auto original_first = first;
+                    first = cosine * first - sine * second;
+                    second = sine * original_first + cosine * second;
+                };
+                switch (plane) {
+                    case SpectralSwapAxis::XTime: rotate_pair(source_x, source_t); break;
+                    case SpectralSwapAxis::YTime: rotate_pair(source_y, source_t); break;
+                    case SpectralSwapAxis::AllAxes: rotate_pair(source_x, source_y); break;
+                }
+                for (std::size_t c = 0; c < shape.c; ++c) {
+                    write_complex(output, shape, t, y, x, c, sample_complex_periodic(
+                        input, shape, coordinate(source_t, shape.t), coordinate(source_y, shape.h), coordinate(source_x, shape.w), c));
+                }
+            }
+        }
+    });
+}
+
 [[nodiscard]] float scaled_coordinate(std::size_t value, std::size_t destination_extent, std::size_t source_extent) {
     return destination_extent <= 1 || source_extent <= 1
                ? 0.0F
@@ -736,8 +878,10 @@ void spectral(
     static_cast<void>(metadata);
     require_option(effect.options[0], 2, "FFT axis");
     require_option(effect.options[2], 1, "FFT resolution");
+    require_option(effect.options[3], 1, "FFT transform");
     const auto axis = static_cast<SpectralSwapAxis>(effect.options[0]);
-    const auto native_shape = native_spectral_shape(input.shape(), axis);
+    const auto transform = static_cast<SpectralTransform>(effect.options[3]);
+    const auto native_shape = transform == SpectralTransform::Rotate ? input.shape() : native_spectral_shape(input.shape(), axis);
     const TensorShape input_complex_shape{input.shape().t, input.shape().h, input.shape().w, input.shape().c * 2};
     const TensorShape output_complex_shape{native_shape.t, native_shape.h, native_shape.w, native_shape.c * 2};
     const auto first_path = output.path().string() + ".fft-forward";
@@ -769,13 +913,15 @@ void spectral(
             forward.sync();
             {
                 auto inverse = MappedTensor::create(second_path, output_complex_shape);
-                transpose_disk_spectrum(
-                    forward,
-                    input.shape(),
-                    inverse,
-                    native_shape,
-                    axis,
-                    [&](double value) { progress(0.35 + value * 0.15); });
+                if (transform == SpectralTransform::Rotate) {
+                    rotate_disk_spectrum(
+                        forward, input.shape(), inverse, axis, effect.values[0],
+                        [&](double value) { progress(0.35 + value * 0.15); });
+                } else {
+                    transpose_disk_spectrum(
+                        forward, input.shape(), inverse, native_shape, axis,
+                        [&](double value) { progress(0.35 + value * 0.15); });
+                }
                 inverse.sync();
                 transform_disk_axis(inverse, native_shape, DiskFftAxis::Width, true, budget, [&](double value) { progress(0.50 + value * 0.10); });
                 transform_disk_axis(inverse, native_shape, DiskFftAxis::Height, true, budget, [&](double value) { progress(0.60 + value * 0.10); });
