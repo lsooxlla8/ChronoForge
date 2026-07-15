@@ -3,6 +3,7 @@ import CoreVideo
 import Foundation
 
 struct DecodedProxy: Sendable {
+    var id = UUID()
     var tensor: VideoTensorData
     var displayName: String
     var sourceURL: URL

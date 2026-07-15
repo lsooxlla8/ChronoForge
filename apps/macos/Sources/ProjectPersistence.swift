@@ -6,11 +6,13 @@ extension UTType {
 }
 
 struct SavedChronoForgeProject: Codable, Sendable {
-    static let currentVersion = 3
+    static let currentVersion = 4
 
     var version: Int
     var sourceBookmark: Data?
     var sourcePath: String
+    var media: [SavedMediaReference]?
+    var primaryMediaID: UUID?
     var effects: [EffectNode]
     var outputNodeID: UUID?
     var quality: String
@@ -22,6 +24,7 @@ struct SavedChronoForgeProject: Codable, Sendable {
 
     init(
         source: DecodedProxy,
+        mediaPool: [DecodedProxy]? = nil,
         effects: [EffectNode],
         outputNodeID: UUID? = nil,
         quality: RenderQuality = .full,
@@ -33,6 +36,9 @@ struct SavedChronoForgeProject: Codable, Sendable {
         version = Self.currentVersion
         sourceBookmark = source.securityScopedBookmark
         sourcePath = source.sourceURL.path
+        let allMedia = mediaPool ?? [source]
+        media = allMedia.map(SavedMediaReference.init)
+        primaryMediaID = source.id
         self.effects = effects
         self.outputNodeID = outputNodeID
         self.quality = quality.rawValue
@@ -58,6 +64,47 @@ struct SavedChronoForgeProject: Codable, Sendable {
         let fallback = URL(fileURLWithPath: sourcePath)
         guard FileManager.default.fileExists(atPath: fallback.path) else {
             throw CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: sourcePath])
+        }
+        return fallback
+    }
+
+
+    func mediaReferences() -> [SavedMediaReference] {
+        if let media, !media.isEmpty { return media }
+        return [SavedMediaReference(id: primaryMediaID ?? UUID(), bookmark: sourceBookmark, path: sourcePath)]
+    }
+}
+
+struct SavedMediaReference: Codable, Sendable {
+    var id: UUID
+    var bookmark: Data?
+    var path: String
+
+    init(_ media: DecodedProxy) {
+        id = media.id
+        bookmark = media.securityScopedBookmark
+        path = media.sourceURL.path
+    }
+
+    init(id: UUID, bookmark: Data?, path: String) {
+        self.id = id
+        self.bookmark = bookmark
+        self.path = path
+    }
+
+    func url() throws -> URL {
+        if let bookmark {
+            var stale = false
+            if let url = try? URL(
+                resolvingBookmarkData: bookmark,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &stale
+            ) { return url }
+        }
+        let fallback = URL(fileURLWithPath: path)
+        guard FileManager.default.fileExists(atPath: fallback.path) else {
+            throw CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: path])
         }
         return fallback
     }

@@ -4,11 +4,13 @@ import ChronoForgeCoreBridge
 enum CoreRendererError: LocalizedError {
     case renderFailed(String)
     case invalidOutput
+    case missingDriver
 
     var errorDescription: String? {
         switch self {
         case .renderFailed(let message): message
         case .invalidOutput: "The processing core returned an invalid tensor."
+        case .missingDriver: "Choose a driver video for every two-input effect."
         }
     }
 }
@@ -19,8 +21,24 @@ enum CoreRenderer {
     static func render(
         input: VideoTensorData,
         effects: [EffectNode],
+        drivers: [UUID: VideoTensorData] = [:],
         budget: UInt64 = defaultBudget
     ) async throws -> VideoTensorData {
+        if effects.contains(where: { $0.enabled && $0.kind.requiresDriver }) {
+            var current = input
+            for effect in effects where effect.enabled {
+                try Task.checkCancellation()
+                if effect.kind.requiresDriver {
+                    guard let id = effect.driverMediaID, let driver = drivers[id] else {
+                        throw CoreRendererError.missingDriver
+                    }
+                    current = try await renderCrossEffect(source: current, driver: driver, effect: effect, budget: budget)
+                } else {
+                    current = try await render(input: current, effects: [effect], budget: budget)
+                }
+            }
+            return current
+        }
         if effects.contains(where: { $0.enabled && $0.kind == .spectralFFTSwap }) {
             return try await renderDiskBacked(input: input, effects: effects, budget: budget)
         }
@@ -78,6 +96,56 @@ enum CoreRenderer {
                 channels: Int(cf_video_buffer_channels(output)),
                 framesPerSecond: input.framesPerSecond,
                 duration: Double(cf_video_buffer_frames(output)) / input.framesPerSecond
+            )
+        }.value
+    }
+
+    private static func renderCrossEffect(
+        source: VideoTensorData,
+        driver: VideoTensorData,
+        effect: EffectNode,
+        budget: UInt64
+    ) async throws -> VideoTensorData {
+        try await Task.detached(priority: .userInitiated) {
+            let descriptor = cf_effect_descriptor_make(
+                effect.kind.rawValue,
+                effect.values[0], effect.values[1], effect.values[2], effect.values[3],
+                effect.options[0], effect.options[1], effect.options[2], effect.options[3]
+            )
+            var output: OpaquePointer?
+            var error = [CChar](repeating: 0, count: 1024)
+            let errorCapacity = UInt64(error.count)
+            let status = source.values.withUnsafeBufferPointer { sourceBuffer in
+                driver.values.withUnsafeBufferPointer { driverBuffer in
+                    error.withUnsafeMutableBufferPointer { errorBuffer in
+                        cf_render_cross_tensor_effect(
+                            sourceBuffer.baseAddress,
+                            UInt64(source.frames), UInt64(source.height), UInt64(source.width), UInt64(source.channels),
+                            UInt32(max(1, Int((source.framesPerSecond * 1000).rounded()))), 1000,
+                            driverBuffer.baseAddress,
+                            UInt64(driver.frames), UInt64(driver.height), UInt64(driver.width), UInt64(driver.channels),
+                            descriptor, budget, &output, errorBuffer.baseAddress, errorCapacity
+                        )
+                    }
+                }
+            }
+            guard status == 0 else { throw CoreRendererError.renderFailed(String(cString: error)) }
+            guard let output else { throw CoreRendererError.invalidOutput }
+            defer { cf_video_buffer_destroy(output) }
+            let count = Int(cf_video_buffer_value_count(output))
+            guard let pointer = cf_video_buffer_values(output), count > 0 else { throw CoreRendererError.invalidOutput }
+            let frames = Int(cf_video_buffer_frames(output))
+            let outputFPS = effect.kind == .dimensionalSplicer && effect.options[2] == 5
+                ? driver.framesPerSecond
+                : source.framesPerSecond
+            return VideoTensorData(
+                values: Array(UnsafeBufferPointer(start: pointer, count: count)),
+                frames: frames,
+                height: Int(cf_video_buffer_height(output)),
+                width: Int(cf_video_buffer_width(output)),
+                channels: Int(cf_video_buffer_channels(output)),
+                framesPerSecond: outputFPS,
+                duration: Double(frames) / outputFPS
             )
         }.value
     }

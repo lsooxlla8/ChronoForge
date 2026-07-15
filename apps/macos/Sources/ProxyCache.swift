@@ -21,7 +21,12 @@ actor ProxyCache {
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     }
 
-    nonisolated static func key(source: URL, input: VideoTensorData, effects: [EffectNode]) -> String {
+    nonisolated static func key(source: URL, input: VideoTensorData, effects: [EffectNode], drivers: [URL] = []) -> String {
+        struct FileSignature: Encodable {
+            var path: String
+            var size: UInt64
+            var modified: TimeInterval
+        }
         struct Signature: Encodable {
             var sourcePath: String
             var sourceSize: UInt64
@@ -30,9 +35,17 @@ actor ProxyCache {
             var height: Int
             var width: Int
             var effects: [EffectNode]
+            var drivers: [FileSignature]
             var engineVersion: String
         }
         let attributes = try? FileManager.default.attributesOfItem(atPath: source.path)
+        let driverSignatures = drivers.map { url -> FileSignature in
+            let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+            return FileSignature(
+                path: url.standardizedFileURL.path,
+                size: (attributes?[.size] as? NSNumber)?.uint64Value ?? 0,
+                modified: (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)
+        }
         let signature = Signature(
             sourcePath: source.standardizedFileURL.path,
             sourceSize: (attributes?[.size] as? NSNumber)?.uint64Value ?? 0,
@@ -41,7 +54,8 @@ actor ProxyCache {
             height: input.height,
             width: input.width,
             effects: effects,
-            engineVersion: "0.6.0"
+            drivers: driverSignatures,
+            engineVersion: "0.7.0-fps1"
         )
         let data = (try? JSONEncoder().encode(signature)) ?? Data()
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()

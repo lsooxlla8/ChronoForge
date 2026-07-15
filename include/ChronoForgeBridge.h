@@ -28,6 +28,11 @@ typedef enum CFEffectKind {
     CF_EFFECT_TENSOR_3D_ROTATION = 4,
     CF_EFFECT_SPECTRAL_FFT_SWAP = 5,
     CF_EFFECT_SELECTIVE_PREFILTER = 6,
+    CF_EFFECT_DIMENSIONAL_SPLICER = 7,
+    CF_EFFECT_TENSOR_DISPLACEMENT = 8,
+    CF_EFFECT_OPTICAL_FLOW_TIME_WARP = 9,
+    CF_EFFECT_CHRONO_FEEDBACK = 10,
+    CF_EFFECT_STRUCTURAL_DATAMOSH = 11,
 } CFEffectKind;
 
 // Generic ABI-stable parameter packet. Its interpretation is defined by kind:
@@ -75,6 +80,27 @@ int32_t cf_render_effect_chain(
     char* error_message,
     uint64_t error_message_capacity);
 
+// Renders one effect that consumes both a source tensor and a driver tensor.
+// Currently accepted kinds are DIMENSIONAL_SPLICER and TENSOR_DISPLACEMENT.
+int32_t cf_render_cross_tensor_effect(
+    const float* source,
+    uint64_t source_frames,
+    uint64_t source_height,
+    uint64_t source_width,
+    uint64_t source_channels,
+    uint32_t frame_rate_numerator,
+    uint32_t frame_rate_denominator,
+    const float* driver,
+    uint64_t driver_frames,
+    uint64_t driver_height,
+    uint64_t driver_width,
+    uint64_t driver_channels,
+    CFEffectDescriptor effect,
+    uint64_t max_working_set_bytes,
+    CFVideoBuffer** output,
+    char* error_message,
+    uint64_t error_message_capacity);
+
 // Processes a headerless linear-float T,H,W,C tensor through memory-mapped
 // cache files. Local and temporal effects stay out-of-core; FFT operates one
 // frequency line at a time and uses max_working_set_bytes only for line buffers.
@@ -86,6 +112,19 @@ int32_t cf_render_file_effect_chain(
     const CFEffectDescriptor* effects,
     uint64_t effect_count,
     uint64_t max_working_set_bytes,
+    CFRenderProgressCallback progress,
+    void* progress_context,
+    CFFileTensorInfo* output_info,
+    char* error_message,
+    uint64_t error_message_capacity);
+
+int32_t cf_render_file_cross_tensor_effect(
+    const char* source_path,
+    CFFileTensorInfo source_info,
+    const char* driver_path,
+    CFFileTensorInfo driver_info,
+    const char* output_path,
+    CFEffectDescriptor effect,
     CFRenderProgressCallback progress,
     void* progress_context,
     CFFileTensorInfo* output_info,

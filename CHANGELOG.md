@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.0 — Cross-Tensor & Flow
+
+- Added a persistent multi-video media pool with primary A and per-effect driver B routing, including add, replace, remove and primary-source controls.
+- Added Dimensional Splicer with A/B axis geometry and true nearest, trilinear and tricubic sampling.
+- Added Tensor Displacement with time/X/Y movement, channel selection, Clamp/Stretch/Crop size matching and temporal edge modes.
+- Added Motion Time Warp with dense local optical-flow estimation, motion threshold and directional focus.
+- Added recursive past/future Chrono Feedback with Add, Screen, Multiply and Lighten modes.
+- Added Structural Datamosh along Time, Horizontal or Vertical axes with Edge, Luma and deterministic Random triggers.
+- Extended proxy, full-resolution SSD rendering, cache signatures, project persistence and render-queue snapshots to all new effects.
+- Restored Space as a global Play/Pause shortcut even when a slider, picker or list owns keyboard focus.
+
 ## 0.6.0 — transform families and anti-aliasing
 
 - Fixed the low-quality proxy crash in Polar Time Warp with Wrap edges by keeping rounded fractional coordinates strictly inside the tensor.

@@ -58,12 +58,23 @@ enum SelfTestRunner {
               try restoredProject.sourceURL() == source else {
             throw IntegrationSelfTestError.message("Project persistence round-trip failed")
         }
+        let legacyURL = root.appendingPathComponent("legacy-v3.chronoforge")
+        var legacyObject = try JSONSerialization.jsonObject(with: Data(contentsOf: projectURL)) as! [String: Any]
+        legacyObject["version"] = 3
+        legacyObject.removeValue(forKey: "media")
+        legacyObject.removeValue(forKey: "primaryMediaID")
+        try JSONSerialization.data(withJSONObject: legacyObject).write(to: legacyURL)
+        let legacyProject = try ProjectPersistence.load(from: legacyURL)
+        guard legacyProject.mediaReferences().count == 1,
+              try legacyProject.mediaReferences()[0].url() == source else {
+            throw IntegrationSelfTestError.message("Version 3 single-media projects did not migrate to the media pool")
+        }
         try await MainActor.run {
             let store = ProjectStore()
-            guard EffectKind.addableKinds.count == 5,
+            guard EffectKind.addableKinds.count == 10,
                   EffectKind.spaceTimeTranspose.title == EffectKind.tensor3DRotation.title,
                   EffectKind.spaceTimeTranspose.title == "Tensor Transform" else {
-                throw IntegrationSelfTestError.message("Effect families were not exposed as a homogeneous five-effect stack")
+                throw IntegrationSelfTestError.message("Effect families were not exposed as a homogeneous effect stack")
             }
             store.addEffect(.lumaTimeShift)
             store.addEffect(.tensor3DRotation)
@@ -96,6 +107,18 @@ enum SelfTestRunner {
             throw IntegrationSelfTestError.message(
                 "Proxy metadata mismatch: \(proxy.tensor.width)x\(proxy.tensor.height), frames=\(proxy.sourceFrameCount), exact=\(proxy.sourceFrameCountIsExact)"
             )
+        }
+        var splicer = EffectNode.make(.dimensionalSplicer)
+        splicer.driverMediaID = proxy.id
+        let crossProxy = try await CoreRenderer.render(
+            input: proxy.tensor,
+            effects: [splicer],
+            drivers: [proxy.id: proxy.tensor]
+        )
+        guard crossProxy.frames == proxy.tensor.frames,
+              crossProxy.width == proxy.tensor.width,
+              crossProxy.height == proxy.tensor.height else {
+            throw IntegrationSelfTestError.message("Cross-tensor proxy path returned invalid dimensions")
         }
         let proxyFFT = try await CoreRenderer.render(input: proxy.tensor, effects: [EffectNode.make(.spectralFFTSwap)])
         guard proxyFFT.frames == proxy.tensor.frames, proxyFFT.width == proxy.tensor.width, proxyFFT.height == proxy.tensor.height else {
@@ -130,6 +153,17 @@ enum SelfTestRunner {
             scratchDirectory: root.appendingPathComponent("scratch")
         ) { _, _ in }
         guard rendered.isValidOnDisk() else { throw IntegrationSelfTestError.message("File renderer output is invalid") }
+        let crossOutput = root.appendingPathComponent("cross-output.raw")
+        let crossRendered = try await FileCoreRenderer.render(
+            input: decoded,
+            effects: [splicer],
+            drivers: [proxy.id: decoded],
+            outputURL: crossOutput,
+            scratchDirectory: root.appendingPathComponent("cross-scratch")
+        ) { _, _ in }
+        guard crossRendered.isValidOnDisk(), crossRendered.frames == decoded.frames else {
+            throw IntegrationSelfTestError.message("Cross-tensor full render path returned an invalid disk tensor")
+        }
         try await FullVideoExporter.export(rendered, to: videoOnly) { _, _ in }
         try await MediaMuxer.addOriginalAudio(videoURL: videoOnly, sourceURL: source, destinationURL: movie)
         let resultAsset = AVURLAsset(url: movie)

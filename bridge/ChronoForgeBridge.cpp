@@ -6,6 +6,7 @@
 #include "chronoforge/core/video_tensor.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <limits>
 #include <memory>
@@ -49,7 +50,7 @@ void enforce_budget(const VideoTensor& tensor, uint64_t budget) {
 }
 
 VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptor& descriptor, uint64_t budget) {
-    const auto kind = checked_enum<CFEffectKind>(descriptor.kind, CF_EFFECT_SELECTIVE_PREFILTER, "effect kind");
+    const auto kind = checked_enum<CFEffectKind>(descriptor.kind, CF_EFFECT_STRUCTURAL_DATAMOSH, "effect kind");
     switch (kind) {
         case CF_EFFECT_SPACE_TIME_TRANSPOSE:
             return chronoforge::space_time_transpose(
@@ -112,8 +113,67 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptor& des
                     checked_enum<chronoforge::PrefilterStrength>(descriptor.options[0], 2, "spatial prefilter"),
                     checked_enum<chronoforge::PrefilterStrength>(descriptor.options[1], 2, "temporal prefilter"),
                 });
+        case CF_EFFECT_OPTICAL_FLOW_TIME_WARP:
+            return chronoforge::optical_flow_time_warp(
+                input,
+                {
+                    descriptor.values[0], descriptor.values[1], descriptor.values[2], descriptor.values[3],
+                    checked_enum<chronoforge::EdgeBehavior>(descriptor.options[0], 2, "flow edge behavior"),
+                });
+        case CF_EFFECT_CHRONO_FEEDBACK:
+            return chronoforge::chrono_feedback(
+                input,
+                {
+                    static_cast<std::size_t>(std::max(0.0F, std::round(descriptor.values[0]))), descriptor.values[1],
+                    static_cast<std::size_t>(std::max(0.0F, std::round(descriptor.values[2]))), descriptor.values[3],
+                    checked_enum<chronoforge::FeedbackBlendMode>(descriptor.options[0], 3, "feedback blend mode"),
+                });
+        case CF_EFFECT_STRUCTURAL_DATAMOSH:
+            return chronoforge::structural_datamosh(
+                input,
+                {
+                    checked_enum<chronoforge::FreezeAxis>(descriptor.options[0], 2, "freeze axis"),
+                    checked_enum<chronoforge::FreezeTrigger>(descriptor.options[1], 2, "freeze trigger"),
+                    descriptor.values[0],
+                    static_cast<std::size_t>(std::max(0.0F, std::round(descriptor.values[1]))),
+                    descriptor.values[2],
+                });
+        case CF_EFFECT_DIMENSIONAL_SPLICER:
+        case CF_EFFECT_TENSOR_DISPLACEMENT:
+            throw std::invalid_argument("This effect requires a driver video");
     }
     throw std::invalid_argument("Unsupported effect kind");
+}
+
+VideoTensor apply_cross_effect(
+    const VideoTensor& source,
+    const VideoTensor& driver,
+    const CFEffectDescriptor& descriptor) {
+    const auto kind = checked_enum<CFEffectKind>(descriptor.kind, CF_EFFECT_STRUCTURAL_DATAMOSH, "effect kind");
+    switch (kind) {
+        case CF_EFFECT_DIMENSIONAL_SPLICER:
+            return chronoforge::dimensional_splicer(
+                source,
+                driver,
+                {
+                    checked_enum<chronoforge::TensorAxisSource>(descriptor.options[0], 5, "output X axis source"),
+                    checked_enum<chronoforge::TensorAxisSource>(descriptor.options[1], 5, "output Y axis source"),
+                    checked_enum<chronoforge::TensorAxisSource>(descriptor.options[2], 5, "output Time axis source"),
+                    checked_enum<chronoforge::TensorInterpolation>(descriptor.options[3], 2, "splicer interpolation"),
+                });
+        case CF_EFFECT_TENSOR_DISPLACEMENT:
+            return chronoforge::tensor_displacement(
+                source,
+                driver,
+                {
+                    descriptor.values[0], descriptor.values[1], descriptor.values[2],
+                    checked_enum<chronoforge::ShiftSource>(descriptor.options[0], 4, "displacement source"),
+                    checked_enum<chronoforge::TensorBroadcast>(descriptor.options[1], 2, "tensor broadcast"),
+                    checked_enum<chronoforge::EdgeBehavior>(descriptor.options[2], 2, "displacement edge behavior"),
+                });
+        default:
+            throw std::invalid_argument("The selected effect does not accept a driver video");
+    }
 }
 
 }  // namespace
@@ -133,7 +193,7 @@ CFEffectDescriptor cf_effect_descriptor_make(
     return {kind, {value0, value1, value2, value3}, {option0, option1, option2, option3}};
 }
 
-const char* cf_core_version(void) { return "0.6.0"; }
+const char* cf_core_version(void) { return "0.7.0"; }
 
 int32_t cf_render_effect_chain(
     const float* input,
@@ -194,6 +254,68 @@ int32_t cf_render_effect_chain(
     }
 }
 
+int32_t cf_render_cross_tensor_effect(
+    const float* source,
+    uint64_t source_frames,
+    uint64_t source_height,
+    uint64_t source_width,
+    uint64_t source_channels,
+    uint32_t frame_rate_numerator,
+    uint32_t frame_rate_denominator,
+    const float* driver,
+    uint64_t driver_frames,
+    uint64_t driver_height,
+    uint64_t driver_width,
+    uint64_t driver_channels,
+    CFEffectDescriptor effect,
+    uint64_t max_working_set_bytes,
+    CFVideoBuffer** output,
+    char* error_message,
+    uint64_t error_message_capacity) {
+    if (output != nullptr) {
+        *output = nullptr;
+    }
+    try {
+        if (source == nullptr || driver == nullptr || output == nullptr) {
+            throw std::invalid_argument("Source, driver and output pointers are required");
+        }
+        if (frame_rate_numerator == 0 || frame_rate_denominator == 0) {
+            throw std::invalid_argument("Frame rate must be a positive rational number");
+        }
+        const chronoforge::TensorShape source_shape{
+            static_cast<std::size_t>(source_frames), static_cast<std::size_t>(source_height),
+            static_cast<std::size_t>(source_width), static_cast<std::size_t>(source_channels),
+        };
+        const chronoforge::TensorShape driver_shape{
+            static_cast<std::size_t>(driver_frames), static_cast<std::size_t>(driver_height),
+            static_cast<std::size_t>(driver_width), static_cast<std::size_t>(driver_channels),
+        };
+        const chronoforge::VideoTensorMetadata metadata{
+            frame_rate_numerator, frame_rate_denominator, chronoforge::ColorTransfer::Linear,
+            source_channels == 4 ? chronoforge::AlphaRepresentation::Premultiplied : chronoforge::AlphaRepresentation::None,
+        };
+        VideoTensor source_tensor(source_shape, std::vector<float>(source, source + source_shape.element_count()), metadata);
+        VideoTensor driver_tensor(
+            driver_shape,
+            std::vector<float>(driver, driver + driver_shape.element_count()),
+            {frame_rate_numerator, frame_rate_denominator, chronoforge::ColorTransfer::Linear,
+             driver_channels == 4 ? chronoforge::AlphaRepresentation::Premultiplied : chronoforge::AlphaRepresentation::None});
+        if (max_working_set_bytes == 0 || source_shape.byte_count() + driver_shape.byte_count() > max_working_set_bytes) {
+            throw std::runtime_error("Proxy tensors exceed the configured working memory budget");
+        }
+        auto result = apply_cross_effect(source_tensor, driver_tensor, effect);
+        *output = new CFVideoBuffer(std::move(result));
+        set_error(error_message, error_message_capacity, "");
+        return 0;
+    } catch (const std::exception& error) {
+        set_error(error_message, error_message_capacity, error.what());
+        return 1;
+    } catch (...) {
+        set_error(error_message, error_message_capacity, "Unknown ChronoForge cross-tensor failure");
+        return 2;
+    }
+}
+
 int32_t cf_render_file_effect_chain(
     const char* input_path,
     const char* output_path,
@@ -228,7 +350,7 @@ int32_t cf_render_file_effect_chain(
         specifications.reserve(static_cast<std::size_t>(effect_count));
         for (uint64_t index = 0; index < effect_count; ++index) {
             const auto kind = checked_enum<chronoforge::EffectOperation>(
-                effects[index].kind, static_cast<int32_t>(chronoforge::EffectOperation::SelectivePrefilter), "effect kind");
+                effects[index].kind, static_cast<int32_t>(chronoforge::EffectOperation::StructuralDatamosh), "effect kind");
             specifications.push_back({
                 kind,
                 {effects[index].values[0], effects[index].values[1], effects[index].values[2], effects[index].values[3]},
@@ -273,6 +395,71 @@ int32_t cf_render_file_effect_chain(
         return std::string(error.what()) == "Render cancelled" ? 3 : 1;
     } catch (...) {
         set_error(error_message, error_message_capacity, "Unknown ChronoForge file render failure");
+        return 2;
+    }
+}
+
+int32_t cf_render_file_cross_tensor_effect(
+    const char* source_path,
+    CFFileTensorInfo source_info,
+    const char* driver_path,
+    CFFileTensorInfo driver_info,
+    const char* output_path,
+    CFEffectDescriptor effect,
+    CFRenderProgressCallback progress,
+    void* progress_context,
+    CFFileTensorInfo* output_info,
+    char* error_message,
+    uint64_t error_message_capacity) {
+    try {
+        if (source_path == nullptr || driver_path == nullptr || output_path == nullptr || output_info == nullptr) {
+            throw std::invalid_argument("Cross-tensor file paths and output info are required");
+        }
+        const chronoforge::TensorShape source_shape{
+            static_cast<std::size_t>(source_info.frames), static_cast<std::size_t>(source_info.height),
+            static_cast<std::size_t>(source_info.width), static_cast<std::size_t>(source_info.channels),
+        };
+        const chronoforge::TensorShape driver_shape{
+            static_cast<std::size_t>(driver_info.frames), static_cast<std::size_t>(driver_info.height),
+            static_cast<std::size_t>(driver_info.width), static_cast<std::size_t>(driver_info.channels),
+        };
+        const auto kind = checked_enum<chronoforge::EffectOperation>(
+            effect.kind, static_cast<int32_t>(chronoforge::EffectOperation::StructuralDatamosh), "effect kind");
+        const chronoforge::EffectSpec specification{
+            kind,
+            {effect.values[0], effect.values[1], effect.values[2], effect.values[3]},
+            {effect.options[0], effect.options[1], effect.options[2], effect.options[3]},
+        };
+        const chronoforge::VideoTensorMetadata metadata{
+            source_info.frame_rate_numerator, source_info.frame_rate_denominator,
+            chronoforge::ColorTransfer::Linear,
+            source_info.channels == 4 ? chronoforge::AlphaRepresentation::Premultiplied
+                                      : chronoforge::AlphaRepresentation::None,
+        };
+        const chronoforge::VideoTensorMetadata driver_metadata{
+            driver_info.frame_rate_numerator, driver_info.frame_rate_denominator,
+            chronoforge::ColorTransfer::Linear,
+            driver_info.channels == 4 ? chronoforge::AlphaRepresentation::Premultiplied
+                                      : chronoforge::AlphaRepresentation::None,
+        };
+        const auto callback = [&](double fraction, std::string_view stage) {
+            if (progress == nullptr) return true;
+            const std::string owned(stage);
+            return progress(fraction, owned.c_str(), progress_context) != 0;
+        };
+        const auto result = chronoforge::render_file_cross_tensor_effect(
+            source_path, driver_path, output_path, source_shape, driver_shape, metadata, driver_metadata, specification, callback);
+        *output_info = {
+            result.shape.t, result.shape.h, result.shape.w, result.shape.c,
+            result.metadata.frame_rate_numerator, result.metadata.frame_rate_denominator,
+        };
+        set_error(error_message, error_message_capacity, "");
+        return 0;
+    } catch (const std::exception& error) {
+        set_error(error_message, error_message_capacity, error.what());
+        return std::string(error.what()) == "Render cancelled" ? 3 : 1;
+    } catch (...) {
+        set_error(error_message, error_message_capacity, "Unknown ChronoForge cross-tensor file failure");
         return 2;
     }
 }
