@@ -102,6 +102,13 @@ private struct WorkspaceView: View {
         } message: {
             Text("Source videos and saved projects will not be affected. Cached previews and full renders will be rebuilt when needed.")
         }
+        .onOpenURL { url in
+            if url.pathExtension.lowercased() == "chronoforge" {
+                project.openProject(from: url)
+            } else {
+                project.importVideo(from: url)
+            }
+        }
     }
 
     private var sidebar: some View {
@@ -293,6 +300,11 @@ private struct WorkspaceView: View {
     private var timeline: some View {
         VStack(spacing: 7) {
             HStack {
+                Button(project.isPlaying ? "Pause" : "Play", systemImage: project.isPlaying ? "pause.fill" : "play.fill") {
+                    project.togglePlayback()
+                }
+                .labelStyle(.iconOnly)
+                .disabled(project.displayedTensor == nil)
                 Label("Frame \(project.currentFrame + 1)", systemImage: "timeline.selection")
                 Spacer()
                 if let tensor = project.displayedTensor {

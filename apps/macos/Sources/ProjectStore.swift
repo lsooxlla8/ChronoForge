@@ -24,8 +24,10 @@ final class ProjectStore: ObservableObject {
     @Published var hasRecovery = RecoveryStore.exists
     @Published var cacheSizeDescription = "Calculating cache…"
     @Published var showsClearCacheConfirmation = false
+    @Published var isPlaying = false
 
     private var task: Task<Void, Never>?
+    private var playbackTask: Task<Void, Never>?
 
     init() {
         Task { await refreshCacheSize() }
@@ -35,6 +37,7 @@ final class ProjectStore: ObservableObject {
     var selectedNodeIndex: Int? { effects.firstIndex { $0.id == selectedNodeID } }
 
     func importVideo(from url: URL, markDirty: Bool = true) {
+        stopPlayback()
         cancelWork()
         isImporting = true
         errorMessage = nil
@@ -91,6 +94,7 @@ final class ProjectStore: ObservableObject {
     }
 
     func newProject() {
+        stopPlayback()
         cancelWork()
         source = nil
         output = nil
@@ -280,6 +284,30 @@ final class ProjectStore: ObservableObject {
     func cancelWork() {
         task?.cancel()
         task = nil
+    }
+
+    func togglePlayback() {
+        isPlaying ? stopPlayback() : startPlayback()
+    }
+
+    func startPlayback() {
+        guard let tensor = displayedTensor, tensor.frames > 1 else { return }
+        stopPlayback()
+        isPlaying = true
+        playbackTask = Task {
+            while !Task.isCancelled {
+                let fps = displayedTensor?.framesPerSecond ?? tensor.framesPerSecond
+                try? await Task.sleep(for: .seconds(1 / max(0.1, fps)))
+                guard !Task.isCancelled, let latest = displayedTensor else { break }
+                currentFrame = (currentFrame + 1) % latest.frames
+            }
+        }
+    }
+
+    func stopPlayback() {
+        playbackTask?.cancel()
+        playbackTask = nil
+        isPlaying = false
     }
 
     func activeEffectChain() throws -> [EffectNode] {
