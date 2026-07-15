@@ -4,17 +4,19 @@
 
 ## What is included
 
-- Six CPU reference effects: space-time transpose, luma-time shift, radial chrono-funnel, temporal pixel sort, trilinear 3D rotation, and a bounded 3D FFT frequency-axis swap.
+- Six CPU reference effects: space-time transpose, luma-time shift, radial time loom, temporal pixel sort, trilinear 3D rotation, and a 3D FFT frequency-axis swap.
 - A directed acyclic node graph that rejects cycles.
 - SSD cache chunks written atomically, so cancelled or interrupted renders do not create valid-looking partial cache entries.
 - A tile planner designed for complete per-pixel time series: temporal effects split across `H × W`, while retaining all `T` samples needed to operate correctly.
-- CPU safety gate for 3D FFT. Arbitrary tensor extents are padded safely and requests are refused before allocating a working set above the configured budget.
+- Arbitrary-length full-resolution 3D FFT that maps complex tensors to SSD and keeps only individual frequency lines in RAM.
 - A native macOS 14+ SwiftUI editor with real video import, frame preview, editable effect parameters, reordering/bypass, render cancellation and MP4 export.
 - A content-addressed proxy cache keyed by source fingerprint, graph parameters and engine version.
 - A native H.264 integration check that generates a movie, decodes it and sends it through the C++ bridge.
 - Full-resolution out-of-core decode, processing and encode. Intermediate tensors are mapped from SSD and each completed node replaces the preceding scratch file.
 - Explicit graph inputs and Output selection: branches are supported, cycles are rejected, and only ancestors of Output are evaluated.
-- Project save/open, security-scoped source bookmarks, autosave recovery, cache management and optional original-audio muxing.
+- Project save/open, security-scoped source bookmarks, autosave recovery, automatic 8 GB cache trimming and optional original-audio muxing.
+- Sequential render queue with a settings snapshot per item and automatic cache cleanup between jobs.
+- Exact numeric parameter entry, contextual default reset, Space play/pause and in-editor media replacement/removal.
 - CPU thread pools for proxy and full local/temporal effects, granular progress and cancellation with partial-file cleanup.
 
 ## Key technical decisions
@@ -27,7 +29,7 @@ The original brief is strong, but a few details make the difference between a de
 | Logical playback rate is metadata, not an axis size | Swapping `T` and `X` changes the tensor extents; the desired export FPS remains an explicit Output choice. |
 | Tile contracts declare their temporal footprint | Pixel sort needs every time sample for a pixel. A scheduler must not accidentally run it on independent frame chunks. |
 | Cache key includes graph signature, node parameters, proxy scale and source fingerprint | Otherwise a changed node could display stale cached output. Proxy and full-render caches use content-addressed keys. |
-| FFT is a global operation | It is never silently tiled. Proxy and full render use a bounded CPU implementation and stop before allocation when the estimated working set exceeds the configured RAM budget. |
+| FFT is a global operation | Graphs containing FFT automatically use separable arbitrary-length lines over memory-mapped complex tensors for both proxy and full render, so tensor volume consumes SSD rather than RAM. |
 | Effects sample backward into source coordinates | It avoids holes in radial/rotation transforms, and 3D rotation uses trilinear interpolation. |
 
 The complete operating model is in [docs/architecture.md](docs/architecture.md).
@@ -79,4 +81,4 @@ docs/              Architecture and delivery milestones
 
 The bundled local build targets Apple Silicon and macOS 14+. A universal Intel/Apple Silicon package requires full Xcode (`xcbuild`), which is not present in the current build environment. Local builds are ad-hoc signed; public distribution still requires the owner's Apple Developer ID certificate and notarization.
 
-3D FFT remains a global operation. Full-quality FFT is allowed only when its padded complex working set fits the configured RAM budget; otherwise the app stops before allocation and asks for Proxy or a smaller tensor. Original audio can be preserved explicitly; when the transformed video becomes longer, audio ends at its original duration.
+3D FFT remains computationally expensive and requires temporary SSD space for two complex tensors, but full-quality processing no longer requires the complete volume to fit in RAM. Original audio can be preserved explicitly; when an axis-changing effect makes the video longer, audio ends at its original duration.

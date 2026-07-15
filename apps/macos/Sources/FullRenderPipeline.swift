@@ -21,6 +21,7 @@ enum FullRenderPipeline {
         var decoded: DiskTensorData
         if let cached = loadMetadata(decodedMetadataURL), cached.isValidOnDisk() {
             decoded = cached
+            try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: sourceDirectory.path)
             progress(0.25, "Using decoded source cache")
         } else {
             decoded = try await FullVideoDecoder.decode(
@@ -34,6 +35,7 @@ enum FullRenderPipeline {
         var rendered: DiskTensorData
         if let cached = loadMetadata(renderMetadataURL), cached.isValidOnDisk() {
             rendered = cached
+            try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: graphDirectory.path)
             progress(0.80, "Using full-resolution render cache")
         } else {
             let scratch = graphDirectory.appendingPathComponent("scratch", isDirectory: true)

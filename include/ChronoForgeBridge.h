@@ -32,10 +32,10 @@ typedef enum CFEffectKind {
 // Generic ABI-stable parameter packet. Its interpretation is defined by kind:
 // transpose:              options = X(0) / Y(1), Native(0) / Fit source canvas(1)
 // luma-time shift:        values[0] = multiplier, options = source, edge
-// radial funnel:          values = centerX, centerY, intensity; options[0] = edge
+// radial time loom:       values = centerX, centerY, intensity, twist; options = edge, topology
 // temporal pixel sort:    values[0] = threshold; options = criterion, direction
 // tensor 3D rotation:     values = XY, XT, YT degrees; options[0] = fill mode
-// spectral FFT swap:      options = axis, normalize
+// spectral FFT swap:      options = axis, normalize, Native(0) / Fit source tensor(1)
 typedef struct CFEffectDescriptor {
     int32_t kind;
     float values[4];
@@ -74,8 +74,8 @@ int32_t cf_render_effect_chain(
     uint64_t error_message_capacity);
 
 // Processes a headerless linear-float T,H,W,C tensor through memory-mapped
-// cache files. Local and temporal effects stay out-of-core; the FFT node still
-// obeys max_working_set_bytes and fails before an unsafe allocation.
+// cache files. Local and temporal effects stay out-of-core; FFT operates one
+// frequency line at a time and uses max_working_set_bytes only for line buffers.
 int32_t cf_render_file_effect_chain(
     const char* input_path,
     const char* output_path,

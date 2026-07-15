@@ -41,8 +41,14 @@ struct ChronoForgeMacApp: App {
                 Button("Save Project As…") { project.saveProject(saveAs: true) }
                     .keyboardShortcut("s", modifiers: [.command, .shift])
                 Divider()
-                Button("Render Preview") { project.renderPreview() }
+                Button("Update Preview") { project.renderPreview() }
                     .keyboardShortcut("r", modifiers: .command)
+                Button("Add to Render Queue…") { project.addCurrentRenderToQueue() }
+                Button("Start Render Queue") { project.startRenderQueue() }
+                    .disabled(project.renderQueue.isEmpty || project.isQueueRunning)
+                Divider()
+                Button("Play/Pause Preview") { project.togglePlayback() }
+                    .keyboardShortcut(.space, modifiers: [])
             }
             CommandGroup(after: .saveItem) {
                 Button("Clear Render Cache…") { project.showsClearCacheConfirmation = true }
@@ -116,9 +122,18 @@ private struct WorkspaceView: View {
             Section("Media") {
                 if let source = project.source {
                     Label(source.displayName, systemImage: "film")
-                    Text("\(Int(source.sourceSize.width)) × \(Int(source.sourceSize.height)) · \(source.sourceDuration, format: .number.precision(.fractionLength(1))) s")
+                        .contextMenu {
+                            Button("Replace Video…") { project.showsImporter = true }
+                            Button("Remove Video", role: .destructive) { project.removeMedia() }
+                        }
+                    Text("\(Int(source.sourceSize.width)) × \(Int(source.sourceSize.height)) · \(source.sourceDuration, format: .number.precision(.fractionLength(1))) s · \(source.sourceFrameCountIsExact ? "" : "≈")\(source.sourceFrameCount) frames")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    HStack {
+                        Button("Replace…", systemImage: "arrow.triangle.2.circlepath") { project.showsImporter = true }
+                        Button("Remove", systemImage: "trash", role: .destructive) { project.removeMedia() }
+                    }
+                    .font(.caption)
                 } else {
                     Button("Import video…", systemImage: "plus.rectangle.on.folder") {
                         project.showsImporter = true
@@ -138,6 +153,25 @@ private struct WorkspaceView: View {
                 }
                 .onMove(perform: project.moveEffect)
             }
+            if !project.renderQueue.isEmpty {
+                Section("Render queue") {
+                    ForEach(project.renderQueue) { item in
+                        HStack {
+                            Label(item.destinationURL.lastPathComponent, systemImage: item.status.symbol)
+                                .lineLimit(1)
+                            Spacer()
+                            Text(item.status.title).font(.caption2).foregroundStyle(.secondary)
+                            Button("Remove", systemImage: "xmark", role: .destructive) {
+                                project.removeQueueItem(item.id)
+                            }
+                            .labelStyle(.iconOnly)
+                            .disabled(project.isQueueRunning)
+                        }
+                    }
+                    Button("Start Queue", systemImage: "play.fill") { project.startRenderQueue() }
+                        .disabled(project.isQueueRunning || !project.renderQueue.contains(where: { $0.status == .waiting }))
+                }
+            }
         }
         .safeAreaInset(edge: .bottom) {
             HStack {
@@ -148,14 +182,14 @@ private struct WorkspaceView: View {
                 }
                 Spacer()
                 Button("Remove", systemImage: "trash", role: .destructive) { project.removeSelectedEffect() }
-                    .disabled(project.selectedNodeID == nil)
+                    .disabled(project.selectedNodeIndex == nil)
                     .labelStyle(.iconOnly)
             }
             .padding(10)
             .background(.bar)
         }
         .overlay(alignment: .bottomLeading) {
-            Text("Cache: \(project.cacheSizeDescription)")
+            Text("Cache: \(project.cacheSizeDescription) · auto limit 8 GB")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .padding(.leading, 12)
@@ -165,60 +199,71 @@ private struct WorkspaceView: View {
     }
 
     private var toolbar: some View {
-        HStack(spacing: 12) {
-            Label(project.projectURL?.deletingPathExtension().lastPathComponent ?? "ChronoForge", systemImage: "cube.transparent")
-                .font(.headline)
-            if project.isDirty { Text("Edited").font(.caption2).foregroundStyle(.orange) }
-            Text(project.statusMessage)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Spacer()
-            Picker("Quality", selection: Binding(
-                get: { project.quality },
-                set: {
-                    project.quality = $0
-                    if project.source != nil { project.markEdited() }
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                Label(project.projectURL?.deletingPathExtension().lastPathComponent ?? "ChronoForge", systemImage: "cube.transparent")
+                    .font(.headline)
+                if project.isDirty { Text("Edited").font(.caption2).foregroundStyle(.orange) }
+                Text(project.statusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+                if project.isRendering || project.isImporting || project.isExporting {
+                    if let progress = project.renderProgress {
+                        ProgressView(value: progress).frame(width: 90)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                    Button("Cancel") { project.cancelWork() }
                 }
-            )) {
-                ForEach(RenderQuality.allCases) { quality in Text(quality.title).tag(quality) }
+                Button("Update Preview", systemImage: "eye") { project.renderPreview() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
+                    .help("Recalculate the small proxy shown in the viewer. This does not create a video file.")
+                Button("Add to Queue", systemImage: "text.badge.plus") { project.addCurrentRenderToQueue() }
+                    .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
+                Button("Export MP4…", systemImage: "square.and.arrow.up") { project.chooseExportLocation() }
+                    .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
+                    .help("Render the current graph at the selected export quality and write an MP4 file.")
             }
-            .pickerStyle(.segmented)
-            .frame(width: 190)
-            Picker("Audio", selection: Binding(
-                get: { project.audioMode },
-                set: {
-                    project.audioMode = $0
-                    if project.source != nil { project.markEdited() }
+            HStack(spacing: 12) {
+                Text("Export settings").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Picker("Quality", selection: Binding(
+                    get: { project.quality },
+                    set: {
+                        project.quality = $0
+                        if project.source != nil { project.markEdited(invalidatePreview: false) }
+                    }
+                )) {
+                    ForEach(RenderQuality.allCases) { quality in Text(quality.title).tag(quality) }
                 }
-            )) {
-                ForEach(AudioMode.allCases) { mode in Text(mode.title).tag(mode) }
-            }
-            .frame(width: 170)
-            Picker("Output", selection: Binding(
-                get: { project.outputNodeID },
-                set: {
-                    project.outputNodeID = $0
-                    project.markEdited()
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 190)
+                Picker("Audio", selection: Binding(
+                    get: { project.audioMode },
+                    set: {
+                        project.audioMode = $0
+                        if project.source != nil { project.markEdited(invalidatePreview: false) }
+                    }
+                )) {
+                    ForEach(AudioMode.allCases) { mode in Text(mode.title).tag(mode) }
                 }
-            )) {
-                Text("Input").tag(Optional<UUID>.none)
-                ForEach(project.effects) { node in Text(node.kind.title).tag(Optional(node.id)) }
-            }
-            .frame(width: 190)
-            if project.isRendering || project.isImporting || project.isExporting {
-                if let progress = project.renderProgress {
-                    ProgressView(value: progress).frame(width: 90)
-                } else {
-                    ProgressView().controlSize(.small)
+                .frame(width: 170)
+                Picker("Output", selection: Binding(
+                    get: { project.outputNodeID },
+                    set: {
+                        project.outputNodeID = $0
+                        project.markEdited()
+                    }
+                )) {
+                    Text("Input").tag(Optional<UUID>.none)
+                    ForEach(project.effects) { node in Text(node.kind.title).tag(Optional(node.id)) }
                 }
-                Button("Cancel") { project.cancelWork() }
+                .frame(width: 210)
+                Spacer()
             }
-            Button("Render", systemImage: "play.fill") { project.renderPreview() }
-                .buttonStyle(.borderedProminent)
-                .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
-            Button("Export MP4…", systemImage: "square.and.arrow.up") { project.chooseExportLocation() }
-                .disabled(project.output == nil || project.isRendering || project.isImporting || project.isExporting)
         }
         .padding(12)
     }
@@ -260,7 +305,12 @@ private struct WorkspaceView: View {
                     )
                     .onTapGesture { project.selectedNodeID = node.id }
                 }
-                GraphCard(title: "Output", subtitle: project.output == nil ? "Not rendered" : "Proxy ready", symbol: "rectangle.inset.filled.and.person.filled", selected: false)
+                GraphCard(
+                    title: "Output",
+                    subtitle: project.isPreviewStale ? "Preview needs update" : (project.output == nil ? "Preview not updated" : "Preview ready"),
+                    symbol: "rectangle.inset.filled.and.person.filled",
+                    selected: false
+                )
             }
             .padding(24)
         }
@@ -272,22 +322,19 @@ private struct WorkspaceView: View {
     private var inspector: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Inspector").font(.headline)
-            if let index = project.selectedNodeIndex {
+            if let nodeID = project.selectedNodeID, let selectedNode = project.effect(withID: nodeID) {
                 Picker("Input", selection: Binding(
-                    get: { project.effects[index].inputNodeID },
-                    set: { project.setInput($0, for: project.effects[index].id) }
+                    get: { project.effect(withID: nodeID)?.inputNodeID },
+                    set: { project.setInput($0, for: nodeID) }
                 )) {
                     Text("Input").tag(Optional<UUID>.none)
-                    ForEach(project.availableInputs(for: project.effects[index].id)) { candidate in
+                    ForEach(project.availableInputs(for: nodeID)) { candidate in
                         Text(candidate.kind.title).tag(Optional(candidate.id))
                     }
                 }
                 EffectInspector(node: Binding(
-                    get: { project.effects[index] },
-                    set: {
-                        project.effects[index] = $0
-                        project.markEdited()
-                    }
+                    get: { project.effect(withID: nodeID) ?? selectedNode },
+                    set: { project.updateEffect($0) }
                 ))
             } else {
                 ContentUnavailableView("Select an effect", systemImage: "slider.horizontal.3")
@@ -361,45 +408,70 @@ private struct EffectInspector: View {
         case .spaceTimeTranspose:
             optionPicker("Swap axis", value: option(0), options: ["X ↔ Time", "Y ↔ Time"])
             optionPicker("Resolution", value: option(1), options: ["Native tensor", "Fit source canvas"])
+            Text("Native tensor performs a literal axis swap. Fit source canvas resizes each resulting frame back to the source canvas, but the new frame count still comes from the swapped spatial axis.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         case .lumaTimeShift:
-            valueSlider("Shift multiplier", value: value(0), range: -100...100, format: "%.0f frames")
+            valueSlider("Shift multiplier", index: 0, range: -100...100, format: "%.0f frames")
             optionPicker("Source", value: option(0), options: ["Luma", "Red", "Green", "Blue", "Alpha"])
             edgePicker(option(1))
         case .radialChronoFunnel:
-            valueSlider("Center X", value: value(0), range: 0...1, format: "%.2f")
-            valueSlider("Center Y", value: value(1), range: 0...1, format: "%.2f")
-            valueSlider("Intensity", value: value(2), range: -1...1, format: "%.3f")
+            optionPicker("Topology", value: option(1), options: ["Time Loom", "Kaleido Fold", "Event Horizon"])
+            valueSlider("Center X", index: 0, range: 0...1, format: "%.3f")
+            valueSlider("Center Y", index: 1, range: 0...1, format: "%.3f")
+            valueSlider("Intensity", index: 2, range: -1...1, format: "%.4f")
+            valueSlider("Angular twist", index: 3, range: -3...3, format: "%.3f turns")
             edgePicker(option(0))
+            Text("Time Loom braids radius, angle and playback phase. Kaleido Fold mirrors time into radial facets; Event Horizon compresses time near the center and emits rotating echoes.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         case .temporalPixelSort:
             optionPicker("Criterion", value: option(0), options: ["Luma", "Hue", "Saturation"])
             optionPicker("Direction", value: option(1), options: ["Ascending", "Descending"])
-            valueSlider("Threshold", value: value(0), range: 0...1, format: "%.2f")
+            valueSlider("Threshold", index: 0, range: 0...1, format: "%.4f")
         case .tensor3DRotation:
-            valueSlider("X–Y", value: value(0), range: -180...180, format: "%.1f°")
-            valueSlider("X–T", value: value(1), range: -180...180, format: "%.1f°")
-            valueSlider("Y–T", value: value(2), range: -180...180, format: "%.1f°")
-            optionPicker("Fill", value: option(0), options: ["Black", "Transparent", "Repeat"])
+            valueSlider("X–Y", index: 0, range: -180...180, format: "%.3f°")
+            valueSlider("X–T", index: 1, range: -180...180, format: "%.3f°")
+            valueSlider("Y–T", index: 2, range: -180...180, format: "%.3f°")
+            optionPicker("Fill", value: option(0), options: ["Black", "Transparent", "Repeat", "Fit"])
         case .spectralFFTSwap:
             optionPicker("Swap", value: option(0), options: ["X ↔ Time", "Y ↔ Time", "All axes"])
+            optionPicker("Resolution", value: option(2), options: ["Native tensor", "Fit source tensor"])
             Toggle("Normalize", isOn: Binding(
                 get: { node.options[1] != 0 },
                 set: { node.options[1] = $0 ? 1 : 0 }
             ))
+            Text("Fit source tensor resamples the transformed result back to the input frame count, width and height. Full export uses SSD-backed FFT lines instead of loading the video volume into RAM.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-    }
-
-    private func value(_ index: Int) -> Binding<Float> {
-        Binding(get: { node.values[index] }, set: { node.values[index] = $0 })
     }
 
     private func option(_ index: Int) -> Binding<Int32> {
         Binding(get: { node.options[index] }, set: { node.options[index] = $0 })
     }
 
-    private func valueSlider(_ title: String, value: Binding<Float>, range: ClosedRange<Float>, format: String) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack { Text(title); Spacer(); Text(String(format: format, value.wrappedValue)).monospacedDigit().foregroundStyle(.secondary) }
-            Slider(value: value, in: range)
+    private func valueSlider(_ title: String, index: Int, range: ClosedRange<Float>, format: String) -> some View {
+        let binding = Binding<Float>(
+            get: { node.values[index] },
+            set: { node.values[index] = min(max($0, range.lowerBound), range.upperBound) }
+        )
+        let defaultValue = EffectNode.make(node.kind).values[index]
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(title)
+                Spacer()
+                ExactValueField(value: binding, range: range)
+                    .help(String(format: format, binding.wrappedValue))
+            }
+            Slider(value: binding, in: range)
+                .contextMenu {
+                    Button("Reset to Default") { binding.wrappedValue = defaultValue }
+                }
+            Text(String(format: format, binding.wrappedValue))
+                .font(.caption2)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -411,5 +483,52 @@ private struct EffectInspector: View {
 
     private func edgePicker(_ value: Binding<Int32>) -> some View {
         optionPicker("Edge behavior", value: value, options: ["Clamp", "Wrap", "Mirror"])
+    }
+}
+
+private struct ExactValueField: View {
+    @Binding var value: Float
+    let range: ClosedRange<Float>
+    @State private var text: String
+    @FocusState private var isFocused: Bool
+
+    init(value: Binding<Float>, range: ClosedRange<Float>) {
+        _value = value
+        self.range = range
+        _text = State(initialValue: Self.display(value.wrappedValue))
+    }
+
+    var body: some View {
+        TextField("Value", text: $text)
+            .multilineTextAlignment(.trailing)
+            .monospacedDigit()
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 92)
+            .focused($isFocused)
+            .onSubmit(commit)
+            .onChange(of: isFocused) { _, focused in
+                if !focused { commit() }
+            }
+            .onChange(of: value) { _, updated in
+                if !isFocused { text = Self.display(updated) }
+            }
+    }
+
+    private func commit() {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: ",", with: ".")
+        guard let parsed = Float(normalized), parsed.isFinite else {
+            text = Self.display(value)
+            return
+        }
+        value = min(max(parsed, range.lowerBound), range.upperBound)
+        text = Self.display(value)
+    }
+
+    private static func display(_ value: Float) -> String {
+        var result = String(format: "%.5f", locale: Locale(identifier: "en_US_POSIX"), value)
+        while result.contains(".") && result.last == "0" { result.removeLast() }
+        if result.last == "." { result.removeLast() }
+        return result
     }
 }

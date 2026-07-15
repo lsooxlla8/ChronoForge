@@ -7,12 +7,14 @@
 namespace chronoforge {
 
 enum class SpectralSwapAxis { XTime, YTime, AllAxes };
+enum class SpectralResolution { NativeTensor, FitSourceTensor };
 
 struct SpectralSwapParams {
     SpectralSwapAxis axis{SpectralSwapAxis::XTime};
     bool normalize{true};
-    // The CPU reference is intentionally capped. Production renders use Metal/cufft.
+    // The in-memory proxy reference is capped. Full renders use the disk-backed executor.
     std::size_t max_working_set_bytes{512ULL * 1024ULL * 1024ULL};
+    SpectralResolution resolution{SpectralResolution::NativeTensor};
 };
 
 // In-process CPU reference. Arbitrary dimensions are zero-padded to the next

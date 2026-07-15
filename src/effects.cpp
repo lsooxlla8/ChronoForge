@@ -228,6 +228,10 @@ void rotate_plane(float& a, float& b, float degrees) {
         time = wrap_coordinate(time, shape.t);
         y = wrap_coordinate(y, shape.h);
         x = wrap_coordinate(x, shape.w);
+    } else if (fill == FillMode::Fit) {
+        time = std::clamp(time, 0.0F, static_cast<float>(shape.t - 1));
+        y = std::clamp(y, 0.0F, static_cast<float>(shape.h - 1));
+        x = std::clamp(x, 0.0F, static_cast<float>(shape.w - 1));
     } else if (time < 0.0F || y < 0.0F || x < 0.0F || time > static_cast<float>(shape.t - 1) ||
                y > static_cast<float>(shape.h - 1) || x > static_cast<float>(shape.w - 1)) {
         return (fill == FillMode::Black && channel == 3 && shape.c >= 4) ? 1.0F : 0.0F;
@@ -259,6 +263,23 @@ void rotate_plane(float& a, float& b, float degrees) {
     const auto c0 = c00 + (c01 - c00) * fy;
     const auto c1 = c10 + (c11 - c10) * fy;
     return c0 + (c1 - c0) * ft;
+}
+
+void inverse_rotate(Point3& point, const TensorRotationParams& params) {
+    rotate_plane(point.y, point.t, -params.yt_degrees);
+    rotate_plane(point.x, point.t, -params.xt_degrees);
+    rotate_plane(point.x, point.y, -params.xy_degrees);
+}
+
+[[nodiscard]] float rotation_fit_scale(const TensorRotationParams& params) {
+    std::array<Point3, 3> basis{{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}};
+    for (auto& point : basis) {
+        inverse_rotate(point, params);
+    }
+    const auto time_extent = std::abs(basis[0].t) + std::abs(basis[1].t) + std::abs(basis[2].t);
+    const auto y_extent = std::abs(basis[0].y) + std::abs(basis[1].y) + std::abs(basis[2].y);
+    const auto x_extent = std::abs(basis[0].x) + std::abs(basis[1].x) + std::abs(basis[2].x);
+    return 1.0F / std::max({1.0F, time_extent, y_extent, x_extent});
 }
 
 }  // namespace
@@ -324,13 +345,36 @@ VideoTensor radial_chrono_funnel(const VideoTensor& input, const RadialChronoFun
     VideoTensor output(shape, 0.0F, input.metadata());
     const auto center_x = params.center_x * static_cast<float>(shape.w - 1);
     const auto center_y = params.center_y * static_cast<float>(shape.h - 1);
+    const auto width = static_cast<float>(std::max<std::size_t>(1, shape.w - 1));
+    const auto height = static_cast<float>(std::max<std::size_t>(1, shape.h - 1));
 
     parallel_for(shape.t, [&](std::size_t t) {
+        const auto phase = static_cast<float>(t) / static_cast<float>(std::max<std::size_t>(1, shape.t));
         for (std::size_t y = 0; y < shape.h; ++y) {
             for (std::size_t x = 0; x < shape.w; ++x) {
-                const auto dx = static_cast<float>(x) - center_x;
-                const auto dy = static_cast<float>(y) - center_y;
-                const auto shift = static_cast<std::ptrdiff_t>(std::floor(params.intensity * std::sqrt(dx * dx + dy * dy)));
+                const auto dx = (static_cast<float>(x) - center_x) / width;
+                const auto dy = (static_cast<float>(y) - center_y) / height;
+                const auto radius = std::sqrt(dx * dx + dy * dy);
+                const auto turns = std::atan2(dy, dx) / (2.0F * std::numbers::pi_v<float>);
+                float weave{};
+                switch (params.topology) {
+                    case RadialTopology::TimeLoom:
+                        weave = radius + params.twist * turns +
+                                0.25F * std::sin(2.0F * std::numbers::pi_v<float> * (4.0F * radius - 2.0F * turns + 2.0F * phase));
+                        break;
+                    case RadialTopology::KaleidoFold: {
+                        const auto folded = 2.0F * std::abs(std::fmod(turns * 6.0F + 100.5F, 1.0F) - 0.5F);
+                        weave = radius + params.twist * folded +
+                                0.2F * std::sin(2.0F * std::numbers::pi_v<float> * (8.0F * radius + phase));
+                        break;
+                    }
+                    case RadialTopology::EventHorizon:
+                        weave = std::clamp(0.15F * (1.0F / (radius + 0.08F) - 1.0F / 1.08F), -3.0F, 3.0F) +
+                                params.twist * std::sin(12.0F * std::numbers::pi_v<float> * turns + 2.0F * std::numbers::pi_v<float> * phase) *
+                                    std::exp(-2.0F * radius);
+                        break;
+                }
+                const auto shift = static_cast<std::ptrdiff_t>(std::lround(params.intensity * static_cast<float>(shape.t) * weave));
                 const auto source_t = resolve_time(static_cast<std::ptrdiff_t>(t) + shift, shape.t, params.edge_behavior);
                 for (std::size_t c = 0; c < shape.c; ++c) {
                     output.at(t, y, x, c) = input.at(source_t, y, x, c);
@@ -372,14 +416,16 @@ VideoTensor temporal_pixel_sort(const VideoTensor& input, const TemporalPixelSor
 VideoTensor tensor_3d_rotation(const VideoTensor& input, const TensorRotationParams& params) {
     const auto& shape = input.shape();
     VideoTensor output(shape, 0.0F, input.metadata());
+    const auto fit_scale = params.fill_mode == FillMode::Fit ? rotation_fit_scale(params) : 1.0F;
     parallel_for(shape.t, [&](std::size_t t) {
         for (std::size_t y = 0; y < shape.h; ++y) {
             for (std::size_t x = 0; x < shape.w; ++x) {
                 Point3 point{normalized_coordinate(t, shape.t), normalized_coordinate(y, shape.h), normalized_coordinate(x, shape.w)};
+                point.t *= fit_scale;
+                point.y *= fit_scale;
+                point.x *= fit_scale;
                 // Backward sampling uses the inverse of the forward XY -> XT -> YT rotation.
-                rotate_plane(point.y, point.t, -params.yt_degrees);
-                rotate_plane(point.x, point.t, -params.xt_degrees);
-                rotate_plane(point.x, point.y, -params.xy_degrees);
+                inverse_rotate(point, params);
                 const auto source_t = denormalized_coordinate(point.t, shape.t);
                 const auto source_y = denormalized_coordinate(point.y, shape.h);
                 const auto source_x = denormalized_coordinate(point.x, shape.w);

@@ -13,6 +13,16 @@ enum SelfTestRunner {
         let videoOnly = root.appendingPathComponent("video-only.mp4")
         let movie = root.appendingPathComponent("result.mp4")
         try await makeMovie(at: source)
+        let cacheRoot = root.appendingPathComponent("cache", isDirectory: true)
+        let proxyCache = cacheRoot.appendingPathComponent("Proxy", isDirectory: true)
+        try FileManager.default.createDirectory(at: proxyCache, withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 4096).write(to: proxyCache.appendingPathComponent("old.cft"))
+        try Data(repeating: 2, count: 4096).write(to: proxyCache.appendingPathComponent("new.cft"))
+        let cacheManager = CacheManager(root: cacheRoot)
+        _ = try await cacheManager.trim(to: 1024)
+        guard await cacheManager.size() <= 1024 else {
+            throw IntegrationSelfTestError.message("Automatic cache trimming did not enforce its limit")
+        }
         let projectURL = root.appendingPathComponent("test.chronoforge")
         let projectSource = DecodedProxy(
             tensor: VideoTensorData(values: [0, 0, 0, 1], frames: 1, height: 1, width: 1, channels: 4, framesPerSecond: 8, duration: 0.125),
@@ -42,18 +52,36 @@ enum SelfTestRunner {
               try restoredProject.sourceURL() == source else {
             throw IntegrationSelfTestError.message("Project persistence round-trip failed")
         }
+        try await MainActor.run {
+            let store = ProjectStore()
+            store.addEffect(.lumaTimeShift)
+            store.addEffect(.tensor3DRotation)
+            let removedID = store.selectedNodeID
+            store.removeSelectedEffect()
+            guard store.effects.count == 1, store.selectedNodeID != removedID else {
+                throw IntegrationSelfTestError.message("Effect deletion did not leave a safe selection")
+            }
+        }
         let proxy = try await VideoDecoder.decodeProxy(from: source)
-        guard proxy.tensor.width == 48, proxy.tensor.height == 64, proxy.tensor.values.count == proxy.tensor.valueCount else {
-            throw IntegrationSelfTestError.message("Proxy decoder did not honor source orientation")
+        guard proxy.tensor.width == 48, proxy.tensor.height == 64, proxy.sourceFrameCount == 8, proxy.sourceFrameCountIsExact,
+              proxy.tensor.values.count == proxy.tensor.valueCount else {
+            throw IntegrationSelfTestError.message(
+                "Proxy metadata mismatch: \(proxy.tensor.width)x\(proxy.tensor.height), frames=\(proxy.sourceFrameCount), exact=\(proxy.sourceFrameCountIsExact)"
+            )
+        }
+        let proxyFFT = try await CoreRenderer.render(input: proxy.tensor, effects: [EffectNode.make(.spectralFFTSwap)])
+        guard proxyFFT.frames == proxy.tensor.frames, proxyFFT.width == proxy.tensor.width, proxyFFT.height == proxy.tensor.height else {
+            throw IntegrationSelfTestError.message("Disk-backed proxy FFT did not preserve fitted dimensions")
         }
         let decoded = try await FullVideoDecoder.decode(sourceURL: source, destinationURL: input) { _, _ in }
         guard decoded.frames == 8, decoded.width == 48, decoded.height == 64, decoded.isValidOnDisk() else {
             throw IntegrationSelfTestError.message("Full decoder returned an invalid disk tensor")
         }
         let effect = EffectNode.make(.lumaTimeShift)
+        let fft = EffectNode.make(.spectralFFTSwap, inputNodeID: effect.id)
         let rendered = try await FileCoreRenderer.render(
             input: decoded,
-            effects: [effect],
+            effects: [effect, fft],
             outputURL: output,
             scratchDirectory: root.appendingPathComponent("scratch")
         ) { _, _ in }
