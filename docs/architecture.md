@@ -57,19 +57,20 @@ Nodes fall into three scheduling classes:
 | Class | Examples | Scheduling rule |
 | --- | --- | --- |
 | Local | Colour conversion, transform with bounded sample footprint | Process independent tiles plus halo. |
-| Per-pixel temporal | Luma-Time Shift, Radial Time Loom, Temporal Pixel Sort | Keep the complete `T` vector for every pixel within an `H × W` tile. |
+| Per-pixel temporal | Channel Time Shift, Polar Time Warp, Temporal Pixel Sort | Keep the complete `T` vector for every pixel within an `H × W` tile. |
 | Global | 3D rotation with temporal mixing, 3D FFT | Preflight SSD space. FFT maps complex tensors and transforms independent lines with bounded RAM. |
 
 The supplied `TilePlanner` implements the per-pixel-temporal class. It will be generalised after executor integration.
 
-## The six effects and implementation notes
+## The five effect families and implementation notes
 
-1. **Space-Time Transpose** is an extent permutation. `X↔T` changes `(T,H,W,C)` to `(W,H,T,C)`, while `Y↔T` changes it to `(H,T,W,C)`. Fit Source Size resamples the new frame canvas but intentionally keeps the swapped time extent. At a fixed output FPS, duration therefore becomes the new frame count divided by FPS.
-2. **Luma-Time Shift** determines the source frame from the input sample at the output coordinate. It supports luma/R/G/B/alpha and clamp, wrap or mirror edges. The UI must constrain the multiplier in user-facing frame units.
-3. **Radial Time Loom** jointly warps fractional time, radius and polar angle into animated braids with trilinear sampling. Kaleido Fold creates moving spatial sectors; Event Horizon bends radius into orbiting temporal echoes while retaining proxy/full parity.
+1. **Tensor Transform** groups geometric tensor operations. Axis Swap permutes `X↔T` or `Y↔T`; 3D Rotation samples backward with trilinear interpolation in normalised `T/H/W`. Fit Source Size is the default for both modes.
+2. **Channel Time Shift** determines the source frame from luma/R/G/B/alpha at the output coordinate and supports clamp, wrap or mirror edges.
+3. **Polar Time Warp** jointly warps fractional time, radius and polar angle into animated braids. Kaleido Fold creates moving spatial sectors; Event Horizon bends radius into orbiting temporal echoes.
 4. **Temporal Pixel Sort** sorts complete colour vectors by a scalar key along `T`. Pixels below threshold retain their time slots; selected samples are stably sorted into the selected slots.
-5. **Tensor 3D Rotation** samples backward with trilinear interpolation in normalised `T/H/W` space. Fill Fit computes an inscribed inverse-rotation scale so every output frame is covered without empty corners.
-6. **3D FFT Transform** uses Bluestein arbitrary-length transforms over memory-mapped tensors. It can swap frequency axes or rotate the complex spectrum by an arbitrary angle in X–Time, Y–Time or X–Y. Proxy graphs containing this node automatically switch to the same safe disk executor. Fit Source Size is the default and preserves the input `T/H/W` extents.
+5. **Spectral Transform** uses Bluestein arbitrary-length transforms over memory-mapped tensors. It swaps frequency axes or rotates the complex spectrum in X–Time, Y–Time or X–Y while keeping the full volume off RAM.
+
+Spatial and Temporal Prefilter are project-level output settings rather than editable nodes. The renderer injects one deterministic hidden low-pass stage after the visible stack, so preview, direct export and queued renders share the same cache signature and result.
 
 ## macOS-specific plan
 

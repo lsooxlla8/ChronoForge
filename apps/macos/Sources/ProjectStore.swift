@@ -11,6 +11,8 @@ final class ProjectStore: ObservableObject {
     @Published var outputNodeID: UUID?
     @Published var currentFrame = 0
     @Published var proxyQuality = ProxyQuality.standard
+    @Published var spatialPrefilter = PrefilterStrength.off
+    @Published var temporalPrefilter = PrefilterStrength.off
     @Published var audioMode = AudioMode.none
     @Published var showsImporter = false
     @Published var isImporting = false
@@ -51,6 +53,12 @@ final class ProjectStore: ObservableObject {
     func updateEffect(_ node: EffectNode) {
         guard let index = effects.firstIndex(where: { $0.id == node.id }) else { return }
         effects[index] = node
+        markEdited()
+    }
+
+    func toggleEffectEnabled(_ id: UUID) {
+        guard let index = effects.firstIndex(where: { $0.id == id }) else { return }
+        effects[index].enabled.toggle()
         markEdited()
     }
 
@@ -168,6 +176,18 @@ final class ProjectStore: ObservableObject {
         importVideo(from: url)
     }
 
+    func setSpatialPrefilter(_ strength: PrefilterStrength) {
+        guard strength != spatialPrefilter else { return }
+        spatialPrefilter = strength
+        if source != nil { markEdited() }
+    }
+
+    func setTemporalPrefilter(_ strength: PrefilterStrength) {
+        guard strength != temporalPrefilter else { return }
+        temporalPrefilter = strength
+        if source != nil { markEdited() }
+    }
+
     func newProject() {
         stopPlayback()
         cancelWork()
@@ -180,6 +200,10 @@ final class ProjectStore: ObservableObject {
         outputNodeID = nil
         currentFrame = 0
         projectURL = nil
+        proxyQuality = .standard
+        spatialPrefilter = .off
+        temporalPrefilter = .off
+        audioMode = .none
         isDirty = false
         recoveryTask?.cancel()
         RecoveryStore.remove()
@@ -200,7 +224,8 @@ final class ProjectStore: ObservableObject {
         guard let source else { return }
         let saved = SavedChronoForgeProject(
             source: source, effects: effects, outputNodeID: outputNodeID,
-            proxyQuality: proxyQuality, audioMode: audioMode)
+            proxyQuality: proxyQuality, spatialPrefilter: spatialPrefilter,
+            temporalPrefilter: temporalPrefilter, audioMode: audioMode)
         recoveryTask = Task {
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
@@ -231,6 +256,8 @@ final class ProjectStore: ObservableObject {
             effects = saved.effects
             reconnectEffectStack()
             proxyQuality = saved.proxyQuality.flatMap(ProxyQuality.init(rawValue:)) ?? .standard
+            spatialPrefilter = saved.spatialPrefilter.flatMap(PrefilterStrength.init(rawValue:)) ?? .off
+            temporalPrefilter = saved.temporalPrefilter.flatMap(PrefilterStrength.init(rawValue:)) ?? .off
             audioMode = saved.audioMode.flatMap(AudioMode.init(rawValue:)) ?? .none
             projectURL = url
             isDirty = false
@@ -264,7 +291,8 @@ final class ProjectStore: ObservableObject {
         do {
             try ProjectPersistence.save(SavedChronoForgeProject(
                 source: source, effects: effects, outputNodeID: outputNodeID,
-                proxyQuality: proxyQuality, audioMode: audioMode), to: url)
+                proxyQuality: proxyQuality, spatialPrefilter: spatialPrefilter,
+                temporalPrefilter: temporalPrefilter, audioMode: audioMode), to: url)
             projectURL = url
             isDirty = false
             RecoveryStore.remove()
@@ -283,10 +311,10 @@ final class ProjectStore: ObservableObject {
         cancelWork()
         isRendering = true
         errorMessage = nil
-        statusMessage = "Rendering graph…"
+        statusMessage = "Updating proxy preview…"
         let graph: [EffectNode]
         do {
-            graph = try activeEffectChain()
+            graph = try renderEffectChain()
         } catch {
             errorMessage = error.localizedDescription
             isRendering = false
@@ -348,7 +376,7 @@ final class ProjectStore: ObservableObject {
                 renderProgress = nil
             }
             do {
-                let renderEffects = try activeEffectChain()
+                let renderEffects = try renderEffectChain()
                 try await performExport(
                     source: source,
                     effects: renderEffects,
@@ -382,7 +410,7 @@ final class ProjectStore: ObservableObject {
         }
         let renderEffects: [EffectNode]
         do {
-            renderEffects = try activeEffectChain()
+            renderEffects = try renderEffectChain()
         } catch {
             errorMessage = error.localizedDescription
             return
@@ -514,6 +542,14 @@ final class ProjectStore: ObservableObject {
     func activeEffectChain() throws -> [EffectNode] {
         guard let outputNodeID else { return [] }
         return try chainEnding(at: outputNodeID)
+    }
+
+    func renderEffectChain() throws -> [EffectNode] {
+        var chain = try activeEffectChain()
+        if spatialPrefilter != .off || temporalPrefilter != .off {
+            chain.append(.makePrefilter(spatial: spatialPrefilter, temporal: temporalPrefilter))
+        }
+        return chain
     }
 
     private func chainEnding(at nodeID: UUID) throws -> [EffectNode] {

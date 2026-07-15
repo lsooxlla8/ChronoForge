@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0 — transform families and anti-aliasing
+
+- Fixed the low-quality proxy crash in Polar Time Warp with Wrap edges by keeping rounded fractional coordinates strictly inside the tensor.
+- Combined Axis Swap and 3D Rotation into one user-facing Tensor Transform family while preserving old project compatibility.
+- Renamed the five effect families consistently: Tensor Transform, Channel Time Shift, Polar Time Warp, Temporal Pixel Sort and Spectral Transform.
+- Added independent Off/Light/Strong Spatial and Temporal Prefilter settings to proxy preview, direct export and queued full renders.
+- Removed redundant toolbar captions and added Shift+S for Toggle Sidebar.
+- Added active-mode subtitles to effect rows, Bypass/Enable to their context menu and an explicit stale-preview badge.
+
 ## 0.5.0 — proxy, stack and spectral rotation
 
 - Made `Fit Source Size` the consistent default for every effect that can change the visible frame dimensions.

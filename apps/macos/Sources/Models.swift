@@ -46,41 +46,46 @@ enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
     case temporalPixelSort = 3
     case tensor3DRotation = 4
     case spectralFFTSwap = 5
+    case selectivePrefilter = 6
 
     var id: Int32 { rawValue }
 
     var title: String {
         switch self {
-        case .spaceTimeTranspose: "Space–Time Transpose"
-        case .lumaTimeShift: "Luma–Time Shift"
-        case .radialChronoFunnel: "Radial Time Loom"
+        case .spaceTimeTranspose, .tensor3DRotation: "Tensor Transform"
+        case .lumaTimeShift: "Channel Time Shift"
+        case .radialChronoFunnel: "Polar Time Warp"
         case .temporalPixelSort: "Temporal Pixel Sort"
-        case .tensor3DRotation: "Tensor 3D Rotation"
-        case .spectralFFTSwap: "Spectral FFT Swap"
+        case .spectralFFTSwap: "Spectral Transform"
+        case .selectivePrefilter: "Output Prefilter"
         }
     }
 
     var symbol: String {
         switch self {
-        case .spaceTimeTranspose: "arrow.triangle.swap"
+        case .spaceTimeTranspose, .tensor3DRotation: "rotate.3d"
         case .lumaTimeShift: "sun.max.trianglebadge.exclamationmark"
         case .radialChronoFunnel: "hurricane"
         case .temporalPixelSort: "arrow.up.arrow.down.square"
-        case .tensor3DRotation: "rotate.3d"
         case .spectralFFTSwap: "waveform.path.ecg.rectangle"
+        case .selectivePrefilter: "camera.filters"
         }
     }
 
     var tintName: String {
         switch self {
-        case .spaceTimeTranspose: "orange"
+        case .spaceTimeTranspose, .tensor3DRotation: "orange"
         case .lumaTimeShift: "yellow"
         case .radialChronoFunnel: "cyan"
         case .temporalPixelSort: "purple"
-        case .tensor3DRotation: "pink"
         case .spectralFFTSwap: "indigo"
+        case .selectivePrefilter: "gray"
         }
     }
+
+    static let addableKinds: [EffectKind] = [
+        .spaceTimeTranspose, .lumaTimeShift, .radialChronoFunnel, .temporalPixelSort, .spectralFFTSwap,
+    ]
 }
 
 struct EffectNode: Identifiable, Codable, Equatable, Sendable {
@@ -102,9 +107,31 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
         case .temporalPixelSort:
             return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 0, 0, 0])
         case .tensor3DRotation:
-            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 15, 0, 0], options: [0, 0, 0, 0])
+            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 15, 0, 0], options: [3, 0, 0, 0])
         case .spectralFFTSwap:
             return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 1, 1, 0])
+        case .selectivePrefilter:
+            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 0, 0, 0])
+        }
+    }
+
+    static func makePrefilter(spatial: PrefilterStrength, temporal: PrefilterStrength) -> EffectNode {
+        .init(
+            kind: .selectivePrefilter,
+            values: [0, 0, 0, 0],
+            options: [spatial.rawValue, temporal.rawValue, 0, 0]
+        )
+    }
+
+    var modeTitle: String {
+        switch kind {
+        case .spaceTimeTranspose: options[0] == 0 ? "Axis Swap · X–Time" : "Axis Swap · Y–Time"
+        case .tensor3DRotation: "3D Rotation"
+        case .lumaTimeShift: ["Luma", "Red", "Green", "Blue", "Alpha"][min(max(Int(options[0]), 0), 4)]
+        case .radialChronoFunnel: ["Time Loom", "Kaleido Fold", "Event Horizon"][min(max(Int(options[1]), 0), 2)]
+        case .temporalPixelSort: ["Luma", "Hue", "Saturation"][min(max(Int(options[0]), 0), 2)]
+        case .spectralFFTSwap: options[3] == 0 ? "Frequency Swap" : "Frequency Rotation"
+        case .selectivePrefilter: "Spatial + Temporal"
         }
     }
 }
@@ -175,6 +202,21 @@ enum ProxyQuality: String, CaseIterable, Identifiable, Codable, Sendable {
     var id: String { rawValue }
     var title: String { self == .standard ? "Standard" : "High" }
     var detail: String { self == .standard ? "Up to 320 × 180 · 10 fps" : "Up to 480 × 270 · 15 fps" }
+}
+
+enum PrefilterStrength: Int32, CaseIterable, Identifiable, Codable, Sendable {
+    case off
+    case light
+    case strong
+
+    var id: Int32 { rawValue }
+    var title: String {
+        switch self {
+        case .off: "Off"
+        case .light: "Light"
+        case .strong: "Strong"
+        }
+    }
 }
 
 enum AudioMode: String, CaseIterable, Identifiable, Codable, Sendable {

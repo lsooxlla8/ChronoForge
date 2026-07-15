@@ -6,7 +6,7 @@ extension UTType {
 }
 
 struct SavedChronoForgeProject: Codable, Sendable {
-    static let currentVersion = 2
+    static let currentVersion = 3
 
     var version: Int
     var sourceBookmark: Data?
@@ -15,6 +15,8 @@ struct SavedChronoForgeProject: Codable, Sendable {
     var outputNodeID: UUID?
     var quality: String
     var proxyQuality: String?
+    var spatialPrefilter: Int32?
+    var temporalPrefilter: Int32?
     var audioMode: String?
     var savedAt: Date
 
@@ -24,6 +26,8 @@ struct SavedChronoForgeProject: Codable, Sendable {
         outputNodeID: UUID? = nil,
         quality: RenderQuality = .full,
         proxyQuality: ProxyQuality = .standard,
+        spatialPrefilter: PrefilterStrength = .off,
+        temporalPrefilter: PrefilterStrength = .off,
         audioMode: AudioMode = .none
     ) {
         version = Self.currentVersion
@@ -33,6 +37,8 @@ struct SavedChronoForgeProject: Codable, Sendable {
         self.outputNodeID = outputNodeID
         self.quality = quality.rawValue
         self.proxyQuality = proxyQuality.rawValue
+        self.spatialPrefilter = spatialPrefilter.rawValue
+        self.temporalPrefilter = temporalPrefilter.rawValue
         self.audioMode = audioMode.rawValue
         savedAt = Date()
     }

@@ -27,6 +27,7 @@ typedef enum CFEffectKind {
     CF_EFFECT_TEMPORAL_PIXEL_SORT = 3,
     CF_EFFECT_TENSOR_3D_ROTATION = 4,
     CF_EFFECT_SPECTRAL_FFT_SWAP = 5,
+    CF_EFFECT_SELECTIVE_PREFILTER = 6,
 } CFEffectKind;
 
 // Generic ABI-stable parameter packet. Its interpretation is defined by kind:
@@ -36,6 +37,7 @@ typedef enum CFEffectKind {
 // temporal pixel sort:    values[0] = threshold; options = criterion, direction
 // tensor 3D rotation:     values = XY, XT, YT degrees; options[0] = fill mode
 // spectral transform:     values[0] = angle; options = axis/plane, normalize, Native/Fit Source Size, Swap/Rotate
+// selective prefilter:    options = spatial strength, temporal strength (Off/Light/Strong)
 typedef struct CFEffectDescriptor {
     int32_t kind;
     float values[4];

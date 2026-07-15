@@ -161,8 +161,10 @@ void parallel_for(std::size_t count, const LocalProgress& progress, Function&& f
     switch (behavior) {
         case EdgeBehavior::Clamp: return std::clamp(coordinate, 0.0F, maximum);
         case EdgeBehavior::Wrap: {
-            coordinate = std::fmod(coordinate, static_cast<float>(count));
-            return coordinate < 0.0F ? coordinate + static_cast<float>(count) : coordinate;
+            const auto size = static_cast<float>(count);
+            coordinate = std::fmod(coordinate, size);
+            if (coordinate < 0.0F) coordinate += size;
+            return std::min(coordinate, std::nextafter(size, 0.0F));
         }
         case EdgeBehavior::Mirror: {
             const auto period = 2.0F * maximum;
@@ -964,6 +966,52 @@ void spectral(
     }
 }
 
+void prefilter(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
+    require_option(effect.options[0], 2, "spatial prefilter");
+    require_option(effect.options[1], 2, "temporal prefilter");
+    const auto amount = [](std::int32_t strength) {
+        switch (strength) {
+            case 0: return 0.0F;
+            case 1: return 0.2F;
+            case 2: return 0.4F;
+            default: throw std::invalid_argument("Invalid prefilter strength");
+        }
+    };
+    const auto spatial = amount(effect.options[0]);
+    const auto temporal = amount(effect.options[1]);
+    const auto& shape = input.shape();
+    auto* destination = output.mutable_data();
+    const auto clamped = [](std::size_t value, int offset, std::size_t extent) {
+        return static_cast<std::size_t>(std::clamp<std::ptrdiff_t>(
+            static_cast<std::ptrdiff_t>(value) + offset, 0, static_cast<std::ptrdiff_t>(extent - 1)));
+    };
+    parallel_for(shape.t, progress, [&](std::size_t t) {
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                for (std::size_t c = 0; c < shape.c; ++c) {
+                    const auto center = read(input, t, y, x, c);
+                    auto value = center;
+                    if (spatial > 0.0F) {
+                        const auto average = (read(input, t, clamped(y, -1, shape.h), x, c) +
+                                              read(input, t, clamped(y, 1, shape.h), x, c) +
+                                              read(input, t, y, clamped(x, -1, shape.w), c) +
+                                              read(input, t, y, clamped(x, 1, shape.w), c)) *
+                                             0.25F;
+                        value += spatial * (average - center);
+                    }
+                    if (temporal > 0.0F) {
+                        const auto average = (read(input, clamped(t, -1, shape.t), y, x, c) +
+                                              read(input, clamped(t, 1, shape.t), y, x, c)) *
+                                             0.5F;
+                        value += temporal * (average - center);
+                    }
+                    destination[linear(t, y, x, c, shape)] = value;
+                }
+            }
+        }
+    });
+}
+
 void apply(
     const MappedTensor& input,
     MappedTensor& output,
@@ -990,6 +1038,9 @@ void apply(
         case EffectOperation::SpectralFftSwap:
             spectral(input, output, effect, budget, metadata, progress);
             return;
+        case EffectOperation::SelectivePrefilter:
+            prefilter(input, output, effect, progress);
+            return;
     }
     throw std::invalid_argument("Invalid effect operation");
 }
@@ -997,17 +1048,19 @@ void apply(
 [[nodiscard]] std::string stage_name(EffectOperation operation) {
     switch (operation) {
         case EffectOperation::SpaceTimeTranspose:
-            return "Space-Time Transpose";
+            return "Tensor Transform";
         case EffectOperation::LumaTimeShift:
-            return "Luma-Time Shift";
+            return "Channel Time Shift";
         case EffectOperation::RadialChronoFunnel:
-            return "Radial Time Loom";
+            return "Polar Time Warp";
         case EffectOperation::TemporalPixelSort:
             return "Temporal Pixel Sort";
         case EffectOperation::Tensor3dRotation:
-            return "Tensor 3D Rotation";
+            return "Tensor Transform";
         case EffectOperation::SpectralFftSwap:
-            return "Spectral FFT Swap";
+            return "Spectral Transform";
+        case EffectOperation::SelectivePrefilter:
+            return "Output Prefilter";
     }
     return "Unknown";
 }

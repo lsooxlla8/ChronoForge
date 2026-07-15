@@ -41,6 +41,8 @@ enum SelfTestRunner {
             outputNodeID: branchB.id,
             quality: .full,
             proxyQuality: .high,
+            spatialPrefilter: .light,
+            temporalPrefilter: .strong,
             audioMode: .preserveOriginal
         )
         try ProjectPersistence.save(savedProject, to: projectURL)
@@ -48,6 +50,8 @@ enum SelfTestRunner {
         guard restoredProject.effects == savedProject.effects,
               restoredProject.quality == RenderQuality.full.rawValue,
               restoredProject.proxyQuality == ProxyQuality.high.rawValue,
+              restoredProject.spatialPrefilter == PrefilterStrength.light.rawValue,
+              restoredProject.temporalPrefilter == PrefilterStrength.strong.rawValue,
               restoredProject.audioMode == AudioMode.preserveOriginal.rawValue,
               restoredProject.outputNodeID == branchB.id,
               restoredProject.effects.last?.inputNodeID == firstNode.id,
@@ -56,9 +60,15 @@ enum SelfTestRunner {
         }
         try await MainActor.run {
             let store = ProjectStore()
+            guard EffectKind.addableKinds.count == 5,
+                  EffectKind.spaceTimeTranspose.title == EffectKind.tensor3DRotation.title,
+                  EffectKind.spaceTimeTranspose.title == "Tensor Transform" else {
+                throw IntegrationSelfTestError.message("Effect families were not exposed as a homogeneous five-effect stack")
+            }
             store.addEffect(.lumaTimeShift)
             store.addEffect(.tensor3DRotation)
             guard EffectNode.make(.spaceTimeTranspose).options[1] == 1,
+                  EffectNode.make(.tensor3DRotation).options[0] == 3,
                   EffectNode.make(.spectralFFTSwap).options[2] == 1 else {
                 throw IntegrationSelfTestError.message("Size-changing effects did not default to Fit Source Size")
             }
@@ -91,15 +101,31 @@ enum SelfTestRunner {
         guard proxyFFT.frames == proxy.tensor.frames, proxyFFT.width == proxy.tensor.width, proxyFFT.height == proxy.tensor.height else {
             throw IntegrationSelfTestError.message("Disk-backed proxy FFT did not preserve fitted dimensions")
         }
+        let wrappedPolar = try await CoreRenderer.render(input: proxy.tensor, effects: [EffectNode.make(.radialChronoFunnel)])
+        guard wrappedPolar.frames == proxy.tensor.frames,
+              wrappedPolar.width == proxy.tensor.width,
+              wrappedPolar.height == proxy.tensor.height else {
+            throw IntegrationSelfTestError.message("Wrapped Polar Time Warp did not preserve proxy dimensions")
+        }
+        let filteredProxy = try await CoreRenderer.render(
+            input: proxy.tensor,
+            effects: [.makePrefilter(spatial: .light, temporal: .strong)]
+        )
+        guard filteredProxy.frames == proxy.tensor.frames,
+              filteredProxy.width == proxy.tensor.width,
+              filteredProxy.height == proxy.tensor.height else {
+            throw IntegrationSelfTestError.message("Selective prefilter did not preserve proxy dimensions")
+        }
         let decoded = try await FullVideoDecoder.decode(sourceURL: source, destinationURL: input) { _, _ in }
         guard decoded.frames == 8, decoded.width == 48, decoded.height == 64, decoded.isValidOnDisk() else {
             throw IntegrationSelfTestError.message("Full decoder returned an invalid disk tensor")
         }
         let effect = EffectNode.make(.lumaTimeShift)
         let fft = EffectNode.make(.spectralFFTSwap, inputNodeID: effect.id)
+        let prefilter = EffectNode.makePrefilter(spatial: .light, temporal: .light)
         let rendered = try await FileCoreRenderer.render(
             input: decoded,
-            effects: [effect, fft],
+            effects: [effect, fft, prefilter],
             outputURL: output,
             scratchDirectory: root.appendingPathComponent("scratch")
         ) { _, _ in }

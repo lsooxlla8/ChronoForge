@@ -72,6 +72,20 @@ void test_time_shift_and_funnel() {
         input,
         {0.0F, 0.0F, 0.25F, chronoforge::EdgeBehavior::Wrap, 0.0F, chronoforge::RadialTopology::TimeLoom});
     require_near(funnel.at(3, 0, 1, 0), input.at(0, 0, 1, 0), "Radial funnel wraps time at an outer pixel");
+
+    // Regression: fractional wrap can round a tiny negative coordinate to
+    // exactly the extent on smaller proxy tensors. Every sampled coordinate
+    // must remain within [0, extent), regardless of proxy dimensions.
+    for (std::size_t frames = 2; frames <= 11; ++frames) {
+        for (std::size_t height = 2; height <= 9; ++height) {
+            chronoforge::VideoTensor proxy({frames, height, 13, 1}, 0.5F);
+            const auto wrapped = chronoforge::radial_chrono_funnel(
+                proxy,
+                {0.5F, 0.5F, 0.08F, chronoforge::EdgeBehavior::Wrap, 0.75F,
+                 chronoforge::RadialTopology::TimeLoom});
+            require(wrapped.shape() == proxy.shape(), "Wrapped polar warp stays inside a small proxy tensor");
+        }
+    }
 }
 
 void test_sort_and_rotation() {
@@ -96,6 +110,17 @@ void test_sort_and_rotation() {
         {45.0F, 0, 0, chronoforge::FillMode::Fit});
     require_near(black_rotation.at(0, 0, 0, 0), 0.0F, "Black rotation exposes an empty corner");
     require_near(fit_rotation.at(0, 0, 0, 0), 1.0F, "Fit rotation zooms the tensor to cover the frame");
+
+    chronoforge::VideoTensor impulse({3, 3, 3, 1}, 0.0F);
+    impulse.at(1, 1, 1, 0) = 1.0F;
+    const auto spatial_filter = chronoforge::selective_prefilter(
+        impulse, {chronoforge::PrefilterStrength::Strong, chronoforge::PrefilterStrength::Off});
+    require_near(spatial_filter.at(1, 1, 1, 0), 0.6F, "Strong spatial prefilter applies an efficient axial low-pass");
+    require_near(spatial_filter.at(0, 1, 1, 0), 0.0F, "Spatial prefilter does not blend time");
+    const auto temporal_filter = chronoforge::selective_prefilter(
+        impulse, {chronoforge::PrefilterStrength::Off, chronoforge::PrefilterStrength::Strong});
+    require_near(temporal_filter.at(1, 1, 1, 0), 0.6F, "Strong temporal prefilter weights the current frame");
+    require_near(temporal_filter.at(0, 1, 1, 0), 0.2F, "Temporal prefilter blends adjacent frames");
 }
 
 void test_fft_swap() {
@@ -180,6 +205,7 @@ void test_file_backed_effect_chain() {
         {chronoforge::EffectOperation::Tensor3dRotation, {5.0F, 10.0F, 0, 0}, {3, 0, 0, 0}},
         {chronoforge::EffectOperation::SpaceTimeTranspose, {0, 0, 0, 0}, {0, 0, 0, 0}},
         {chronoforge::EffectOperation::SpectralFftSwap, {0, 0, 0, 0}, {1, 0, 0, 0}},
+        {chronoforge::EffectOperation::SelectivePrefilter, {0, 0, 0, 0}, {1, 1, 0, 0}},
     };
     std::size_t progress_calls = 0;
     double last_progress = 0.0;
@@ -206,6 +232,8 @@ void test_file_backed_effect_chain() {
     expected = chronoforge::tensor_3d_rotation(expected, {5.0F, 10.0F, 0, chronoforge::FillMode::Fit});
     expected = chronoforge::space_time_transpose(expected, chronoforge::SpatialAxis::X);
     expected = chronoforge::spectral_fft_swap(expected, {chronoforge::SpectralSwapAxis::YTime, false, 64 * 1024 * 1024});
+    expected = chronoforge::selective_prefilter(
+        expected, {chronoforge::PrefilterStrength::Light, chronoforge::PrefilterStrength::Light});
 
     require(result.shape == expected.shape(), "File executor reports the final transposed shape");
     require(progress_calls >= effects.size() + 2 && last_progress == 1.0, "File executor reports granular progress through completion");

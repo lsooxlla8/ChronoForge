@@ -49,7 +49,7 @@ void enforce_budget(const VideoTensor& tensor, uint64_t budget) {
 }
 
 VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptor& descriptor, uint64_t budget) {
-    const auto kind = checked_enum<CFEffectKind>(descriptor.kind, CF_EFFECT_SPECTRAL_FFT_SWAP, "effect kind");
+    const auto kind = checked_enum<CFEffectKind>(descriptor.kind, CF_EFFECT_SELECTIVE_PREFILTER, "effect kind");
     switch (kind) {
         case CF_EFFECT_SPACE_TIME_TRANSPOSE:
             return chronoforge::space_time_transpose(
@@ -105,6 +105,13 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptor& des
                     checked_enum<chronoforge::SpectralTransform>(descriptor.options[3], 1, "FFT transform"),
                     descriptor.values[0],
                 });
+        case CF_EFFECT_SELECTIVE_PREFILTER:
+            return chronoforge::selective_prefilter(
+                input,
+                {
+                    checked_enum<chronoforge::PrefilterStrength>(descriptor.options[0], 2, "spatial prefilter"),
+                    checked_enum<chronoforge::PrefilterStrength>(descriptor.options[1], 2, "temporal prefilter"),
+                });
     }
     throw std::invalid_argument("Unsupported effect kind");
 }
@@ -126,7 +133,7 @@ CFEffectDescriptor cf_effect_descriptor_make(
     return {kind, {value0, value1, value2, value3}, {option0, option1, option2, option3}};
 }
 
-const char* cf_core_version(void) { return "0.5.0"; }
+const char* cf_core_version(void) { return "0.6.0"; }
 
 int32_t cf_render_effect_chain(
     const float* input,
@@ -221,7 +228,7 @@ int32_t cf_render_file_effect_chain(
         specifications.reserve(static_cast<std::size_t>(effect_count));
         for (uint64_t index = 0; index < effect_count; ++index) {
             const auto kind = checked_enum<chronoforge::EffectOperation>(
-                effects[index].kind, static_cast<int32_t>(chronoforge::EffectOperation::SpectralFftSwap), "effect kind");
+                effects[index].kind, static_cast<int32_t>(chronoforge::EffectOperation::SelectivePrefilter), "effect kind");
             specifications.push_back({
                 kind,
                 {effects[index].values[0], effects[index].values[1], effects[index].values[2], effects[index].values[3]},

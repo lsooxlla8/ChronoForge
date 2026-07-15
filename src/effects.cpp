@@ -101,7 +101,11 @@ void parallel_for(std::size_t count, Function&& function) {
         case EdgeBehavior::Wrap: {
             const auto size = static_cast<float>(count);
             coordinate = std::fmod(coordinate, size);
-            return coordinate < 0.0F ? coordinate + size : coordinate;
+            if (coordinate < 0.0F) coordinate += size;
+            // Adding a tiny negative remainder to a large float can round to
+            // exactly `size`. Keep the fractional coordinate inside the last
+            // valid cell so floor() can never produce an out-of-range index.
+            return std::min(coordinate, std::nextafter(size, 0.0F));
         }
         case EdgeBehavior::Mirror: {
             const auto period = 2.0F * maximum;
@@ -496,6 +500,54 @@ VideoTensor tensor_3d_rotation(const VideoTensor& input, const TensorRotationPar
                 const auto source_x = denormalized_coordinate(point.x, shape.w);
                 for (std::size_t c = 0; c < shape.c; ++c) {
                     output.at(t, y, x, c) = trilinear(input, source_t, source_y, source_x, c, params.fill_mode);
+                }
+            }
+        }
+    });
+    return output;
+}
+
+VideoTensor selective_prefilter(const VideoTensor& input, const SelectivePrefilterParams& params) {
+    if (params.spatial == PrefilterStrength::Off && params.temporal == PrefilterStrength::Off) {
+        return input;
+    }
+    const auto amount = [](PrefilterStrength strength) {
+        switch (strength) {
+            case PrefilterStrength::Off: return 0.0F;
+            case PrefilterStrength::Light: return 0.2F;
+            case PrefilterStrength::Strong: return 0.4F;
+        }
+        throw std::invalid_argument("Invalid prefilter strength");
+    };
+    const auto spatial = amount(params.spatial);
+    const auto temporal = amount(params.temporal);
+    const auto& shape = input.shape();
+    VideoTensor output(shape, 0.0F, input.metadata());
+    const auto clamped = [](std::size_t value, int offset, std::size_t extent) {
+        return static_cast<std::size_t>(std::clamp<std::ptrdiff_t>(
+            static_cast<std::ptrdiff_t>(value) + offset, 0, static_cast<std::ptrdiff_t>(extent - 1)));
+    };
+    parallel_for(shape.t, [&](std::size_t t) {
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                for (std::size_t c = 0; c < shape.c; ++c) {
+                    const auto center = input.at(t, y, x, c);
+                    auto value = center;
+                    if (spatial > 0.0F) {
+                        const auto average = (input.at(t, clamped(y, -1, shape.h), x, c) +
+                                              input.at(t, clamped(y, 1, shape.h), x, c) +
+                                              input.at(t, y, clamped(x, -1, shape.w), c) +
+                                              input.at(t, y, clamped(x, 1, shape.w), c)) *
+                                             0.25F;
+                        value += spatial * (average - center);
+                    }
+                    if (temporal > 0.0F) {
+                        const auto average = (input.at(clamped(t, -1, shape.t), y, x, c) +
+                                              input.at(clamped(t, 1, shape.t), y, x, c)) *
+                                             0.5F;
+                        value += temporal * (average - center);
+                    }
+                    output.at(t, y, x, c) = value;
                 }
             }
         }

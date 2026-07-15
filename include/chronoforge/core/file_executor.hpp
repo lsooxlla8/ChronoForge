@@ -18,6 +18,7 @@ enum class EffectOperation : std::int32_t {
     TemporalPixelSort = 3,
     Tensor3dRotation = 4,
     SpectralFftSwap = 5,
+    SelectivePrefilter = 6,
 };
 
 struct EffectSpec {
