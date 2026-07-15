@@ -30,7 +30,7 @@ typedef enum CFEffectKind {
 } CFEffectKind;
 
 // Generic ABI-stable parameter packet. Its interpretation is defined by kind:
-// transpose:              options[0] = X(0) / Y(1)
+// transpose:              options = X(0) / Y(1), Native(0) / Fit source canvas(1)
 // luma-time shift:        values[0] = multiplier, options = source, edge
 // radial funnel:          values = centerX, centerY, intensity; options[0] = edge
 // temporal pixel sort:    values[0] = threshold; options = criterion, direction

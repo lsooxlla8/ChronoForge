@@ -360,6 +360,7 @@ private struct EffectInspector: View {
         switch node.kind {
         case .spaceTimeTranspose:
             optionPicker("Swap axis", value: option(0), options: ["X ↔ Time", "Y ↔ Time"])
+            optionPicker("Resolution", value: option(1), options: ["Native tensor", "Fit source canvas"])
         case .lumaTimeShift:
             valueSlider("Shift multiplier", value: value(0), range: -100...100, format: "%.0f frames")
             optionPicker("Source", value: option(0), options: ["Luma", "Red", "Green", "Blue", "Alpha"])

@@ -4,6 +4,7 @@
 
 - Real AVFoundation import with orientation-aware proxy and full-resolution decoding.
 - Explicit branched node graph with six tensor effects and selectable Output.
+- Native or source-canvas resolution modes for space-time transpose.
 - Memory-mapped out-of-core full render, CPU thread pools, progress and cancellation.
 - Content-addressed proxy/full caches with disk preflight and cache clearing.
 - H.264 MP4 export with optional original-audio preservation.

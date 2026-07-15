@@ -2,13 +2,13 @@
 
 **ChronoForge** is a native macOS-first editor for treating video as a space-time tensor `(T, H, W, C)`, not a stack of isolated frames. It imports real video, evaluates a branched six-effect C++ graph, previews a bounded proxy and renders full-resolution H.264 MP4 through memory-mapped SSD tensors.
 
-## What works in this first foundation
+## What is included
 
 - Six CPU reference effects: space-time transpose, luma-time shift, radial chrono-funnel, temporal pixel sort, trilinear 3D rotation, and a bounded 3D FFT frequency-axis swap.
 - A directed acyclic node graph that rejects cycles.
 - SSD cache chunks written atomically, so cancelled or interrupted renders do not create valid-looking partial cache entries.
 - A tile planner designed for complete per-pixel time series: temporal effects split across `H × W`, while retaining all `T` samples needed to operate correctly.
-- CPU safety gate for 3D FFT. It supports power-of-two proxy tensors only and refuses requests before allocating a working set above the configured budget.
+- CPU safety gate for 3D FFT. Arbitrary tensor extents are padded safely and requests are refused before allocating a working set above the configured budget.
 - A native macOS 14+ SwiftUI editor with real video import, frame preview, editable effect parameters, reordering/bypass, render cancellation and MP4 export.
 - A content-addressed proxy cache keyed by source fingerprint, graph parameters and engine version.
 - A native H.264 integration check that generates a movie, decodes it and sends it through the C++ bridge.
@@ -26,11 +26,11 @@ The original brief is strong, but a few details make the difference between a de
 | Linear float working space with explicit transfer/alpha metadata | Brightness, interpolation and FFT are mathematically meaningful only after decoding video out of display-encoded sRGB/Rec.709. |
 | Logical playback rate is metadata, not an axis size | Swapping `T` and `X` changes the tensor extents; the desired export FPS remains an explicit Output choice. |
 | Tile contracts declare their temporal footprint | Pixel sort needs every time sample for a pixel. A scheduler must not accidentally run it on independent frame chunks. |
-| Cache key includes graph signature, node parameters, proxy scale and source fingerprint | Otherwise a changed node may display stale cached output. The store is ready for such keys; graph hashing is the next executor step. |
-| FFT is a global operation | It is never silently tiled. The proxy CPU implementation is bounded; full render will route to Metal/MetalFFT or an external-memory algorithm after a resource estimate. |
+| Cache key includes graph signature, node parameters, proxy scale and source fingerprint | Otherwise a changed node could display stale cached output. Proxy and full-render caches use content-addressed keys. |
+| FFT is a global operation | It is never silently tiled. Proxy and full render use a bounded CPU implementation and stop before allocation when the estimated working set exceeds the configured RAM budget. |
 | Effects sample backward into source coordinates | It avoids holes in radial/rotation transforms, and 3D rotation uses trilinear interpolation. |
 
-The complete operating model and the remaining production milestones are in [docs/architecture.md](docs/architecture.md).
+The complete operating model is in [docs/architecture.md](docs/architecture.md).
 
 ## Build the core on macOS
 

@@ -54,7 +54,10 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptor& des
         case CF_EFFECT_SPACE_TIME_TRANSPOSE:
             return chronoforge::space_time_transpose(
                 input,
-                checked_enum<chronoforge::SpatialAxis>(descriptor.options[0], 1, "transpose axis"));
+                {
+                    checked_enum<chronoforge::SpatialAxis>(descriptor.options[0], 1, "transpose axis"),
+                    checked_enum<chronoforge::TransposeResolution>(descriptor.options[1], 1, "transpose resolution"),
+                });
         case CF_EFFECT_LUMA_TIME_SHIFT:
             return chronoforge::luma_time_shift(
                 input,

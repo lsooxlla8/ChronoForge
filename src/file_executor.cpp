@@ -211,8 +211,11 @@ void report(const FileRenderProgress& progress, double fraction, std::string_vie
     switch (effect.kind) {
         case EffectOperation::SpaceTimeTranspose:
             require_option(effect.options[0], 1, "transpose axis");
-            return effect.options[0] == 0 ? TensorShape{input.w, input.h, input.t, input.c}
-                                          : TensorShape{input.h, input.t, input.w, input.c};
+            require_option(effect.options[1], 1, "transpose resolution");
+            if (effect.options[0] == 0) {
+                return {input.w, input.h, effect.options[1] == 1 ? input.w : input.t, input.c};
+            }
+            return {input.h, effect.options[1] == 1 ? input.h : input.t, input.w, input.c};
         case EffectOperation::SpectralFftSwap:
             require_option(effect.options[0], 2, "FFT axis");
             if (effect.options[0] == 0) {
@@ -229,13 +232,30 @@ void report(const FileRenderProgress& progress, double fraction, std::string_vie
 
 void transpose(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
     const auto& s = output.shape();
+    const auto& source_shape = input.shape();
+    const auto fit = effect.options[1] == 1;
     auto* destination = output.mutable_data();
     parallel_for(s.t, progress, [&](std::size_t t) {
         for (std::size_t y = 0; y < s.h; ++y) {
             for (std::size_t x = 0; x < s.w; ++x) {
                 for (std::size_t c = 0; c < s.c; ++c) {
-                    destination[linear(t, y, x, c, s)] = effect.options[0] == 0 ? read(input, x, y, t, c)
-                                                                                 : read(input, y, t, x, c);
+                    if (!fit) {
+                        destination[linear(t, y, x, c, s)] = effect.options[0] == 0 ? read(input, x, y, t, c)
+                                                                                     : read(input, y, t, x, c);
+                        continue;
+                    }
+                    const auto extent = effect.options[0] == 0 ? s.w : s.h;
+                    const auto coordinate = effect.options[0] == 0 ? x : y;
+                    const auto source_time = extent == 1
+                                                 ? 0.0F
+                                                 : static_cast<float>(coordinate) * static_cast<float>(source_shape.t - 1) /
+                                                       static_cast<float>(extent - 1);
+                    const auto time0 = static_cast<std::size_t>(std::floor(source_time));
+                    const auto time1 = std::min(time0 + 1, source_shape.t - 1);
+                    const auto fraction = source_time - static_cast<float>(time0);
+                    const auto value0 = effect.options[0] == 0 ? read(input, time0, y, t, c) : read(input, time0, t, x, c);
+                    const auto value1 = effect.options[0] == 0 ? read(input, time1, y, t, c) : read(input, time1, t, x, c);
+                    destination[linear(t, y, x, c, s)] = value0 + (value1 - value0) * fraction;
                 }
             }
         }

@@ -264,16 +264,37 @@ void rotate_plane(float& a, float& b, float degrees) {
 }  // namespace
 
 VideoTensor space_time_transpose(const VideoTensor& input, SpatialAxis axis) {
+    return space_time_transpose(input, {axis, TransposeResolution::NativeTensor});
+}
+
+VideoTensor space_time_transpose(const VideoTensor& input, const SpaceTimeTransposeParams& params) {
     const auto& shape = input.shape();
-    const auto output_shape = axis == SpatialAxis::X ? TensorShape{shape.w, shape.h, shape.t, shape.c}
-                                                       : TensorShape{shape.h, shape.t, shape.w, shape.c};
+    const auto fit = params.resolution == TransposeResolution::FitSourceCanvas;
+    const auto output_shape = params.axis == SpatialAxis::X
+                                  ? TensorShape{shape.w, shape.h, fit ? shape.w : shape.t, shape.c}
+                                  : TensorShape{shape.h, fit ? shape.h : shape.t, shape.w, shape.c};
     VideoTensor output(output_shape, 0.0F, input.metadata());
 
     parallel_for(output_shape.t, [&](std::size_t t) {
         for (std::size_t y = 0; y < output_shape.h; ++y) {
             for (std::size_t x = 0; x < output_shape.w; ++x) {
                 for (std::size_t c = 0; c < output_shape.c; ++c) {
-                    output.at(t, y, x, c) = axis == SpatialAxis::X ? input.at(x, y, t, c) : input.at(y, t, x, c);
+                    if (!fit) {
+                        output.at(t, y, x, c) = params.axis == SpatialAxis::X ? input.at(x, y, t, c) : input.at(y, t, x, c);
+                        continue;
+                    }
+                    const auto spatial_extent = params.axis == SpatialAxis::X ? output_shape.w : output_shape.h;
+                    const auto spatial_coordinate = params.axis == SpatialAxis::X ? x : y;
+                    const auto source_time = spatial_extent == 1
+                                                 ? 0.0F
+                                                 : static_cast<float>(spatial_coordinate) * static_cast<float>(shape.t - 1) /
+                                                       static_cast<float>(spatial_extent - 1);
+                    const auto time0 = static_cast<std::size_t>(std::floor(source_time));
+                    const auto time1 = std::min(time0 + 1, shape.t - 1);
+                    const auto fraction = source_time - static_cast<float>(time0);
+                    const auto value0 = params.axis == SpatialAxis::X ? input.at(time0, y, t, c) : input.at(time0, t, x, c);
+                    const auto value1 = params.axis == SpatialAxis::X ? input.at(time1, y, t, c) : input.at(time1, t, x, c);
+                    output.at(t, y, x, c) = value0 + (value1 - value0) * fraction;
                 }
             }
         }

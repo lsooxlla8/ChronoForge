@@ -47,6 +47,15 @@ void test_transpose() {
     require(output.shape() == chronoforge::TensorShape{4, 3, 2, 1}, "X/T transpose shape");
     require_near(output.at(3, 2, 1, 0), input.at(1, 2, 3, 0), "X/T transpose value");
     require(output.metadata() == metadata, "Effects preserve tensor colour and playback metadata");
+
+    const auto fitted = chronoforge::space_time_transpose(
+        input,
+        {chronoforge::SpatialAxis::X, chronoforge::TransposeResolution::FitSourceCanvas});
+    require(fitted.shape() == chronoforge::TensorShape{4, 3, 4, 1}, "Fitted X/T transpose uses the source canvas width");
+    require_near(
+        fitted.at(3, 2, 1, 0),
+        input.at(0, 2, 3, 0) + (input.at(1, 2, 3, 0) - input.at(0, 2, 3, 0)) / 3.0F,
+        "Fitted transpose interpolates along source time");
 }
 
 void test_time_shift_and_funnel() {
@@ -170,6 +179,31 @@ void test_file_backed_effect_chain() {
     const auto mapped_output = chronoforge::MappedTensor::open(output_path, result.shape, chronoforge::MappedTensor::Access::ReadOnly);
     for (std::size_t i = 0; i < expected.values().size(); ++i) {
         require_near(mapped_output.data()[i], expected.values()[i], "File-backed chain matches in-memory reference");
+    }
+
+    const auto fitted_path = root / "fitted.raw";
+    const std::vector<chronoforge::EffectSpec> fitted_effects{
+        {chronoforge::EffectOperation::SpaceTimeTranspose, {0, 0, 0, 0}, {0, 1, 0, 0}},
+    };
+    const auto fitted_result = chronoforge::render_file_effect_chain(
+        input_path,
+        fitted_path,
+        root / "fit-scratch",
+        input.shape(),
+        input.metadata(),
+        fitted_effects,
+        64 * 1024 * 1024,
+        {});
+    const auto fitted_expected = chronoforge::space_time_transpose(
+        input,
+        {chronoforge::SpatialAxis::X, chronoforge::TransposeResolution::FitSourceCanvas});
+    require(fitted_result.shape == fitted_expected.shape(), "File-backed fitted transpose reports the source canvas shape");
+    const auto fitted_output = chronoforge::MappedTensor::open(
+        fitted_path,
+        fitted_result.shape,
+        chronoforge::MappedTensor::Access::ReadOnly);
+    for (std::size_t i = 0; i < fitted_expected.values().size(); ++i) {
+        require_near(fitted_output.data()[i], fitted_expected.values()[i], "File-backed fitted transpose matches preview");
     }
 
     bool cancelled = false;
