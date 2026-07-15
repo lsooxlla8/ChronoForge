@@ -14,6 +14,7 @@ enum class SortCriterion { Luma, Hue, Saturation };
 enum class SortDirection { Ascending, Descending };
 enum class FillMode { Black, Transparent, Repeat, Fit };
 enum class RadialTopology { TimeLoom, KaleidoFold, EventHorizon };
+enum class PrefilterStrength { Off, Light, Strong };
 
 struct LumaTimeShiftParams {
     float shift_multiplier{};
@@ -51,11 +52,17 @@ struct TensorRotationParams {
     FillMode fill_mode{FillMode::Black};
 };
 
+struct SelectivePrefilterParams {
+    PrefilterStrength spatial{PrefilterStrength::Off};
+    PrefilterStrength temporal{PrefilterStrength::Off};
+};
+
 VideoTensor space_time_transpose(const VideoTensor& input, SpatialAxis axis);
 VideoTensor space_time_transpose(const VideoTensor& input, const SpaceTimeTransposeParams& params);
 VideoTensor luma_time_shift(const VideoTensor& input, const LumaTimeShiftParams& params);
 VideoTensor radial_chrono_funnel(const VideoTensor& input, const RadialChronoFunnelParams& params);
 VideoTensor temporal_pixel_sort(const VideoTensor& input, const TemporalPixelSortParams& params);
 VideoTensor tensor_3d_rotation(const VideoTensor& input, const TensorRotationParams& params);
+VideoTensor selective_prefilter(const VideoTensor& input, const SelectivePrefilterParams& params);
 
 }  // namespace chronoforge

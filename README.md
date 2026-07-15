@@ -1,10 +1,10 @@
 # ChronoForge
 
-**ChronoForge** is a native macOS-first editor for treating video as a space-time tensor `(T, H, W, C)`, not a stack of isolated frames. It imports real video, evaluates a sequential six-effect C++ stack, previews a bounded proxy and renders full-resolution H.264 MP4 through memory-mapped SSD tensors.
+**ChronoForge** is a native macOS-first editor for treating video as a space-time tensor `(T, H, W, C)`, not a stack of isolated frames. It imports real video, evaluates a sequential five-family C++ effect stack, previews a bounded proxy and renders full-resolution H.264 MP4 through memory-mapped SSD tensors.
 
 ## What is included
 
-- Six CPU reference effects: space-time transpose, luma-time shift, spatial-temporal radial time loom, temporal pixel sort, trilinear 3D rotation, and 3D FFT frequency swap/rotation.
+- Five coherent effect families: Tensor Transform (Axis Swap/3D Rotation), Channel Time Shift, Polar Time Warp, Temporal Pixel Sort and Spectral Transform (Swap/Rotate).
 - A directed acyclic node graph that rejects cycles.
 - SSD cache chunks written atomically, so cancelled or interrupted renders do not create valid-looking partial cache entries.
 - A tile planner designed for complete per-pixel time series: temporal effects split across `H × W`, while retaining all `T` samples needed to operate correctly.
@@ -17,6 +17,7 @@
 - Project save/open, security-scoped source bookmarks, autosave recovery, automatic 8 GB cache trimming and optional original-audio muxing.
 - Full-quality sequential render queue with a settings snapshot per item, automatic cache cleanup between jobs, ⌘⇧R start and completion sound.
 - Always-proxy preview with Standard/High quality choices; direct export and render queue always decode the original at full quality.
+- Independent spatial and temporal output prefilters with Off/Light/Strong levels, applied identically to proxy and SSD-backed full renders.
 - Exact numeric parameter entry, contextual default reset, Space play/pause and in-editor media replacement/removal.
 - CPU thread pools for proxy and full local/temporal effects, granular progress and cancellation with partial-file cleanup.
 

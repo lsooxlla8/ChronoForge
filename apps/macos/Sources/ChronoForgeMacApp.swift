@@ -1,11 +1,24 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
 @main
 struct ChronoForgeMacApp: App {
     @StateObject private var project = ProjectStore()
+    private static var sidebarShortcutMonitor: Any?
 
     init() {
+        if Self.sidebarShortcutMonitor == nil {
+            Self.sidebarShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                guard !event.isARepeat,
+                      event.charactersIgnoringModifiers?.lowercased() == "s",
+                      modifiers.contains(.shift),
+                      modifiers.intersection([.command, .option, .control]).isEmpty else { return event }
+                NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
+                return nil
+            }
+        }
         if CommandLine.arguments.contains("--self-test") {
             Task {
                 do {
@@ -54,6 +67,12 @@ struct ChronoForgeMacApp: App {
             CommandGroup(after: .saveItem) {
                 Button("Clear Render Cache…") { project.showsClearCacheConfirmation = true }
                     .disabled(project.isRendering || project.isImporting || project.isExporting)
+            }
+            CommandGroup(replacing: .sidebar) {
+                Button("Toggle Sidebar") {
+                    NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
+                }
+                .keyboardShortcut("s", modifiers: [.shift])
             }
         }
     }
@@ -152,12 +171,20 @@ private struct WorkspaceView: View {
                     }
                 }
             }
-            Section("Effect graph") {
+            Section("Effect stack") {
                 ForEach(project.effects) { node in
-                    Label(node.kind.title, systemImage: node.kind.symbol)
-                        .tag(node.id)
-                        .opacity(node.enabled ? 1 : 0.45)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label(node.kind.title, systemImage: node.kind.symbol)
+                        Text(node.modeTitle)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .tag(node.id)
+                    .opacity(node.enabled ? 1 : 0.45)
                         .contextMenu {
+                            Button(node.enabled ? "Bypass" : "Enable", systemImage: node.enabled ? "pause.circle" : "play.circle") {
+                                project.toggleEffectEnabled(node.id)
+                            }
                             Button("Duplicate", systemImage: "plus.square.on.square") {
                                 project.duplicateEffect(node.id)
                             }
@@ -192,7 +219,7 @@ private struct WorkspaceView: View {
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 7) {
                 Menu("Add effect", systemImage: "plus") {
-                    ForEach(EffectKind.allCases) { kind in
+                    ForEach(EffectKind.addableKinds) { kind in
                         Button(kind.title, systemImage: kind.symbol) { project.addEffect(kind) }
                     }
                 }
@@ -243,10 +270,9 @@ private struct WorkspaceView: View {
                     .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
                 Button("Export MP4…", systemImage: "square.and.arrow.up") { project.chooseExportLocation() }
                     .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
-                    .help("Render the current graph from the original media at full quality and write an MP4 file.")
+                    .help("Render the current effect stack from the original media at full quality and write an MP4 file.")
             }
             HStack(spacing: 12) {
-                Text("Preview & export").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 Picker("Proxy preview", selection: Binding(
                     get: { project.proxyQuality },
                     set: { project.changeProxyQuality(to: $0) }
@@ -256,6 +282,22 @@ private struct WorkspaceView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 245)
                 .help(project.proxyQuality.detail)
+                Picker("Spatial prefilter", selection: Binding(
+                    get: { project.spatialPrefilter },
+                    set: { project.setSpatialPrefilter($0) }
+                )) {
+                    ForEach(PrefilterStrength.allCases) { strength in Text(strength.title).tag(strength) }
+                }
+                .frame(width: 165)
+                .help("Reduces jagged spatial edges and shimmer after geometric resampling. Light is a subtle axial low-pass; Strong is smoother.")
+                Picker("Temporal prefilter", selection: Binding(
+                    get: { project.temporalPrefilter },
+                    set: { project.setTemporalPrefilter($0) }
+                )) {
+                    ForEach(PrefilterStrength.allCases) { strength in Text(strength.title).tag(strength) }
+                }
+                .frame(width: 175)
+                .help("Blends adjacent output frames to reduce temporal aliasing and flicker. It can soften deliberately abrupt motion.")
                 Picker("Audio", selection: Binding(
                     get: { project.audioMode },
                     set: {
@@ -266,9 +308,6 @@ private struct WorkspaceView: View {
                     ForEach(AudioMode.allCases) { mode in Text(mode.title).tag(mode) }
                 }
                 .frame(width: 170)
-                Label("Export is always full quality", systemImage: "checkmark.seal")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 Spacer()
             }
         }
@@ -304,6 +343,14 @@ private struct WorkspaceView: View {
                         .background(.black.opacity(0.68), in: Capsule())
                         .foregroundStyle(.white)
                     Spacer()
+                    if project.isPreviewStale {
+                        Label("Update Preview", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 5)
+                            .background(.orange.opacity(0.85), in: Capsule())
+                            .foregroundStyle(.white)
+                    }
                 }
                 Spacer()
             }
@@ -374,12 +421,23 @@ private struct EffectInspector: View {
         Text(node.kind.title).font(.title3.weight(.semibold))
         Divider()
         switch node.kind {
-        case .spaceTimeTranspose:
-            optionPicker("Swap axis", value: option(0), options: ["X ↔ Time", "Y ↔ Time"])
-            optionPicker("Output size", value: option(1), options: ["Native Tensor", "Fit Source Size"])
-            Text("Fit Source Size keeps the visible width and height of the input. Native Tensor performs a literal axis swap; its duration still follows the swapped spatial axis.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        case .spaceTimeTranspose, .tensor3DRotation:
+            Picker("Mode", selection: tensorTransformMode) {
+                Text("Axis Swap").tag(Int32(0))
+                Text("3D Rotation").tag(Int32(1))
+            }
+            if node.kind == .spaceTimeTranspose {
+                optionPicker("Swap axis", value: option(0), options: ["X ↔ Time", "Y ↔ Time"])
+                optionPicker("Output size", value: option(1), options: ["Native Tensor", "Fit Source Size"])
+                Text("Fit Source Size keeps the visible width and height of the input. Native Tensor performs a literal axis swap; its duration still follows the swapped spatial axis.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                valueSlider("X–Y", index: 0, range: -180...180, format: "%.3f°")
+                valueSlider("X–Time", index: 1, range: -180...180, format: "%.3f°")
+                valueSlider("Y–Time", index: 2, range: -180...180, format: "%.3f°")
+                optionPicker("Fill", value: option(0), options: ["Black", "Transparent", "Repeat", "Fit Source Size"])
+            }
         case .lumaTimeShift:
             valueSlider("Shift multiplier", index: 0, range: -100...100, format: "%.0f frames")
             optionPicker("Source", value: option(0), options: ["Luma", "Red", "Green", "Blue", "Alpha"])
@@ -398,11 +456,6 @@ private struct EffectInspector: View {
             optionPicker("Criterion", value: option(0), options: ["Luma", "Hue", "Saturation"])
             optionPicker("Direction", value: option(1), options: ["Ascending", "Descending"])
             valueSlider("Threshold", index: 0, range: 0...1, format: "%.4f")
-        case .tensor3DRotation:
-            valueSlider("X–Y", index: 0, range: -180...180, format: "%.3f°")
-            valueSlider("X–T", index: 1, range: -180...180, format: "%.3f°")
-            valueSlider("Y–T", index: 2, range: -180...180, format: "%.3f°")
-            optionPicker("Fill", value: option(0), options: ["Black", "Transparent", "Repeat", "Fit"])
         case .spectralFFTSwap:
             optionPicker("Transform", value: option(3), options: ["Swap", "Rotate"])
             optionPicker(node.options[3] == 0 ? "Swap" : "Rotation plane", value: option(0), options: node.options[3] == 0 ? ["X ↔ Time", "Y ↔ Time", "All axes"] : ["X–Time", "Y–Time", "X–Y"])
@@ -417,7 +470,25 @@ private struct EffectInspector: View {
             Text("Normalize remaps the darkest and brightest computed values to 0 and 1. A pure swap preserves the range, so the difference can be subtle; it becomes more visible after spectral rotation. Fit Source Size is the default.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        case .selectivePrefilter:
+            Text("The output prefilter is controlled from the toolbar and is not part of the editable effect stack.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
+    }
+
+    private var tensorTransformMode: Binding<Int32> {
+        Binding(
+            get: { node.kind == .tensor3DRotation ? 1 : 0 },
+            set: { mode in
+                let kind: EffectKind = mode == 0 ? .spaceTimeTranspose : .tensor3DRotation
+                guard kind != node.kind else { return }
+                var replacement = EffectNode.make(kind, inputNodeID: node.inputNodeID)
+                replacement.id = node.id
+                replacement.enabled = node.enabled
+                node = replacement
+            }
+        )
     }
 
     private func option(_ index: Int) -> Binding<Int32> {
