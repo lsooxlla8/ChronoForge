@@ -45,6 +45,7 @@ struct ChronoForgeMacApp: App {
                     .keyboardShortcut("r", modifiers: .command)
                 Button("Add to Render Queue…") { project.addCurrentRenderToQueue() }
                 Button("Start Render Queue") { project.startRenderQueue() }
+                    .keyboardShortcut("r", modifiers: [.command, .shift])
                     .disabled(project.renderQueue.isEmpty || project.isQueueRunning)
                 Divider()
                 Button("Play/Pause Preview") { project.togglePlayback() }
@@ -68,11 +69,7 @@ private struct WorkspaceView: View {
             VStack(spacing: 0) {
                 toolbar
                 HSplitView {
-                    VStack(spacing: 0) {
-                        preview
-                        Divider()
-                        graph
-                    }
+                    preview
                     inspector.frame(minWidth: 280, idealWidth: 310, maxWidth: 360)
                 }
                 Divider()
@@ -107,6 +104,16 @@ private struct WorkspaceView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Source videos and saved projects will not be affected. Cached previews and full renders will be rebuilt when needed.")
+        }
+        .confirmationDialog(
+            "Clear the entire effect stack?",
+            isPresented: $project.showsClearEffectsConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Clear Effect Stack", role: .destructive) { project.clearEffectStack() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes every effect. The imported video and render queue are not affected.")
         }
         .onOpenURL { url in
             if url.pathExtension.lowercased() == "chronoforge" {
@@ -150,6 +157,15 @@ private struct WorkspaceView: View {
                     Label(node.kind.title, systemImage: node.kind.symbol)
                         .tag(node.id)
                         .opacity(node.enabled ? 1 : 0.45)
+                        .contextMenu {
+                            Button("Duplicate", systemImage: "plus.square.on.square") {
+                                project.duplicateEffect(node.id)
+                            }
+                            Divider()
+                            Button("Delete", systemImage: "trash", role: .destructive) {
+                                project.deleteEffect(node.id)
+                            }
+                        }
                 }
                 .onMove(perform: project.moveEffect)
             }
@@ -174,16 +190,18 @@ private struct WorkspaceView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            HStack {
+            VStack(spacing: 7) {
                 Menu("Add effect", systemImage: "plus") {
                     ForEach(EffectKind.allCases) { kind in
                         Button(kind.title, systemImage: kind.symbol) { project.addEffect(kind) }
                     }
                 }
-                Spacer()
-                Button("Remove", systemImage: "trash", role: .destructive) { project.removeSelectedEffect() }
-                    .disabled(project.selectedNodeIndex == nil)
-                    .labelStyle(.iconOnly)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Button("Clear Effect Stack", systemImage: "trash", role: .destructive) {
+                    project.showsClearEffectsConfirmation = true
+                }
+                .disabled(project.effects.isEmpty)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(10)
             .background(.bar)
@@ -193,7 +211,7 @@ private struct WorkspaceView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .padding(.leading, 12)
-                .padding(.bottom, 48)
+                .padding(.bottom, 80)
                 .allowsHitTesting(false)
         }
     }
@@ -225,22 +243,19 @@ private struct WorkspaceView: View {
                     .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
                 Button("Export MP4…", systemImage: "square.and.arrow.up") { project.chooseExportLocation() }
                     .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
-                    .help("Render the current graph at the selected export quality and write an MP4 file.")
+                    .help("Render the current graph from the original media at full quality and write an MP4 file.")
             }
             HStack(spacing: 12) {
-                Text("Export settings").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Picker("Quality", selection: Binding(
-                    get: { project.quality },
-                    set: {
-                        project.quality = $0
-                        if project.source != nil { project.markEdited(invalidatePreview: false) }
-                    }
+                Text("Preview & export").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Picker("Proxy preview", selection: Binding(
+                    get: { project.proxyQuality },
+                    set: { project.changeProxyQuality(to: $0) }
                 )) {
-                    ForEach(RenderQuality.allCases) { quality in Text(quality.title).tag(quality) }
+                    ForEach(ProxyQuality.allCases) { quality in Text(quality.title).tag(quality) }
                 }
                 .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 190)
+                .frame(width: 245)
+                .help(project.proxyQuality.detail)
                 Picker("Audio", selection: Binding(
                     get: { project.audioMode },
                     set: {
@@ -251,17 +266,9 @@ private struct WorkspaceView: View {
                     ForEach(AudioMode.allCases) { mode in Text(mode.title).tag(mode) }
                 }
                 .frame(width: 170)
-                Picker("Output", selection: Binding(
-                    get: { project.outputNodeID },
-                    set: {
-                        project.outputNodeID = $0
-                        project.markEdited()
-                    }
-                )) {
-                    Text("Input").tag(Optional<UUID>.none)
-                    ForEach(project.effects) { node in Text(node.kind.title).tag(Optional(node.id)) }
-                }
-                .frame(width: 210)
+                Label("Export is always full quality", systemImage: "checkmark.seal")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Spacer()
             }
         }
@@ -288,34 +295,21 @@ private struct WorkspaceView: View {
                 }
                 .foregroundStyle(.white.opacity(0.8))
             }
+            VStack {
+                HStack {
+                    Label("Proxy Preview · \(project.proxyQuality.title)", systemImage: "eye")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(.black.opacity(0.68), in: Capsule())
+                        .foregroundStyle(.white)
+                    Spacer()
+                }
+                Spacer()
+            }
+            .padding(12)
         }
         .frame(minHeight: 300)
-    }
-
-    private var graph: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 52) {
-                GraphCard(title: "Input", subtitle: project.source?.displayName ?? "No media", symbol: "film", selected: false)
-                ForEach(project.effects) { node in
-                    GraphCard(
-                        title: node.kind.title,
-                        subtitle: "← \(project.nodeName(node.inputNodeID))" + (node.enabled ? "" : " · Bypassed"),
-                        symbol: node.kind.symbol,
-                        selected: project.selectedNodeID == node.id
-                    )
-                    .onTapGesture { project.selectedNodeID = node.id }
-                }
-                GraphCard(
-                    title: "Output",
-                    subtitle: project.isPreviewStale ? "Preview needs update" : (project.output == nil ? "Preview not updated" : "Preview ready"),
-                    symbol: "rectangle.inset.filled.and.person.filled",
-                    selected: false
-                )
-            }
-            .padding(24)
-        }
-        .background(Color(nsColor: .controlBackgroundColor))
-        .frame(minHeight: 170, idealHeight: 200, maxHeight: 230)
     }
 
     @ViewBuilder
@@ -323,15 +317,9 @@ private struct WorkspaceView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Inspector").font(.headline)
             if let nodeID = project.selectedNodeID, let selectedNode = project.effect(withID: nodeID) {
-                Picker("Input", selection: Binding(
-                    get: { project.effect(withID: nodeID)?.inputNodeID },
-                    set: { project.setInput($0, for: nodeID) }
-                )) {
-                    Text("Input").tag(Optional<UUID>.none)
-                    ForEach(project.availableInputs(for: nodeID)) { candidate in
-                        Text(candidate.kind.title).tag(Optional(candidate.id))
-                    }
-                }
+                LabeledContent("Input", value: project.nodeName(selectedNode.inputNodeID))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 EffectInspector(node: Binding(
                     get: { project.effect(withID: nodeID) ?? selectedNode },
                     set: { project.updateEffect($0) }
@@ -378,25 +366,6 @@ private struct WorkspaceView: View {
     }
 }
 
-private struct GraphCard: View {
-    let title: String
-    let subtitle: String
-    let symbol: String
-    let selected: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(title, systemImage: symbol).font(.caption.weight(.semibold))
-            Text(subtitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-        }
-        .padding(12)
-        .frame(width: 210, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-        .overlay { RoundedRectangle(cornerRadius: 10).stroke(selected ? Color.accentColor : .secondary.opacity(0.35), lineWidth: selected ? 2 : 1) }
-        .shadow(color: .black.opacity(0.08), radius: 6, y: 3)
-    }
-}
-
 private struct EffectInspector: View {
     @Binding var node: EffectNode
 
@@ -407,8 +376,8 @@ private struct EffectInspector: View {
         switch node.kind {
         case .spaceTimeTranspose:
             optionPicker("Swap axis", value: option(0), options: ["X ↔ Time", "Y ↔ Time"])
-            optionPicker("Resolution", value: option(1), options: ["Native tensor", "Fit source canvas"])
-            Text("Native tensor performs a literal axis swap. Fit source canvas resizes each resulting frame back to the source canvas, but the new frame count still comes from the swapped spatial axis.")
+            optionPicker("Output size", value: option(1), options: ["Native Tensor", "Fit Source Size"])
+            Text("Fit Source Size keeps the visible width and height of the input. Native Tensor performs a literal axis swap; its duration still follows the swapped spatial axis.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .lumaTimeShift:
@@ -422,7 +391,7 @@ private struct EffectInspector: View {
             valueSlider("Intensity", index: 2, range: -1...1, format: "%.4f")
             valueSlider("Angular twist", index: 3, range: -3...3, format: "%.3f turns")
             edgePicker(option(0))
-            Text("Time Loom braids radius, angle and playback phase. Kaleido Fold mirrors time into radial facets; Event Horizon compresses time near the center and emits rotating echoes.")
+            Text("Time Loom deforms radius, angle and fractional time into moving double braids. Kaleido Fold creates animated spatial sectors; Event Horizon pulls the image into orbiting temporal echoes.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .temporalPixelSort:
@@ -435,13 +404,17 @@ private struct EffectInspector: View {
             valueSlider("Y–T", index: 2, range: -180...180, format: "%.3f°")
             optionPicker("Fill", value: option(0), options: ["Black", "Transparent", "Repeat", "Fit"])
         case .spectralFFTSwap:
-            optionPicker("Swap", value: option(0), options: ["X ↔ Time", "Y ↔ Time", "All axes"])
-            optionPicker("Resolution", value: option(2), options: ["Native tensor", "Fit source tensor"])
-            Toggle("Normalize", isOn: Binding(
+            optionPicker("Transform", value: option(3), options: ["Swap", "Rotate"])
+            optionPicker(node.options[3] == 0 ? "Swap" : "Rotation plane", value: option(0), options: node.options[3] == 0 ? ["X ↔ Time", "Y ↔ Time", "All axes"] : ["X–Time", "Y–Time", "X–Y"])
+            if node.options[3] == 1 {
+                valueSlider("Spectral angle", index: 0, range: -180...180, format: "%.3f°")
+            }
+            optionPicker("Output size", value: option(2), options: ["Native Tensor", "Fit Source Size"])
+            Toggle("Normalize output to 0–1", isOn: Binding(
                 get: { node.options[1] != 0 },
                 set: { node.options[1] = $0 ? 1 : 0 }
             ))
-            Text("Fit source tensor resamples the transformed result back to the input frame count, width and height. Full export uses SSD-backed FFT lines instead of loading the video volume into RAM.")
+            Text("Normalize remaps the darkest and brightest computed values to 0 and 1. A pure swap preserves the range, so the difference can be subtle; it becomes more visible after spectral rotation. Fit Source Size is the default.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

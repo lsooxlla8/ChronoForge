@@ -162,6 +162,85 @@ void fft_3d(std::vector<Complex>& values, const TensorShape& shape, bool inverse
     return output;
 }
 
+[[nodiscard]] float wrapped_coordinate(float value, std::size_t extent) {
+    const auto size = static_cast<float>(extent);
+    value = std::fmod(value, size);
+    return value < 0.0F ? value + size : value;
+}
+
+[[nodiscard]] Complex sample_periodic(
+    const std::vector<Complex>& input,
+    const TensorShape& shape,
+    float t,
+    float y,
+    float x,
+    std::size_t c) {
+    t = wrapped_coordinate(t, shape.t);
+    y = wrapped_coordinate(y, shape.h);
+    x = wrapped_coordinate(x, shape.w);
+    const auto t0 = static_cast<std::size_t>(std::floor(t));
+    const auto y0 = static_cast<std::size_t>(std::floor(y));
+    const auto x0 = static_cast<std::size_t>(std::floor(x));
+    const auto t1 = (t0 + 1) % shape.t;
+    const auto y1 = (y0 + 1) % shape.h;
+    const auto x1 = (x0 + 1) % shape.w;
+    const auto ft = t - static_cast<float>(t0);
+    const auto fy = y - static_cast<float>(y0);
+    const auto fx = x - static_cast<float>(x0);
+    const auto value = [&](std::size_t st, std::size_t sy, std::size_t sx) {
+        return input[linear_index(st, sy, sx, c, shape)];
+    };
+    const auto c00 = value(t0, y0, x0) + (value(t0, y0, x1) - value(t0, y0, x0)) * fx;
+    const auto c01 = value(t0, y1, x0) + (value(t0, y1, x1) - value(t0, y1, x0)) * fx;
+    const auto c10 = value(t1, y0, x0) + (value(t1, y0, x1) - value(t1, y0, x0)) * fx;
+    const auto c11 = value(t1, y1, x0) + (value(t1, y1, x1) - value(t1, y1, x0)) * fx;
+    return (c00 + (c01 - c00) * fy) + ((c10 + (c11 - c10) * fy) - (c00 + (c01 - c00) * fy)) * ft;
+}
+
+[[nodiscard]] std::vector<Complex> rotate_spectrum(
+    const std::vector<Complex>& input,
+    const TensorShape& shape,
+    SpectralSwapAxis plane,
+    float angle_degrees) {
+    std::vector<Complex> output(shape.element_count());
+    const auto radians = -angle_degrees * std::numbers::pi_v<float> / 180.0F;
+    const auto cosine = std::cos(radians);
+    const auto sine = std::sin(radians);
+    const auto frequency = [](std::size_t index, std::size_t extent) {
+        const auto signed_index = index <= extent / 2
+                                      ? static_cast<float>(index)
+                                      : static_cast<float>(static_cast<std::ptrdiff_t>(index) - static_cast<std::ptrdiff_t>(extent));
+        return signed_index / static_cast<float>(extent);
+    };
+    const auto coordinate = [](float normalized, std::size_t extent) {
+        return wrapped_coordinate(normalized * static_cast<float>(extent), extent);
+    };
+    for (std::size_t t = 0; t < shape.t; ++t) {
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                auto source_t = frequency(t, shape.t);
+                auto source_y = frequency(y, shape.h);
+                auto source_x = frequency(x, shape.w);
+                auto rotate_pair = [&](float& first, float& second) {
+                    const auto original_first = first;
+                    first = cosine * first - sine * second;
+                    second = sine * original_first + cosine * second;
+                };
+                switch (plane) {
+                    case SpectralSwapAxis::XTime: rotate_pair(source_x, source_t); break;
+                    case SpectralSwapAxis::YTime: rotate_pair(source_y, source_t); break;
+                    case SpectralSwapAxis::AllAxes: rotate_pair(source_x, source_y); break;
+                }
+                for (std::size_t c = 0; c < shape.c; ++c) {
+                    output[linear_index(t, y, x, c, shape)] = sample_periodic(
+                        input, shape, coordinate(source_t, shape.t), coordinate(source_y, shape.h), coordinate(source_x, shape.w), c);
+                }
+            }
+        }
+    }
+    return output;
+}
+
 void normalize_range(VideoTensor& output) {
     auto& values = output.values();
     if (values.empty()) {
@@ -246,18 +325,22 @@ VideoTensor spectral_fft_swap(const VideoTensor& input, const SpectralSwapParams
     }
     fft_3d(spectrum, padded_shape, false);
 
-    const auto padded_output_shape = transposed_shape(padded_shape, params.axis);
-    auto transposed = transpose_spectrum(spectrum, padded_shape, params.axis);
-    fft_3d(transposed, padded_output_shape, true);
+    const auto padded_output_shape = params.transform == SpectralTransform::Rotate
+                                         ? padded_shape
+                                         : transposed_shape(padded_shape, params.axis);
+    auto transformed = params.transform == SpectralTransform::Rotate
+                           ? rotate_spectrum(spectrum, padded_shape, params.axis, params.angle_degrees)
+                           : transpose_spectrum(spectrum, padded_shape, params.axis);
+    fft_3d(transformed, padded_output_shape, true);
 
-    const auto output_shape = transposed_shape(shape, params.axis);
+    const auto output_shape = params.transform == SpectralTransform::Rotate ? shape : transposed_shape(shape, params.axis);
     std::vector<float> values(output_shape.element_count());
     for (std::size_t t = 0; t < output_shape.t; ++t) {
         for (std::size_t y = 0; y < output_shape.h; ++y) {
             for (std::size_t x = 0; x < output_shape.w; ++x) {
                 for (std::size_t c = 0; c < output_shape.c; ++c) {
                     values[linear_index(t, y, x, c, output_shape)] =
-                        transposed[linear_index(t, y, x, c, padded_output_shape)].real();
+                        transformed[linear_index(t, y, x, c, padded_output_shape)].real();
                 }
             }
         }

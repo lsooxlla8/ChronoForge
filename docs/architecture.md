@@ -37,7 +37,7 @@ Every node declares:
 - deterministic backend capability: CPU reference, Metal kernel, or global FFT;
 - cacheability and cache version.
 
-The editor stores explicit input edges and an Output selection, rejects cycles before applying a connection, and evaluates only the selected output's ancestors. Proxy and full caches are keyed by source fingerprint, graph signature, quality and engine version.
+The editor presents one ordered effect stack and automatically reconnects every input after insertion, duplication, deletion or drag reordering. The core retains explicit validated edges and cycle rejection. Proxy and full caches are keyed by source fingerprint, stack signature, quality and engine version.
 
 ## Out-of-core strategy
 
@@ -64,12 +64,12 @@ The supplied `TilePlanner` implements the per-pixel-temporal class. It will be g
 
 ## The six effects and implementation notes
 
-1. **Space-Time Transpose** is an extent permutation. `X↔T` changes `(T,H,W,C)` to `(W,H,T,C)`, while `Y↔T` changes it to `(H,T,W,C)`. Fit Source Canvas resamples the new frame canvas but intentionally keeps the swapped time extent. At a fixed output FPS, duration therefore becomes the new frame count divided by FPS.
+1. **Space-Time Transpose** is an extent permutation. `X↔T` changes `(T,H,W,C)` to `(W,H,T,C)`, while `Y↔T` changes it to `(H,T,W,C)`. Fit Source Size resamples the new frame canvas but intentionally keeps the swapped time extent. At a fixed output FPS, duration therefore becomes the new frame count divided by FPS.
 2. **Luma-Time Shift** determines the source frame from the input sample at the output coordinate. It supports luma/R/G/B/alpha and clamp, wrap or mirror edges. The UI must constrain the multiplier in user-facing frame units.
-3. **Radial Time Loom** combines normalized radius, polar angle and playback phase into animated time braids. Kaleido Fold and Event Horizon provide mirrored and singular topologies while retaining proxy/full parity.
+3. **Radial Time Loom** jointly warps fractional time, radius and polar angle into animated braids with trilinear sampling. Kaleido Fold creates moving spatial sectors; Event Horizon bends radius into orbiting temporal echoes while retaining proxy/full parity.
 4. **Temporal Pixel Sort** sorts complete colour vectors by a scalar key along `T`. Pixels below threshold retain their time slots; selected samples are stably sorted into the selected slots.
 5. **Tensor 3D Rotation** samples backward with trilinear interpolation in normalised `T/H/W` space. Fill Fit computes an inscribed inverse-rotation scale so every output frame is covered without empty corners.
-6. **3D FFT Swap** uses Bluestein arbitrary-length transforms over memory-mapped tensors. Proxy graphs containing this node automatically switch to the same safe disk executor. Fit Source Tensor resamples the result to the original `T/H/W` extents.
+6. **3D FFT Transform** uses Bluestein arbitrary-length transforms over memory-mapped tensors. It can swap frequency axes or rotate the complex spectrum by an arbitrary angle in X–Time, Y–Time or X–Y. Proxy graphs containing this node automatically switch to the same safe disk executor. Fit Source Size is the default and preserves the input `T/H/W` extents.
 
 ## macOS-specific plan
 
@@ -97,4 +97,4 @@ The macOS codec backend is AVFoundation so the application bundle is self-contai
 
 Full renders use headerless linear-RGBA float files plus JSON metadata. They are mapped with `mmap`; local nodes read one mapped input and write one mapped output, then remove the prior scratch result. Temporal Pixel Sort retains only one pixel's complete time vector per worker. Space is checked before decode and before every node, with a 512 MiB filesystem reserve.
 
-Frequency swap is intentionally different: it is global, but full render writes two temporary complex tensors to SSD and performs separable width, height and time transforms one line at a time. The RAM budget controls concurrent line buffers, not total video size. Temporary frequency files are removed on success, failure or cancellation.
+Frequency transformation is intentionally different: it is global, but full render writes two temporary complex tensors to SSD and performs separable width, height and time transforms one line at a time. Swap permutes this spectrum; Rotate periodically resamples its complex values before the inverse FFT. The RAM budget controls concurrent line buffers, not total video size. Temporary frequency files are removed on success, failure or cancellation.

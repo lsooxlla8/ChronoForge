@@ -1,10 +1,10 @@
 # ChronoForge
 
-**ChronoForge** is a native macOS-first editor for treating video as a space-time tensor `(T, H, W, C)`, not a stack of isolated frames. It imports real video, evaluates a branched six-effect C++ graph, previews a bounded proxy and renders full-resolution H.264 MP4 through memory-mapped SSD tensors.
+**ChronoForge** is a native macOS-first editor for treating video as a space-time tensor `(T, H, W, C)`, not a stack of isolated frames. It imports real video, evaluates a sequential six-effect C++ stack, previews a bounded proxy and renders full-resolution H.264 MP4 through memory-mapped SSD tensors.
 
 ## What is included
 
-- Six CPU reference effects: space-time transpose, luma-time shift, radial time loom, temporal pixel sort, trilinear 3D rotation, and a 3D FFT frequency-axis swap.
+- Six CPU reference effects: space-time transpose, luma-time shift, spatial-temporal radial time loom, temporal pixel sort, trilinear 3D rotation, and 3D FFT frequency swap/rotation.
 - A directed acyclic node graph that rejects cycles.
 - SSD cache chunks written atomically, so cancelled or interrupted renders do not create valid-looking partial cache entries.
 - A tile planner designed for complete per-pixel time series: temporal effects split across `H × W`, while retaining all `T` samples needed to operate correctly.
@@ -13,9 +13,10 @@
 - A content-addressed proxy cache keyed by source fingerprint, graph parameters and engine version.
 - A native H.264 integration check that generates a movie, decodes it and sends it through the C++ bridge.
 - Full-resolution out-of-core decode, processing and encode. Intermediate tensors are mapped from SSD and each completed node replaces the preceding scratch file.
-- Explicit graph inputs and Output selection: branches are supported, cycles are rejected, and only ancestors of Output are evaluated.
+- A sequential UI stack that automatically reconnects inputs after drag reordering; the core dependency graph still validates and rejects cycles.
 - Project save/open, security-scoped source bookmarks, autosave recovery, automatic 8 GB cache trimming and optional original-audio muxing.
-- Sequential render queue with a settings snapshot per item and automatic cache cleanup between jobs.
+- Full-quality sequential render queue with a settings snapshot per item, automatic cache cleanup between jobs, ⌘⇧R start and completion sound.
+- Always-proxy preview with Standard/High quality choices; direct export and render queue always decode the original at full quality.
 - Exact numeric parameter entry, contextual default reset, Space play/pause and in-editor media replacement/removal.
 - CPU thread pools for proxy and full local/temporal effects, granular progress and cancellation with partial-file cleanup.
 

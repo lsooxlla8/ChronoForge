@@ -5,8 +5,8 @@ extension UTType {
     static let chronoForgeProject = UTType(exportedAs: "com.lsooxlla8.chronoforge.project", conformingTo: .data)
 }
 
-struct SavedChronoForgeProject: Codable {
-    static let currentVersion = 1
+struct SavedChronoForgeProject: Codable, Sendable {
+    static let currentVersion = 2
 
     var version: Int
     var sourceBookmark: Data?
@@ -14,6 +14,7 @@ struct SavedChronoForgeProject: Codable {
     var effects: [EffectNode]
     var outputNodeID: UUID?
     var quality: String
+    var proxyQuality: String?
     var audioMode: String?
     var savedAt: Date
 
@@ -21,7 +22,8 @@ struct SavedChronoForgeProject: Codable {
         source: DecodedProxy,
         effects: [EffectNode],
         outputNodeID: UUID? = nil,
-        quality: RenderQuality,
+        quality: RenderQuality = .full,
+        proxyQuality: ProxyQuality = .standard,
         audioMode: AudioMode = .none
     ) {
         version = Self.currentVersion
@@ -30,6 +32,7 @@ struct SavedChronoForgeProject: Codable {
         self.effects = effects
         self.outputNodeID = outputNodeID
         self.quality = quality.rawValue
+        self.proxyQuality = proxyQuality.rawValue
         self.audioMode = audioMode.rawValue
         savedAt = Date()
     }

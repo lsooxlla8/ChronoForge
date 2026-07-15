@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0 — proxy, stack and spectral rotation
+
+- Made `Fit Source Size` the consistent default for every effect that can change the visible frame dimensions.
+- Simplified the editor to one sequential effect stack with automatic reconnection after reordering, right-click Delete/Duplicate, and a clearly labelled Clear Effect Stack action.
+- Removed the duplicate graph strip below the preview and debounced recovery writes to keep stack gestures responsive.
+- Made preview rendering permanently proxy-based and every direct or queued export permanently full-quality.
+- Added Standard and High proxy preview modes with a persistent, visible Proxy Preview badge.
+- Extended Spectral FFT from axis swapping to arbitrary-angle frequency rotation in X–Time, Y–Time and X–Y planes.
+- Rebuilt Radial Time Loom as a joint spatial-temporal polar warp with animated braids, real kaleidoscopic folding and orbiting event-horizon echoes.
+- Added ⌘⇧R for Start Render Queue and a sound notification when the whole queue finishes.
+
 ## 0.4.0 — workflow and memory update
 
 - Fixed the SwiftUI stale-index crash when deleting the selected effect.

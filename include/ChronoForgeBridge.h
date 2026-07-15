@@ -35,7 +35,7 @@ typedef enum CFEffectKind {
 // radial time loom:       values = centerX, centerY, intensity, twist; options = edge, topology
 // temporal pixel sort:    values[0] = threshold; options = criterion, direction
 // tensor 3D rotation:     values = XY, XT, YT degrees; options[0] = fill mode
-// spectral FFT swap:      options = axis, normalize, Native(0) / Fit source tensor(1)
+// spectral transform:     values[0] = angle; options = axis/plane, normalize, Native/Fit Source Size, Swap/Rotate
 typedef struct CFEffectDescriptor {
     int32_t kind;
     float values[4];

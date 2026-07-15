@@ -40,12 +40,14 @@ enum SelfTestRunner {
             effects: [firstNode, branchA, branchB],
             outputNodeID: branchB.id,
             quality: .full,
+            proxyQuality: .high,
             audioMode: .preserveOriginal
         )
         try ProjectPersistence.save(savedProject, to: projectURL)
         let restoredProject = try ProjectPersistence.load(from: projectURL)
         guard restoredProject.effects == savedProject.effects,
               restoredProject.quality == RenderQuality.full.rawValue,
+              restoredProject.proxyQuality == ProxyQuality.high.rawValue,
               restoredProject.audioMode == AudioMode.preserveOriginal.rawValue,
               restoredProject.outputNodeID == branchB.id,
               restoredProject.effects.last?.inputNodeID == firstNode.id,
@@ -56,10 +58,26 @@ enum SelfTestRunner {
             let store = ProjectStore()
             store.addEffect(.lumaTimeShift)
             store.addEffect(.tensor3DRotation)
-            let removedID = store.selectedNodeID
-            store.removeSelectedEffect()
-            guard store.effects.count == 1, store.selectedNodeID != removedID else {
-                throw IntegrationSelfTestError.message("Effect deletion did not leave a safe selection")
+            guard EffectNode.make(.spaceTimeTranspose).options[1] == 1,
+                  EffectNode.make(.spectralFFTSwap).options[2] == 1 else {
+                throw IntegrationSelfTestError.message("Size-changing effects did not default to Fit Source Size")
+            }
+            let duplicatedID = store.selectedNodeID!
+            store.duplicateEffect(duplicatedID)
+            store.moveEffect(from: IndexSet(integer: 2), to: 0)
+            for index in store.effects.indices {
+                let expectedInput = index == 0 ? nil : store.effects[index - 1].id
+                guard store.effects[index].inputNodeID == expectedInput else {
+                    throw IntegrationSelfTestError.message("Reordered effects were not reconnected sequentially")
+                }
+            }
+            store.deleteEffect(duplicatedID)
+            guard store.effects.count == 2 else {
+                throw IntegrationSelfTestError.message("Context deletion did not safely update the stack")
+            }
+            store.clearEffectStack()
+            guard store.effects.isEmpty, store.outputNodeID == nil else {
+                throw IntegrationSelfTestError.message("Clear Effect Stack did not clear graph state")
             }
         }
         let proxy = try await VideoDecoder.decodeProxy(from: source)

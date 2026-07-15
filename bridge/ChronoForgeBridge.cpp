@@ -102,6 +102,8 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptor& des
                     descriptor.options[1] != 0,
                     static_cast<std::size_t>(std::min<uint64_t>(budget, std::numeric_limits<std::size_t>::max())),
                     checked_enum<chronoforge::SpectralResolution>(descriptor.options[2], 1, "FFT resolution"),
+                    checked_enum<chronoforge::SpectralTransform>(descriptor.options[3], 1, "FFT transform"),
+                    descriptor.values[0],
                 });
     }
     throw std::invalid_argument("Unsupported effect kind");
@@ -124,7 +126,7 @@ CFEffectDescriptor cf_effect_descriptor_make(
     return {kind, {value0, value1, value2, value3}, {option0, option1, option2, option3}};
 }
 
-const char* cf_core_version(void) { return "0.4.0"; }
+const char* cf_core_version(void) { return "0.5.0"; }
 
 int32_t cf_render_effect_chain(
     const float* input,
