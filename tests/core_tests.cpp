@@ -76,7 +76,7 @@ void test_sort_and_rotation() {
 }
 
 void test_fft_swap() {
-    const auto input = numbered({2, 4, 8, 1});
+    const auto input = numbered({3, 5, 6, 1});
     const auto output = chronoforge::spectral_fft_swap(input, {chronoforge::SpectralSwapAxis::XTime, false, 1024 * 1024});
     const auto expected = chronoforge::space_time_transpose(input, chronoforge::SpatialAxis::X);
     require(output.shape() == expected.shape(), "FFT swap has transposed shape");

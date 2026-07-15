@@ -6,6 +6,17 @@
 #include <stdexcept>
 
 namespace chronoforge {
+namespace {
+
+std::size_t next_power_of_two(std::size_t value) {
+    std::size_t result = 1;
+    while (result < value && result <= std::numeric_limits<std::size_t>::max() / 2) {
+        result <<= 1U;
+    }
+    return result;
+}
+
+}  // namespace
 
 std::vector<ChunkExtent> TilePlanner::temporal_tiles(const TensorShape& shape, const ResourceBudget& budget, Halo halo) {
     if (budget.max_chunk_bytes == 0) {
@@ -36,14 +47,20 @@ std::vector<ChunkExtent> TilePlanner::temporal_tiles(const TensorShape& shape, c
 }
 
 std::string TilePlanner::explain_fft_limit(const TensorShape& shape, const ResourceBudget& budget) {
-    const auto elements = shape.element_count();
+    const TensorShape padded{
+        next_power_of_two(shape.t),
+        next_power_of_two(shape.h),
+        next_power_of_two(shape.w),
+        shape.c,
+    };
+    const auto elements = padded.element_count();
     constexpr auto complex_buffers = 2ULL;
     constexpr auto bytes_per_complex = 8ULL;
     const auto estimated = elements > std::numeric_limits<std::size_t>::max() / (complex_buffers * bytes_per_complex)
                                ? std::numeric_limits<std::size_t>::max()
                                : elements * complex_buffers * bytes_per_complex;
     std::ostringstream message;
-    message << "3D FFT estimated working set: " << estimated / (1024 * 1024) << " MiB; limit: "
+    message << "3D FFT padded working set: " << estimated / (1024 * 1024) << " MiB; limit: "
             << budget.max_fft_working_set_bytes / (1024 * 1024) << " MiB. "
             << (estimated <= budget.max_fft_working_set_bytes ? "Allowed for CPU proxy." : "Blocked before allocation.");
     return message.str();

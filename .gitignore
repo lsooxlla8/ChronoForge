@@ -3,6 +3,7 @@
 build/
 cmake-build-*/
 out/
+dist/
 DerivedData/
 *.xcuserstate
 *.xcodeproj/xcuserdata/

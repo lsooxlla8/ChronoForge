@@ -75,9 +75,9 @@ The supplied `TilePlanner` implements the per-pixel-temporal class. It will be g
 
 | Phase | Deliverable |
 | --- | --- |
-| 0 — current | C++20 tensor rules, CPU references, cache format, SwiftUI workspace shell, tests. |
-| 1 | Objective-C++ bridge, FFmpeg decode with PTS index, proxy sampling, display of a cached tile in `MTKView`. |
-| 2 | Actor-backed render queue, cancellable DAG executor, cache-key hashing, FFmpeg export. |
+| 0 — complete | C++20 tensor rules, CPU references, cache format and deterministic tests. |
+| 1 — complete | C bridge, native AVFoundation proxy decode, editable SwiftUI graph, preview cache and H.264 MP4 export. |
+| 2 — active | File-backed full-resolution decoder/executor, render progress and project persistence. |
 | 3 | Metal kernels for local/per-pixel effects and a tile atlas for preview. |
 | 4 | Metal FFT/global transform policy, render estimates, disk reservation, diagnostics and recovery. |
 | 5 | Windows frontend / shared GPU abstraction only after parity tests pass. |

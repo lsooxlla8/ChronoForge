@@ -1,6 +1,6 @@
 # ChronoForge
 
-**ChronoForge** is a native macOS-first editor for treating video as a space-time tensor `(T, H, W, C)`, not a stack of isolated frames. It is an early, tested foundation: a C++20 processing core and a SwiftUI workspace shell are present; FFmpeg decode/encode and Metal execution are the next integration milestones.
+**ChronoForge** is a native macOS-first editor for treating video as a space-time tensor `(T, H, W, C)`, not a stack of isolated frames. The current macOS application imports real video through AVFoundation, builds a bounded proxy, evaluates a six-effect C++ graph, caches its result and exports H.264 MP4.
 
 ## What works in this first foundation
 
@@ -9,7 +9,9 @@
 - SSD cache chunks written atomically, so cancelled or interrupted renders do not create valid-looking partial cache entries.
 - A tile planner designed for complete per-pixel time series: temporal effects split across `H × W`, while retaining all `T` samples needed to operate correctly.
 - CPU safety gate for 3D FFT. It supports power-of-two proxy tensors only and refuses requests before allocating a working set above the configured budget.
-- A native macOS 14+ SwiftUI workspace shell showing the intended node graph, preview, inspector and proxy/export modes.
+- A native macOS 14+ SwiftUI editor with real video import, frame preview, editable effect parameters, reordering/bypass, render cancellation and MP4 export.
+- A content-addressed proxy cache keyed by source fingerprint, graph parameters and engine version.
+- A native H.264 integration check that generates a movie, decodes it and sends it through the C++ bridge.
 
 ## Key technical decisions
 
@@ -37,11 +39,17 @@ ctest --test-dir build --output-on-failure
 ./build/chronoforge-cli
 ```
 
-The SwiftUI shell is an independent macOS package:
+Build or run the native macOS application from the repository root:
 
 ```bash
-cd apps/macos
 swift run ChronoForgeMac
+```
+
+Create a signed local application bundle:
+
+```bash
+./scripts/package_macos.sh release
+open dist/ChronoForge.app
 ```
 
 ## Repository layout
@@ -58,6 +66,4 @@ docs/              Architecture and delivery milestones
 
 ## Practical limits in this milestone
 
-This is deliberately not yet a production video editor. The core runs uncompressed `float` tensors in memory for its reference effects; the executor that feeds them from FFmpeg-backed SSD cache tiles is the next implementation step. The on-screen macOS workspace is intentionally decoupled from the core until its thin C/Objective-C++ bridge lands.
-
-That separation is purposeful: it allows the tensor rules, caching format and graph API to be tested now, before GPU and codec complexity obscure errors.
+Proxy editing and proxy MP4 export are functional. Full-resolution export is still being moved to the file-backed executor; selecting Full Quality does not yet bypass the bounded proxy. Audio is intentionally omitted because time-axis transformations require an explicit audio mapping policy.
