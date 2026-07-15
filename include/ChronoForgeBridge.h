@@ -9,6 +9,16 @@ extern "C" {
 #endif
 
 typedef struct CFVideoBuffer CFVideoBuffer;
+typedef int32_t (*CFRenderProgressCallback)(double fraction, const char* stage, void* context);
+
+typedef struct CFFileTensorInfo {
+    uint64_t frames;
+    uint64_t height;
+    uint64_t width;
+    uint64_t channels;
+    uint32_t frame_rate_numerator;
+    uint32_t frame_rate_denominator;
+} CFFileTensorInfo;
 
 typedef enum CFEffectKind {
     CF_EFFECT_SPACE_TIME_TRANSPOSE = 0,
@@ -60,6 +70,23 @@ int32_t cf_render_effect_chain(
     uint64_t effect_count,
     uint64_t max_working_set_bytes,
     CFVideoBuffer** output,
+    char* error_message,
+    uint64_t error_message_capacity);
+
+// Processes a headerless linear-float T,H,W,C tensor through memory-mapped
+// cache files. Local and temporal effects stay out-of-core; the FFT node still
+// obeys max_working_set_bytes and fails before an unsafe allocation.
+int32_t cf_render_file_effect_chain(
+    const char* input_path,
+    const char* output_path,
+    const char* scratch_directory,
+    CFFileTensorInfo input_info,
+    const CFEffectDescriptor* effects,
+    uint64_t effect_count,
+    uint64_t max_working_set_bytes,
+    CFRenderProgressCallback progress,
+    void* progress_context,
+    CFFileTensorInfo* output_info,
     char* error_message,
     uint64_t error_message_capacity);
 

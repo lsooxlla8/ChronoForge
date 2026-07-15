@@ -18,6 +18,8 @@ let package = Package(
             sources: [
                 "src/cache_store.cpp",
                 "src/effects.cpp",
+                "src/file_executor.cpp",
+                "src/mapped_tensor.cpp",
                 "src/node_graph.cpp",
                 "src/resource_planner.cpp",
                 "src/spectral.cpp",

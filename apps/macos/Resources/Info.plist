@@ -10,6 +10,8 @@
     <string>ChronoForgeMac</string>
     <key>CFBundleIdentifier</key>
     <string>com.lsooxlla8.chronoforge</string>
+    <key>CFBundleIconFile</key>
+    <string>ChronoForge</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
@@ -17,16 +19,43 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.2.0</string>
+    <string>0.3.0</string>
     <key>CFBundleVersion</key>
-    <string>2</string>
+    <string>3</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>ChronoForge Project</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.lsooxlla8.chronoforge.project</string>
+            </array>
+        </dict>
+    </array>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
     <key>UTExportedTypeDeclarations</key>
-    <array/>
+    <array>
+        <dict>
+            <key>UTTypeConformsTo</key>
+            <array><string>public.data</string></array>
+            <key>UTTypeDescription</key>
+            <string>ChronoForge Project</string>
+            <key>UTTypeIdentifier</key>
+            <string>com.lsooxlla8.chronoforge.project</string>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array><string>chronoforge</string></array>
+            </dict>
+        </dict>
+    </array>
 </dict>
 </plist>

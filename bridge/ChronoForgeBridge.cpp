@@ -1,6 +1,7 @@
 #include "ChronoForgeBridge.h"
 
 #include "chronoforge/core/effects.hpp"
+#include "chronoforge/core/file_executor.hpp"
 #include "chronoforge/core/spectral.hpp"
 #include "chronoforge/core/video_tensor.hpp"
 
@@ -117,7 +118,7 @@ CFEffectDescriptor cf_effect_descriptor_make(
     return {kind, {value0, value1, value2, value3}, {option0, option1, option2, option3}};
 }
 
-const char* cf_core_version(void) { return "0.2.0"; }
+const char* cf_core_version(void) { return "0.3.0"; }
 
 int32_t cf_render_effect_chain(
     const float* input,
@@ -174,6 +175,89 @@ int32_t cf_render_effect_chain(
         return 1;
     } catch (...) {
         set_error(error_message, error_message_capacity, "Unknown ChronoForge core failure");
+        return 2;
+    }
+}
+
+int32_t cf_render_file_effect_chain(
+    const char* input_path,
+    const char* output_path,
+    const char* scratch_directory,
+    CFFileTensorInfo input_info,
+    const CFEffectDescriptor* effects,
+    uint64_t effect_count,
+    uint64_t max_working_set_bytes,
+    CFRenderProgressCallback progress,
+    void* progress_context,
+    CFFileTensorInfo* output_info,
+    char* error_message,
+    uint64_t error_message_capacity) {
+    try {
+        if (input_path == nullptr || output_path == nullptr || scratch_directory == nullptr || output_info == nullptr) {
+            throw std::invalid_argument("File render paths and output info are required");
+        }
+        if (effect_count > 0 && effects == nullptr) {
+            throw std::invalid_argument("Effect descriptors are required when effect_count is non-zero");
+        }
+        if (input_info.frame_rate_numerator == 0 || input_info.frame_rate_denominator == 0) {
+            throw std::invalid_argument("Frame rate must be a positive rational number");
+        }
+        const chronoforge::TensorShape shape{
+            static_cast<std::size_t>(input_info.frames),
+            static_cast<std::size_t>(input_info.height),
+            static_cast<std::size_t>(input_info.width),
+            static_cast<std::size_t>(input_info.channels),
+        };
+        static_cast<void>(shape.element_count());
+        std::vector<chronoforge::EffectSpec> specifications;
+        specifications.reserve(static_cast<std::size_t>(effect_count));
+        for (uint64_t index = 0; index < effect_count; ++index) {
+            const auto kind = checked_enum<chronoforge::EffectOperation>(
+                effects[index].kind, static_cast<int32_t>(chronoforge::EffectOperation::SpectralFftSwap), "effect kind");
+            specifications.push_back({
+                kind,
+                {effects[index].values[0], effects[index].values[1], effects[index].values[2], effects[index].values[3]},
+                {effects[index].options[0], effects[index].options[1], effects[index].options[2], effects[index].options[3]},
+            });
+        }
+        const chronoforge::VideoTensorMetadata metadata{
+            input_info.frame_rate_numerator,
+            input_info.frame_rate_denominator,
+            chronoforge::ColorTransfer::Linear,
+            input_info.channels == 4 ? chronoforge::AlphaRepresentation::Premultiplied
+                                     : chronoforge::AlphaRepresentation::None,
+        };
+        const auto callback = [&](double fraction, std::string_view stage) {
+            if (progress == nullptr) {
+                return true;
+            }
+            const std::string owned_stage(stage);
+            return progress(fraction, owned_stage.c_str(), progress_context) != 0;
+        };
+        const auto result = chronoforge::render_file_effect_chain(
+            input_path,
+            output_path,
+            scratch_directory,
+            shape,
+            metadata,
+            specifications,
+            static_cast<std::size_t>(std::min<uint64_t>(max_working_set_bytes, std::numeric_limits<std::size_t>::max())),
+            callback);
+        *output_info = {
+            result.shape.t,
+            result.shape.h,
+            result.shape.w,
+            result.shape.c,
+            result.metadata.frame_rate_numerator,
+            result.metadata.frame_rate_denominator,
+        };
+        set_error(error_message, error_message_capacity, "");
+        return 0;
+    } catch (const std::exception& error) {
+        set_error(error_message, error_message_capacity, error.what());
+        return std::string(error.what()) == "Render cancelled" ? 3 : 1;
+    } catch (...) {
+        set_error(error_message, error_message_capacity, "Unknown ChronoForge file render failure");
         return 2;
     }
 }

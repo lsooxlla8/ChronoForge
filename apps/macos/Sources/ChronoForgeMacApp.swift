@@ -5,6 +5,21 @@ import UniformTypeIdentifiers
 struct ChronoForgeMacApp: App {
     @StateObject private var project = ProjectStore()
 
+    init() {
+        if CommandLine.arguments.contains("--self-test") {
+            Task {
+                do {
+                    try await SelfTestRunner.run()
+                    print("ChronoForge full pipeline self-test passed")
+                    Foundation.exit(EXIT_SUCCESS)
+                } catch {
+                    fputs("ChronoForge full pipeline self-test failed: \(error)\n", stderr)
+                    Foundation.exit(EXIT_FAILURE)
+                }
+            }
+        }
+    }
+
     var body: some Scene {
         WindowGroup("ChronoForge") {
             WorkspaceView()
@@ -13,11 +28,25 @@ struct ChronoForgeMacApp: App {
         }
         .defaultSize(width: 1480, height: 920)
         .commands {
-            CommandGroup(after: .newItem) {
-                Button("Import Video…") { project.showsImporter = true }
+            CommandGroup(replacing: .newItem) {
+                Button("New Project") { project.newProject() }
+                    .keyboardShortcut("n", modifiers: .command)
+                Button("Open Project…") { project.chooseProjectToOpen() }
                     .keyboardShortcut("o", modifiers: .command)
+                Button("Import Video…") { project.showsImporter = true }
+                    .keyboardShortcut("i", modifiers: .command)
+                Divider()
+                Button("Save Project") { project.saveProject() }
+                    .keyboardShortcut("s", modifiers: .command)
+                Button("Save Project As…") { project.saveProject(saveAs: true) }
+                    .keyboardShortcut("s", modifiers: [.command, .shift])
+                Divider()
                 Button("Render Preview") { project.renderPreview() }
                     .keyboardShortcut("r", modifiers: .command)
+            }
+            CommandGroup(after: .saveItem) {
+                Button("Clear Render Cache…") { project.showsClearCacheConfirmation = true }
+                    .disabled(project.isRendering || project.isImporting || project.isExporting)
             }
         }
     }
@@ -63,6 +92,16 @@ private struct WorkspaceView: View {
         } message: {
             Text(project.errorMessage ?? "Unknown error")
         }
+        .confirmationDialog(
+            "Clear the \(project.cacheSizeDescription) render cache?",
+            isPresented: $project.showsClearCacheConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Clear Render Cache", role: .destructive) { project.clearRenderCache() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Source videos and saved projects will not be affected. Cached previews and full renders will be rebuilt when needed.")
+        }
     }
 
     private var sidebar: some View {
@@ -76,6 +115,11 @@ private struct WorkspaceView: View {
                 } else {
                     Button("Import video…", systemImage: "plus.rectangle.on.folder") {
                         project.showsImporter = true
+                    }
+                    if project.hasRecovery {
+                        Button("Recover last autosave", systemImage: "clock.arrow.circlepath") {
+                            project.restoreRecovery()
+                        }
                     }
                 }
             }
@@ -103,24 +147,64 @@ private struct WorkspaceView: View {
             .padding(10)
             .background(.bar)
         }
+        .overlay(alignment: .bottomLeading) {
+            Text("Cache: \(project.cacheSizeDescription)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.leading, 12)
+                .padding(.bottom, 48)
+                .allowsHitTesting(false)
+        }
     }
 
     private var toolbar: some View {
         HStack(spacing: 12) {
-            Label("ChronoForge", systemImage: "cube.transparent")
+            Label(project.projectURL?.deletingPathExtension().lastPathComponent ?? "ChronoForge", systemImage: "cube.transparent")
                 .font(.headline)
+            if project.isDirty { Text("Edited").font(.caption2).foregroundStyle(.orange) }
             Text(project.statusMessage)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             Spacer()
-            Picker("Quality", selection: $project.quality) {
+            Picker("Quality", selection: Binding(
+                get: { project.quality },
+                set: {
+                    project.quality = $0
+                    if project.source != nil { project.markEdited() }
+                }
+            )) {
                 ForEach(RenderQuality.allCases) { quality in Text(quality.title).tag(quality) }
             }
             .pickerStyle(.segmented)
             .frame(width: 190)
+            Picker("Audio", selection: Binding(
+                get: { project.audioMode },
+                set: {
+                    project.audioMode = $0
+                    if project.source != nil { project.markEdited() }
+                }
+            )) {
+                ForEach(AudioMode.allCases) { mode in Text(mode.title).tag(mode) }
+            }
+            .frame(width: 170)
+            Picker("Output", selection: Binding(
+                get: { project.outputNodeID },
+                set: {
+                    project.outputNodeID = $0
+                    project.markEdited()
+                }
+            )) {
+                Text("Input").tag(Optional<UUID>.none)
+                ForEach(project.effects) { node in Text(node.kind.title).tag(Optional(node.id)) }
+            }
+            .frame(width: 190)
             if project.isRendering || project.isImporting || project.isExporting {
-                ProgressView().controlSize(.small)
+                if let progress = project.renderProgress {
+                    ProgressView(value: progress).frame(width: 90)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
                 Button("Cancel") { project.cancelWork() }
             }
             Button("Render", systemImage: "play.fill") { project.renderPreview() }
@@ -163,7 +247,7 @@ private struct WorkspaceView: View {
                 ForEach(project.effects) { node in
                     GraphCard(
                         title: node.kind.title,
-                        subtitle: node.enabled ? "Enabled" : "Bypassed",
+                        subtitle: "← \(project.nodeName(node.inputNodeID))" + (node.enabled ? "" : " · Bypassed"),
                         symbol: node.kind.symbol,
                         selected: project.selectedNodeID == node.id
                     )
@@ -182,7 +266,22 @@ private struct WorkspaceView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Inspector").font(.headline)
             if let index = project.selectedNodeIndex {
-                EffectInspector(node: $project.effects[index])
+                Picker("Input", selection: Binding(
+                    get: { project.effects[index].inputNodeID },
+                    set: { project.setInput($0, for: project.effects[index].id) }
+                )) {
+                    Text("Input").tag(Optional<UUID>.none)
+                    ForEach(project.availableInputs(for: project.effects[index].id)) { candidate in
+                        Text(candidate.kind.title).tag(Optional(candidate.id))
+                    }
+                }
+                EffectInspector(node: Binding(
+                    get: { project.effects[index] },
+                    set: {
+                        project.effects[index] = $0
+                        project.markEdited()
+                    }
+                ))
             } else {
                 ContentUnavailableView("Select an effect", systemImage: "slider.horizontal.3")
             }

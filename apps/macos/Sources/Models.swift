@@ -20,6 +20,25 @@ struct VideoTensorData: Sendable {
     }
 }
 
+struct DiskTensorData: Codable, Sendable {
+    var fileURL: URL
+    var frames: Int
+    var height: Int
+    var width: Int
+    var channels: Int
+    var framesPerSecond: Double
+    var duration: Double
+    var timestamps: [Double]?
+
+    var valueCount: Int { frames * height * width * channels }
+    var byteCount: Int64 { Int64(valueCount) * Int64(MemoryLayout<Float>.stride) }
+
+    func isValidOnDisk() -> Bool {
+        guard let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize else { return false }
+        return Int64(size) == byteCount
+    }
+}
+
 enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
     case spaceTimeTranspose = 0
     case lumaTimeShift = 1
@@ -68,23 +87,24 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var kind: EffectKind
     var enabled = true
+    var inputNodeID: UUID?
     var values: [Float]
     var options: [Int32]
 
-    static func make(_ kind: EffectKind) -> EffectNode {
+    static func make(_ kind: EffectKind, inputNodeID: UUID? = nil) -> EffectNode {
         switch kind {
         case .spaceTimeTranspose:
-            return .init(kind: kind, values: [0, 0, 0, 0], options: [0, 0, 0, 0])
+            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 0, 0, 0])
         case .lumaTimeShift:
-            return .init(kind: kind, values: [20, 0, 0, 0], options: [0, 0, 0, 0])
+            return .init(kind: kind, inputNodeID: inputNodeID, values: [20, 0, 0, 0], options: [0, 0, 0, 0])
         case .radialChronoFunnel:
-            return .init(kind: kind, values: [0.5, 0.5, 0.08, 0], options: [1, 0, 0, 0])
+            return .init(kind: kind, inputNodeID: inputNodeID, values: [0.5, 0.5, 0.08, 0], options: [1, 0, 0, 0])
         case .temporalPixelSort:
-            return .init(kind: kind, values: [0, 0, 0, 0], options: [0, 0, 0, 0])
+            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 0, 0, 0])
         case .tensor3DRotation:
-            return .init(kind: kind, values: [0, 15, 0, 0], options: [0, 0, 0, 0])
+            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 15, 0, 0], options: [0, 0, 0, 0])
         case .spectralFFTSwap:
-            return .init(kind: kind, values: [0, 0, 0, 0], options: [0, 1, 0, 0])
+            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 1, 0, 0])
         }
     }
 }
@@ -95,4 +115,12 @@ enum RenderQuality: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
     var title: String { self == .proxy ? "Proxy" : "Full quality" }
+}
+
+enum AudioMode: String, CaseIterable, Identifiable, Codable {
+    case none
+    case preserveOriginal
+
+    var id: String { rawValue }
+    var title: String { self == .none ? "No audio" : "Preserve original" }
 }

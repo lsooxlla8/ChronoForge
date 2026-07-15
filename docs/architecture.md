@@ -77,8 +77,8 @@ The supplied `TilePlanner` implements the per-pixel-temporal class. It will be g
 | --- | --- |
 | 0 — complete | C++20 tensor rules, CPU references, cache format and deterministic tests. |
 | 1 — complete | C bridge, native AVFoundation proxy decode, editable SwiftUI graph, preview cache and H.264 MP4 export. |
-| 2 — active | File-backed full-resolution decoder/executor, render progress and project persistence. |
-| 3 | Metal kernels for local/per-pixel effects and a tile atlas for preview. |
+| 2 — complete | File-backed full-resolution decoder/executor, thread pools, cancellation, project persistence and recovery. |
+| 3 — active | Metal kernels for local/per-pixel effects and a tile atlas for preview. |
 | 4 | Metal FFT/global transform policy, render estimates, disk reservation, diagnostics and recovery. |
 | 5 | Windows frontend / shared GPU abstraction only after parity tests pass. |
 
@@ -90,3 +90,11 @@ The supplied `TilePlanner` implements the per-pixel-temporal class. It will be g
 - Treat alpha intentionally. Colour interpolation in premultiplied linear RGB avoids fringes.
 - Do not claim preview equals final render unless the same node backend and colour policy were used.
 - Record engine version and GPU backend in render metadata so a project can explain a changed cache result.
+
+## Shipping implementation notes
+
+The macOS codec backend is AVFoundation so the application bundle is self-contained and uses hardware H.264 decode/encode without a Homebrew dependency. The portable core and C ABI do not depend on AVFoundation. The Windows port will attach FFmpeg at the same decoded-tensor/file-tensor boundary.
+
+Full renders use headerless linear-RGBA float files plus JSON metadata. They are mapped with `mmap`; local nodes read one mapped input and write one mapped output, then remove the prior scratch result. Temporal Pixel Sort retains only one pixel's complete time vector per worker. Space is checked before decode and before every node, with a 512 MiB filesystem reserve.
+
+Frequency swap is intentionally different: it is global and performs a padded in-memory FFT only after accounting for both the real input buffer and two complex work buffers against the configured budget.

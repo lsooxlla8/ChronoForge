@@ -8,6 +8,7 @@ struct DecodedProxy: Sendable {
     var sourceURL: URL
     var sourceSize: CGSize
     var sourceDuration: Double
+    var securityScopedBookmark: Data?
 }
 
 enum VideoDecoderError: LocalizedError {
@@ -40,17 +41,14 @@ enum VideoDecoder {
         let duration = max(CMTimeGetSeconds(durationTime), 1.0 / 30.0)
         let naturalSize = try await track.load(.naturalSize)
         let preferredTransform = try await track.load(.preferredTransform)
-        let transformed = naturalSize.applying(preferredTransform)
-        let sourceSize = CGSize(width: abs(transformed.width), height: abs(transformed.height))
+        let displayBounds = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform).standardized
+        let sourceSize = displayBounds.size
         let targetSize = proxySize(for: sourceSize)
         let proxyFPS = min(10.0, max(0.1, Double(maximumProxyFrames) / duration))
 
         let reader = try AVAssetReader(asset: asset)
         let settings: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-            kCVPixelBufferWidthKey as String: targetSize.width,
-            kCVPixelBufferHeightKey as String: targetSize.height,
-            AVVideoScalingModeKey: AVVideoScalingModeResizeAspect,
         ]
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: settings)
         output.alwaysCopiesSampleData = false
@@ -76,7 +74,14 @@ enum VideoDecoder {
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(sample) else {
                 throw VideoDecoderError.pixelBufferUnavailable
             }
-            appendLinearRGBA(pixelBuffer, to: &samples)
+            appendLinearRGBA(
+                pixelBuffer,
+                transform: preferredTransform,
+                displayBounds: displayBounds,
+                outputWidth: Int(targetSize.width),
+                outputHeight: Int(targetSize.height),
+                to: &samples
+            )
             frameCount += 1
             nextSampleTime += interval
             if frameCount >= maximumProxyFrames { break }
@@ -97,7 +102,8 @@ enum VideoDecoder {
             displayName: url.lastPathComponent,
             sourceURL: url,
             sourceSize: sourceSize,
-            sourceDuration: duration
+            sourceDuration: duration,
+            securityScopedBookmark: try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
         )
     }
 
@@ -111,18 +117,31 @@ enum VideoDecoder {
         return CGSize(width: width, height: height)
     }
 
-    private static func appendLinearRGBA(_ pixelBuffer: CVPixelBuffer, to values: inout [Float]) {
+    private static func appendLinearRGBA(
+        _ pixelBuffer: CVPixelBuffer,
+        transform: CGAffineTransform,
+        displayBounds: CGRect,
+        outputWidth: Int,
+        outputHeight: Int,
+        to values: inout [Float]
+    ) {
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
         guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return }
-        let width = CVPixelBufferGetWidth(pixelBuffer)
-        let height = CVPixelBufferGetHeight(pixelBuffer)
+        let sourceWidth = CVPixelBufferGetWidth(pixelBuffer)
+        let sourceHeight = CVPixelBufferGetHeight(pixelBuffer)
         let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let inverse = transform.inverted()
 
-        for y in 0..<height {
-            let row = base.advanced(by: y * bytesPerRow).assumingMemoryBound(to: UInt8.self)
-            for x in 0..<width {
-                let pixel = row.advanced(by: x * 4)
+        for y in 0..<outputHeight {
+            for x in 0..<outputWidth {
+                let displayPoint = CGPoint(
+                    x: displayBounds.minX + (CGFloat(x) + 0.5) * displayBounds.width / CGFloat(outputWidth),
+                    y: displayBounds.minY + (CGFloat(y) + 0.5) * displayBounds.height / CGFloat(outputHeight)
+                ).applying(inverse)
+                let sourceX = min(max(Int(floor(displayPoint.x)), 0), sourceWidth - 1)
+                let sourceY = min(max(Int(floor(displayPoint.y)), 0), sourceHeight - 1)
+                let pixel = base.advanced(by: sourceY * bytesPerRow + sourceX * 4).assumingMemoryBound(to: UInt8.self)
                 let blue = srgbToLinear(Float(pixel[0]) / 255)
                 let green = srgbToLinear(Float(pixel[1]) / 255)
                 let red = srgbToLinear(Float(pixel[2]) / 255)

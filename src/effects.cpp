@@ -1,15 +1,60 @@
 #include "chronoforge/core/effects.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cmath>
+#include <exception>
+#include <mutex>
 #include <numbers>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 #include <vector>
 
 namespace chronoforge {
 namespace {
+
+template <typename Function>
+void parallel_for(std::size_t count, Function&& function) {
+    if (count == 0) {
+        return;
+    }
+    const auto worker_count = std::min<std::size_t>(
+        count, std::min<std::size_t>(std::max(1U, std::thread::hardware_concurrency()), 16));
+    std::atomic<std::size_t> next{0};
+    std::atomic<bool> stopped{false};
+    std::mutex failure_mutex;
+    std::exception_ptr failure;
+    auto worker = [&] {
+        while (!stopped.load(std::memory_order_relaxed)) {
+            const auto index = next.fetch_add(1, std::memory_order_relaxed);
+            if (index >= count) {
+                return;
+            }
+            try {
+                function(index);
+            } catch (...) {
+                std::scoped_lock lock(failure_mutex);
+                if (failure == nullptr) {
+                    failure = std::current_exception();
+                }
+                stopped.store(true, std::memory_order_relaxed);
+            }
+        }
+    };
+    std::vector<std::thread> workers;
+    workers.reserve(worker_count);
+    for (std::size_t index = 0; index < worker_count; ++index) {
+        workers.emplace_back(worker);
+    }
+    for (auto& thread : workers) {
+        thread.join();
+    }
+    if (failure != nullptr) {
+        std::rethrow_exception(failure);
+    }
+}
 
 [[nodiscard]] std::size_t resolve_time(std::ptrdiff_t time, std::size_t count, EdgeBehavior behavior) {
     if (count == 0) {
@@ -185,7 +230,7 @@ void rotate_plane(float& a, float& b, float degrees) {
         x = wrap_coordinate(x, shape.w);
     } else if (time < 0.0F || y < 0.0F || x < 0.0F || time > static_cast<float>(shape.t - 1) ||
                y > static_cast<float>(shape.h - 1) || x > static_cast<float>(shape.w - 1)) {
-        return (fill == FillMode::Transparent && channel == 3 && shape.c >= 4) ? 0.0F : 0.0F;
+        return (fill == FillMode::Black && channel == 3 && shape.c >= 4) ? 1.0F : 0.0F;
     }
 
     const auto t0 = static_cast<std::size_t>(std::floor(time));
@@ -224,7 +269,7 @@ VideoTensor space_time_transpose(const VideoTensor& input, SpatialAxis axis) {
                                                        : TensorShape{shape.h, shape.t, shape.w, shape.c};
     VideoTensor output(output_shape, 0.0F, input.metadata());
 
-    for (std::size_t t = 0; t < output_shape.t; ++t) {
+    parallel_for(output_shape.t, [&](std::size_t t) {
         for (std::size_t y = 0; y < output_shape.h; ++y) {
             for (std::size_t x = 0; x < output_shape.w; ++x) {
                 for (std::size_t c = 0; c < output_shape.c; ++c) {
@@ -232,14 +277,14 @@ VideoTensor space_time_transpose(const VideoTensor& input, SpatialAxis axis) {
                 }
             }
         }
-    }
+    });
     return output;
 }
 
 VideoTensor luma_time_shift(const VideoTensor& input, const LumaTimeShiftParams& params) {
     const auto& shape = input.shape();
     VideoTensor output(shape, 0.0F, input.metadata());
-    for (std::size_t t = 0; t < shape.t; ++t) {
+    parallel_for(shape.t, [&](std::size_t t) {
         for (std::size_t y = 0; y < shape.h; ++y) {
             for (std::size_t x = 0; x < shape.w; ++x) {
                 const auto shift = static_cast<std::ptrdiff_t>(std::floor(params.shift_multiplier * shift_value(input, t, y, x, params.source)));
@@ -249,7 +294,7 @@ VideoTensor luma_time_shift(const VideoTensor& input, const LumaTimeShiftParams&
                 }
             }
         }
-    }
+    });
     return output;
 }
 
@@ -259,7 +304,7 @@ VideoTensor radial_chrono_funnel(const VideoTensor& input, const RadialChronoFun
     const auto center_x = params.center_x * static_cast<float>(shape.w - 1);
     const auto center_y = params.center_y * static_cast<float>(shape.h - 1);
 
-    for (std::size_t t = 0; t < shape.t; ++t) {
+    parallel_for(shape.t, [&](std::size_t t) {
         for (std::size_t y = 0; y < shape.h; ++y) {
             for (std::size_t x = 0; x < shape.w; ++x) {
                 const auto dx = static_cast<float>(x) - center_x;
@@ -271,14 +316,14 @@ VideoTensor radial_chrono_funnel(const VideoTensor& input, const RadialChronoFun
                 }
             }
         }
-    }
+    });
     return output;
 }
 
 VideoTensor temporal_pixel_sort(const VideoTensor& input, const TemporalPixelSortParams& params) {
     const auto& shape = input.shape();
     VideoTensor output = input;
-    for (std::size_t y = 0; y < shape.h; ++y) {
+    parallel_for(shape.h, [&](std::size_t y) {
         for (std::size_t x = 0; x < shape.w; ++x) {
             std::vector<std::size_t> eligible;
             eligible.reserve(shape.t);
@@ -299,14 +344,14 @@ VideoTensor temporal_pixel_sort(const VideoTensor& input, const TemporalPixelSor
                 }
             }
         }
-    }
+    });
     return output;
 }
 
 VideoTensor tensor_3d_rotation(const VideoTensor& input, const TensorRotationParams& params) {
     const auto& shape = input.shape();
     VideoTensor output(shape, 0.0F, input.metadata());
-    for (std::size_t t = 0; t < shape.t; ++t) {
+    parallel_for(shape.t, [&](std::size_t t) {
         for (std::size_t y = 0; y < shape.h; ++y) {
             for (std::size_t x = 0; x < shape.w; ++x) {
                 Point3 point{normalized_coordinate(t, shape.t), normalized_coordinate(y, shape.h), normalized_coordinate(x, shape.w)};
@@ -322,7 +367,7 @@ VideoTensor tensor_3d_rotation(const VideoTensor& input, const TensorRotationPar
                 }
             }
         }
-    }
+    });
     return output;
 }
 

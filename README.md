@@ -1,6 +1,6 @@
 # ChronoForge
 
-**ChronoForge** is a native macOS-first editor for treating video as a space-time tensor `(T, H, W, C)`, not a stack of isolated frames. The current macOS application imports real video through AVFoundation, builds a bounded proxy, evaluates a six-effect C++ graph, caches its result and exports H.264 MP4.
+**ChronoForge** is a native macOS-first editor for treating video as a space-time tensor `(T, H, W, C)`, not a stack of isolated frames. It imports real video, evaluates a branched six-effect C++ graph, previews a bounded proxy and renders full-resolution H.264 MP4 through memory-mapped SSD tensors.
 
 ## What works in this first foundation
 
@@ -12,6 +12,10 @@
 - A native macOS 14+ SwiftUI editor with real video import, frame preview, editable effect parameters, reordering/bypass, render cancellation and MP4 export.
 - A content-addressed proxy cache keyed by source fingerprint, graph parameters and engine version.
 - A native H.264 integration check that generates a movie, decodes it and sends it through the C++ bridge.
+- Full-resolution out-of-core decode, processing and encode. Intermediate tensors are mapped from SSD and each completed node replaces the preceding scratch file.
+- Explicit graph inputs and Output selection: branches are supported, cycles are rejected, and only ancestors of Output are evaluated.
+- Project save/open, security-scoped source bookmarks, autosave recovery, cache management and optional original-audio muxing.
+- CPU thread pools for proxy and full local/temporal effects, granular progress and cancellation with partial-file cleanup.
 
 ## Key technical decisions
 
@@ -49,7 +53,14 @@ Create a signed local application bundle:
 
 ```bash
 ./scripts/package_macos.sh release
+./scripts/create_dmg.sh
 open dist/ChronoForge.app
+```
+
+Run the end-to-end application diagnostic (rotated H.264 input, proxy decode, project round-trip, disk tensor render and MP4 validation):
+
+```bash
+.build/arm64-apple-macosx/release/ChronoForgeMac --self-test
 ```
 
 ## Repository layout
@@ -57,7 +68,7 @@ open dist/ChronoForge.app
 ```text
 apps/
   cli/             Core diagnostic executable
-  macos/           Native SwiftUI workspace shell (macOS 14+)
+  macos/           Native SwiftUI editor and AVFoundation pipeline (macOS 14+)
 include/           Public C++20 core interfaces
 src/               Core implementation
 tests/             Deterministic core tests
@@ -66,4 +77,6 @@ docs/              Architecture and delivery milestones
 
 ## Practical limits in this milestone
 
-Proxy editing and proxy MP4 export are functional. Full-resolution export is still being moved to the file-backed executor; selecting Full Quality does not yet bypass the bounded proxy. Audio is intentionally omitted because time-axis transformations require an explicit audio mapping policy.
+The bundled local build targets Apple Silicon and macOS 14+. A universal Intel/Apple Silicon package requires full Xcode (`xcbuild`), which is not present in the current build environment. Local builds are ad-hoc signed; public distribution still requires the owner's Apple Developer ID certificate and notarization.
+
+3D FFT remains a global operation. Full-quality FFT is allowed only when its padded complex working set fits the configured RAM budget; otherwise the app stops before allocation and asks for Proxy or a smaller tensor. Original audio can be preserved explicitly; when the transformed video becomes longer, audio ends at its original duration.
