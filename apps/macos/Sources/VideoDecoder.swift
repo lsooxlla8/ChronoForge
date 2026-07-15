@@ -8,6 +8,8 @@ struct DecodedProxy: Sendable {
     var sourceURL: URL
     var sourceSize: CGSize
     var sourceDuration: Double
+    var sourceFrameCount: Int = 0
+    var sourceFrameCountIsExact: Bool = false
     var securityScopedBookmark: Data?
 }
 
@@ -43,6 +45,8 @@ enum VideoDecoder {
         let preferredTransform = try await track.load(.preferredTransform)
         let displayBounds = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform).standardized
         let sourceSize = displayBounds.size
+        let nominalFPS = max(1.0, Double(try await track.load(.nominalFrameRate)))
+        let estimatedFrameCount = max(1, Int((duration * nominalFPS).rounded()))
         let targetSize = proxySize(for: sourceSize)
         let proxyFPS = min(10.0, max(0.1, Double(maximumProxyFrames) / duration))
 
@@ -88,6 +92,7 @@ enum VideoDecoder {
         }
         reader.cancelReading()
         guard frameCount > 0 else { throw VideoDecoderError.noFrames }
+        let exactFrameCount = try? countFrames(asset: asset, track: track)
 
         return DecodedProxy(
             tensor: VideoTensorData(
@@ -103,8 +108,34 @@ enum VideoDecoder {
             sourceURL: url,
             sourceSize: sourceSize,
             sourceDuration: duration,
+            sourceFrameCount: exactFrameCount ?? estimatedFrameCount,
+            sourceFrameCountIsExact: exactFrameCount != nil,
             securityScopedBookmark: try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
         )
+    }
+
+    private static func countFrames(asset: AVAsset, track: AVAssetTrack) throws -> Int {
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderSampleReferenceOutput(track: track)
+        guard reader.canAdd(output) else { throw VideoDecoderError.readerCouldNotStart }
+        reader.add(output)
+        guard reader.startReading() else { throw reader.error ?? VideoDecoderError.readerCouldNotStart }
+        var count = 0
+        while reader.status == .reading, let sample = output.copyNextSampleBuffer() {
+            if Task.isCancelled {
+                reader.cancelReading()
+                throw CancellationError()
+            }
+            let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[CFString: Any]]
+            let doNotDisplay = attachments?.first?[kCMSampleAttachmentKey_DoNotDisplay] as? Bool ?? false
+            if !doNotDisplay {
+                count += CMSampleBufferGetNumSamples(sample)
+            }
+        }
+        guard reader.status == .completed, count > 0 else {
+            throw reader.error ?? VideoDecoderError.noFrames
+        }
+        return count
     }
 
     private static func proxySize(for source: CGSize) -> CGSize {

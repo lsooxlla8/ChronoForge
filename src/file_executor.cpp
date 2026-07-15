@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <complex>
 #include <cstring>
 #include <exception>
 #include <limits>
@@ -218,6 +219,10 @@ void report(const FileRenderProgress& progress, double fraction, std::string_vie
             return {input.h, effect.options[1] == 1 ? input.h : input.t, input.w, input.c};
         case EffectOperation::SpectralFftSwap:
             require_option(effect.options[0], 2, "FFT axis");
+            require_option(effect.options[2], 1, "FFT resolution");
+            if (effect.options[2] == 1) {
+                return input;
+            }
             if (effect.options[0] == 0) {
                 return {input.w, input.h, input.t, input.c};
             }
@@ -284,17 +289,43 @@ void time_shift(const MappedTensor& input, MappedTensor& output, const EffectSpe
 
 void radial(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
     require_option(effect.options[0], 2, "edge behavior");
+    require_option(effect.options[1], 2, "radial topology");
     const auto edge = static_cast<EdgeBehavior>(effect.options[0]);
+    const auto topology = static_cast<RadialTopology>(effect.options[1]);
     const auto& s = input.shape();
     const auto center_x = effect.values[0] * static_cast<float>(s.w - 1);
     const auto center_y = effect.values[1] * static_cast<float>(s.h - 1);
+    const auto width = static_cast<float>(std::max<std::size_t>(1, s.w - 1));
+    const auto height = static_cast<float>(std::max<std::size_t>(1, s.h - 1));
     auto* destination = output.mutable_data();
     parallel_for(s.t, progress, [&](std::size_t t) {
+        const auto phase = static_cast<float>(t) / static_cast<float>(std::max<std::size_t>(1, s.t));
         for (std::size_t y = 0; y < s.h; ++y) {
             for (std::size_t x = 0; x < s.w; ++x) {
-                const auto dx = static_cast<float>(x) - center_x;
-                const auto dy = static_cast<float>(y) - center_y;
-                const auto amount = static_cast<std::ptrdiff_t>(std::floor(effect.values[2] * std::sqrt(dx * dx + dy * dy)));
+                const auto dx = (static_cast<float>(x) - center_x) / width;
+                const auto dy = (static_cast<float>(y) - center_y) / height;
+                const auto radius = std::sqrt(dx * dx + dy * dy);
+                const auto turns = std::atan2(dy, dx) / (2.0F * std::numbers::pi_v<float>);
+                float weave{};
+                switch (topology) {
+                    case RadialTopology::TimeLoom:
+                        weave = radius + effect.values[3] * turns +
+                                0.25F * std::sin(2.0F * std::numbers::pi_v<float> * (4.0F * radius - 2.0F * turns + 2.0F * phase));
+                        break;
+                    case RadialTopology::KaleidoFold: {
+                        const auto folded = 2.0F * std::abs(std::fmod(turns * 6.0F + 100.5F, 1.0F) - 0.5F);
+                        weave = radius + effect.values[3] * folded +
+                                0.2F * std::sin(2.0F * std::numbers::pi_v<float> * (8.0F * radius + phase));
+                        break;
+                    }
+                    case RadialTopology::EventHorizon:
+                        weave = std::clamp(0.15F * (1.0F / (radius + 0.08F) - 1.0F / 1.08F), -3.0F, 3.0F) +
+                                effect.values[3] *
+                                    std::sin(12.0F * std::numbers::pi_v<float> * turns + 2.0F * std::numbers::pi_v<float> * phase) *
+                                    std::exp(-2.0F * radius);
+                        break;
+                }
+                const auto amount = static_cast<std::ptrdiff_t>(std::lround(effect.values[2] * static_cast<float>(s.t) * weave));
                 const auto source_t = resolve_time(static_cast<std::ptrdiff_t>(t) + amount, s.t, edge);
                 for (std::size_t c = 0; c < s.c; ++c) {
                     destination[linear(t, y, x, c, s)] = read(input, source_t, y, x, c);
@@ -361,6 +392,10 @@ void rotate_plane(float& a, float& b, float degrees) {
         t = wrap_coordinate(t, s.t);
         y = wrap_coordinate(y, s.h);
         x = wrap_coordinate(x, s.w);
+    } else if (fill == FillMode::Fit) {
+        t = std::clamp(t, 0.0F, static_cast<float>(s.t - 1));
+        y = std::clamp(y, 0.0F, static_cast<float>(s.h - 1));
+        x = std::clamp(x, 0.0F, static_cast<float>(s.w - 1));
     } else if (t < 0 || y < 0 || x < 0 || t > static_cast<float>(s.t - 1) || y > static_cast<float>(s.h - 1) ||
                x > static_cast<float>(s.w - 1)) {
         return fill == FillMode::Black && c == 3 && s.c >= 4 ? 1.0F : 0.0F;
@@ -383,10 +418,34 @@ void rotate_plane(float& a, float& b, float degrees) {
     return lower + (upper - lower) * ft;
 }
 
+struct Point3 {
+    float t;
+    float y;
+    float x;
+};
+
+void inverse_rotate(Point3& point, const EffectSpec& effect) {
+    rotate_plane(point.y, point.t, -effect.values[2]);
+    rotate_plane(point.x, point.t, -effect.values[1]);
+    rotate_plane(point.x, point.y, -effect.values[0]);
+}
+
+[[nodiscard]] float rotation_fit_scale(const EffectSpec& effect) {
+    std::array<Point3, 3> basis{{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}};
+    for (auto& point : basis) {
+        inverse_rotate(point, effect);
+    }
+    const auto t = std::abs(basis[0].t) + std::abs(basis[1].t) + std::abs(basis[2].t);
+    const auto y = std::abs(basis[0].y) + std::abs(basis[1].y) + std::abs(basis[2].y);
+    const auto x = std::abs(basis[0].x) + std::abs(basis[1].x) + std::abs(basis[2].x);
+    return 1.0F / std::max({1.0F, t, y, x});
+}
+
 void rotation(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
-    require_option(effect.options[0], 2, "fill mode");
+    require_option(effect.options[0], 3, "fill mode");
     const auto fill = static_cast<FillMode>(effect.options[0]);
     const auto& s = input.shape();
+    const auto fit_scale = fill == FillMode::Fit ? rotation_fit_scale(effect) : 1.0F;
     auto* destination = output.mutable_data();
     parallel_for(s.t, progress, [&](std::size_t t) {
         for (std::size_t y = 0; y < s.h; ++y) {
@@ -394,16 +453,277 @@ void rotation(const MappedTensor& input, MappedTensor& output, const EffectSpec&
                 float pt = normalized(t, s.t);
                 float py = normalized(y, s.h);
                 float px = normalized(x, s.w);
-                rotate_plane(py, pt, -effect.values[2]);
-                rotate_plane(px, pt, -effect.values[1]);
-                rotate_plane(px, py, -effect.values[0]);
+                Point3 point{pt * fit_scale, py * fit_scale, px * fit_scale};
+                inverse_rotate(point, effect);
                 for (std::size_t c = 0; c < s.c; ++c) {
                     destination[linear(t, y, x, c, s)] = trilinear(
-                        input, denormalized(pt, s.t), denormalized(py, s.h), denormalized(px, s.w), c, fill);
+                        input, denormalized(point.t, s.t), denormalized(point.y, s.h), denormalized(point.x, s.w), c, fill);
                 }
             }
         }
     });
+}
+
+using Complex = std::complex<float>;
+
+[[nodiscard]] std::size_t next_power_of_two(std::size_t value) {
+    if (value == 0) {
+        throw std::invalid_argument("FFT line cannot be empty");
+    }
+    std::size_t result = 1;
+    while (result < value) {
+        if (result > std::numeric_limits<std::size_t>::max() / 2) {
+            throw std::overflow_error("FFT line is too large");
+        }
+        result <<= 1U;
+    }
+    return result;
+}
+
+void fft_power_of_two(std::vector<Complex>& values, bool inverse) {
+    const auto count = values.size();
+    for (std::size_t index = 1, reversed = 0; index < count; ++index) {
+        auto bit = count >> 1U;
+        for (; (reversed & bit) != 0; bit >>= 1U) {
+            reversed ^= bit;
+        }
+        reversed ^= bit;
+        if (index < reversed) {
+            std::swap(values[index], values[reversed]);
+        }
+    }
+    for (std::size_t length = 2; length <= count; length <<= 1U) {
+        const auto angle = (inverse ? 2.0F : -2.0F) * std::numbers::pi_v<float> / static_cast<float>(length);
+        const Complex step{std::cos(angle), std::sin(angle)};
+        for (std::size_t base = 0; base < count; base += length) {
+            Complex phase{1, 0};
+            for (std::size_t offset = 0; offset < length / 2; ++offset) {
+                const auto even = values[base + offset];
+                const auto odd = values[base + offset + length / 2] * phase;
+                values[base + offset] = even + odd;
+                values[base + offset + length / 2] = even - odd;
+                phase *= step;
+            }
+        }
+    }
+    if (inverse) {
+        for (auto& value : values) {
+            value /= static_cast<float>(count);
+        }
+    }
+}
+
+void fft_any_length(std::vector<Complex>& values, bool inverse) {
+    const auto count = values.size();
+    if ((count & (count - 1)) == 0) {
+        fft_power_of_two(values, inverse);
+        return;
+    }
+    if (count > std::numeric_limits<std::size_t>::max() / 2) {
+        throw std::overflow_error("FFT line is too large");
+    }
+    const auto convolution_size = next_power_of_two(2 * count - 1);
+    std::vector<Complex> left(convolution_size, {0, 0});
+    std::vector<Complex> right(convolution_size, {0, 0});
+    const auto sign = inverse ? 1.0F : -1.0F;
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto reduced = std::fmod(static_cast<double>(index) * static_cast<double>(index), static_cast<double>(2 * count));
+        const auto angle = static_cast<float>(std::numbers::pi * reduced / static_cast<double>(count));
+        const Complex chirp{std::cos(sign * angle), std::sin(sign * angle)};
+        const Complex inverse_chirp{std::cos(-sign * angle), std::sin(-sign * angle)};
+        left[index] = values[index] * chirp;
+        right[index] = inverse_chirp;
+        if (index != 0) {
+            right[convolution_size - index] = inverse_chirp;
+        }
+    }
+    fft_power_of_two(left, false);
+    fft_power_of_two(right, false);
+    for (std::size_t index = 0; index < convolution_size; ++index) {
+        left[index] *= right[index];
+    }
+    fft_power_of_two(left, true);
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto reduced = std::fmod(static_cast<double>(index) * static_cast<double>(index), static_cast<double>(2 * count));
+        const auto angle = static_cast<float>(std::numbers::pi * reduced / static_cast<double>(count));
+        const Complex chirp{std::cos(sign * angle), std::sin(sign * angle)};
+        values[index] = left[index] * chirp;
+        if (inverse) {
+            values[index] /= static_cast<float>(count);
+        }
+    }
+}
+
+enum class DiskFftAxis { Time, Height, Width };
+
+[[nodiscard]] Complex read_complex(
+    const MappedTensor& tensor,
+    const TensorShape& logical,
+    std::size_t t,
+    std::size_t y,
+    std::size_t x,
+    std::size_t channel) {
+    static_cast<void>(logical);
+    const auto base = linear(t, y, x, channel * 2, tensor.shape());
+    return {tensor.data()[base], tensor.data()[base + 1]};
+}
+
+void write_complex(
+    MappedTensor& tensor,
+    const TensorShape& logical,
+    std::size_t t,
+    std::size_t y,
+    std::size_t x,
+    std::size_t channel,
+    Complex value) {
+    static_cast<void>(logical);
+    const auto base = linear(t, y, x, channel * 2, tensor.shape());
+    tensor.mutable_data()[base] = value.real();
+    tensor.mutable_data()[base + 1] = value.imag();
+}
+
+void transform_disk_axis(
+    MappedTensor& tensor,
+    const TensorShape& logical,
+    DiskFftAxis axis,
+    bool inverse,
+    std::size_t budget,
+    const LocalProgress& progress) {
+    const auto extent = axis == DiskFftAxis::Time ? logical.t : (axis == DiskFftAxis::Height ? logical.h : logical.w);
+    const auto line_count = axis == DiskFftAxis::Time
+                                ? logical.h * logical.w * logical.c
+                                : (axis == DiskFftAxis::Height ? logical.t * logical.w * logical.c
+                                                               : logical.t * logical.h * logical.c);
+    const auto convolution = (extent & (extent - 1)) == 0 ? extent : next_power_of_two(2 * extent - 1);
+    const auto per_worker = (extent + 2 * convolution) * sizeof(Complex);
+    if (per_worker > budget) {
+        throw std::runtime_error("A single FFT line exceeds the configured working memory budget");
+    }
+    auto transform_line = [&](std::size_t line_index) {
+        const auto channel = line_index % logical.c;
+        const auto position = line_index / logical.c;
+        std::size_t fixed_a{};
+        std::size_t fixed_b{};
+        if (axis == DiskFftAxis::Time) {
+            fixed_a = position / logical.w;
+            fixed_b = position % logical.w;
+        } else if (axis == DiskFftAxis::Height) {
+            fixed_a = position / logical.w;
+            fixed_b = position % logical.w;
+        } else {
+            fixed_a = position / logical.h;
+            fixed_b = position % logical.h;
+        }
+        std::vector<Complex> line_values(extent);
+        for (std::size_t index = 0; index < extent; ++index) {
+            const auto t = axis == DiskFftAxis::Time ? index : fixed_a;
+            const auto y = axis == DiskFftAxis::Height ? index : (axis == DiskFftAxis::Time ? fixed_a : fixed_b);
+            const auto x = axis == DiskFftAxis::Width ? index : fixed_b;
+            line_values[index] = read_complex(tensor, logical, t, y, x, channel);
+        }
+        fft_any_length(line_values, inverse);
+        for (std::size_t index = 0; index < extent; ++index) {
+            const auto t = axis == DiskFftAxis::Time ? index : fixed_a;
+            const auto y = axis == DiskFftAxis::Height ? index : (axis == DiskFftAxis::Time ? fixed_a : fixed_b);
+            const auto x = axis == DiskFftAxis::Width ? index : fixed_b;
+            write_complex(tensor, logical, t, y, x, channel, line_values[index]);
+        }
+    };
+    const auto parallel_workers = std::min<std::size_t>(line_count, std::min<std::size_t>(std::max(1U, std::thread::hardware_concurrency()), 16));
+    if (per_worker <= budget / std::max<std::size_t>(1, parallel_workers)) {
+        parallel_for(line_count, progress, transform_line);
+        return;
+    }
+    const auto stride = std::max<std::size_t>(1, line_count / 100);
+    for (std::size_t line = 0; line < line_count; ++line) {
+        transform_line(line);
+        if ((line + 1) % stride == 0 || line + 1 == line_count) {
+            progress(static_cast<double>(line + 1) / static_cast<double>(line_count));
+        }
+    }
+}
+
+[[nodiscard]] TensorShape native_spectral_shape(const TensorShape& input, SpectralSwapAxis axis) {
+    switch (axis) {
+        case SpectralSwapAxis::XTime:
+            return {input.w, input.h, input.t, input.c};
+        case SpectralSwapAxis::YTime:
+            return {input.h, input.t, input.w, input.c};
+        case SpectralSwapAxis::AllAxes:
+            return {input.h, input.w, input.t, input.c};
+    }
+    throw std::invalid_argument("Unknown spectral swap axis");
+}
+
+void transpose_disk_spectrum(
+    const MappedTensor& input,
+    const TensorShape& input_shape,
+    MappedTensor& output,
+    const TensorShape& output_shape,
+    SpectralSwapAxis axis,
+    const LocalProgress& progress) {
+    parallel_for(output_shape.t, progress, [&](std::size_t t) {
+        for (std::size_t y = 0; y < output_shape.h; ++y) {
+            for (std::size_t x = 0; x < output_shape.w; ++x) {
+                std::size_t source_t{};
+                std::size_t source_y{};
+                std::size_t source_x{};
+                switch (axis) {
+                    case SpectralSwapAxis::XTime:
+                        source_t = x;
+                        source_y = y;
+                        source_x = t;
+                        break;
+                    case SpectralSwapAxis::YTime:
+                        source_t = y;
+                        source_y = t;
+                        source_x = x;
+                        break;
+                    case SpectralSwapAxis::AllAxes:
+                        source_t = x;
+                        source_y = t;
+                        source_x = y;
+                        break;
+                }
+                for (std::size_t c = 0; c < output_shape.c; ++c) {
+                    write_complex(output, output_shape, t, y, x, c, read_complex(input, input_shape, source_t, source_y, source_x, c));
+                }
+            }
+        }
+    });
+}
+
+[[nodiscard]] float scaled_coordinate(std::size_t value, std::size_t destination_extent, std::size_t source_extent) {
+    return destination_extent <= 1 || source_extent <= 1
+               ? 0.0F
+               : static_cast<float>(value) * static_cast<float>(source_extent - 1) /
+                     static_cast<float>(destination_extent - 1);
+}
+
+[[nodiscard]] float sample_complex_real(
+    const MappedTensor& input,
+    const TensorShape& shape,
+    float t,
+    float y,
+    float x,
+    std::size_t channel) {
+    const auto t0 = static_cast<std::size_t>(std::floor(t));
+    const auto y0 = static_cast<std::size_t>(std::floor(y));
+    const auto x0 = static_cast<std::size_t>(std::floor(x));
+    const auto t1 = std::min(t0 + 1, shape.t - 1);
+    const auto y1 = std::min(y0 + 1, shape.h - 1);
+    const auto x1 = std::min(x0 + 1, shape.w - 1);
+    const auto ft = t - static_cast<float>(t0);
+    const auto fy = y - static_cast<float>(y0);
+    const auto fx = x - static_cast<float>(x0);
+    const auto value = [&](std::size_t st, std::size_t sy, std::size_t sx) {
+        return read_complex(input, shape, st, sy, sx, channel).real();
+    };
+    const auto c00 = value(t0, y0, x0) + (value(t0, y0, x1) - value(t0, y0, x0)) * fx;
+    const auto c01 = value(t0, y1, x0) + (value(t0, y1, x1) - value(t0, y1, x0)) * fx;
+    const auto c10 = value(t1, y0, x0) + (value(t1, y0, x1) - value(t1, y0, x0)) * fx;
+    const auto c11 = value(t1, y1, x0) + (value(t1, y1, x1) - value(t1, y1, x0)) * fx;
+    return (c00 + (c01 - c00) * fy) + ((c10 + (c11 - c10) * fy) - (c00 + (c01 - c00) * fy)) * ft;
 }
 
 void spectral(
@@ -413,37 +733,89 @@ void spectral(
     std::size_t budget,
     const VideoTensorMetadata& metadata,
     const LocalProgress& progress) {
+    static_cast<void>(metadata);
     require_option(effect.options[0], 2, "FFT axis");
-    const auto next_power_of_two = [](std::size_t value) {
-        std::size_t result = 1;
-        while (result < value) {
-            if (result > std::numeric_limits<std::size_t>::max() / 2) {
-                throw std::overflow_error("FFT padded dimension is too large");
-            }
-            result <<= 1U;
-        }
-        return result;
-    };
-    const TensorShape padded{
-        next_power_of_two(input.shape().t),
-        next_power_of_two(input.shape().h),
-        next_power_of_two(input.shape().w),
-        input.shape().c,
-    };
-    const auto padded_elements = padded.element_count();
-    const auto raw_bytes = input.shape().byte_count();
-    if (padded_elements > std::numeric_limits<std::size_t>::max() / 16 ||
-        raw_bytes > budget || padded_elements * 16 > budget - raw_bytes) {
-        throw std::runtime_error("Full-resolution 3D FFT exceeds the configured RAM budget; use Proxy or reduce the tensor first");
+    require_option(effect.options[2], 1, "FFT resolution");
+    const auto axis = static_cast<SpectralSwapAxis>(effect.options[0]);
+    const auto native_shape = native_spectral_shape(input.shape(), axis);
+    const TensorShape input_complex_shape{input.shape().t, input.shape().h, input.shape().w, input.shape().c * 2};
+    const TensorShape output_complex_shape{native_shape.t, native_shape.h, native_shape.w, native_shape.c * 2};
+    const auto first_path = output.path().string() + ".fft-forward";
+    const auto second_path = output.path().string() + ".fft-inverse";
+    if (input_complex_shape.byte_count() > std::numeric_limits<std::size_t>::max() - output_complex_shape.byte_count()) {
+        throw std::overflow_error("FFT temporary disk requirement is too large");
     }
-    const auto count = input.shape().element_count();
-    std::vector<float> values(input.data(), input.data() + count);
-    VideoTensor memory(input.shape(), std::move(values), metadata);
-    auto result = spectral_fft_swap(
-        memory,
-        {static_cast<SpectralSwapAxis>(effect.options[0]), effect.options[1] != 0, budget - raw_bytes});
-    std::memcpy(output.mutable_data(), result.values().data(), result.shape().byte_count());
-    progress(1.0);
+    const auto required_disk = input_complex_shape.byte_count() + output_complex_shape.byte_count();
+    const auto disk = std::filesystem::space(output.path().parent_path());
+    constexpr std::uintmax_t reserve = 512ULL * 1024ULL * 1024ULL;
+    if (disk.available < required_disk || disk.available - required_disk < reserve) {
+        throw std::runtime_error("Full-resolution FFT needs additional SSD space for two temporary frequency tensors");
+    }
+    try {
+        {
+            auto forward = MappedTensor::create(first_path, input_complex_shape);
+            parallel_for(input.shape().t, [&](double fraction) { progress(fraction * 0.05); }, [&](std::size_t t) {
+                for (std::size_t y = 0; y < input.shape().h; ++y) {
+                    for (std::size_t x = 0; x < input.shape().w; ++x) {
+                        for (std::size_t c = 0; c < input.shape().c; ++c) {
+                            write_complex(forward, input.shape(), t, y, x, c, {read(input, t, y, x, c), 0});
+                        }
+                    }
+                }
+            });
+            transform_disk_axis(forward, input.shape(), DiskFftAxis::Width, false, budget, [&](double value) { progress(0.05 + value * 0.10); });
+            transform_disk_axis(forward, input.shape(), DiskFftAxis::Height, false, budget, [&](double value) { progress(0.15 + value * 0.10); });
+            transform_disk_axis(forward, input.shape(), DiskFftAxis::Time, false, budget, [&](double value) { progress(0.25 + value * 0.10); });
+            forward.sync();
+            {
+                auto inverse = MappedTensor::create(second_path, output_complex_shape);
+                transpose_disk_spectrum(
+                    forward,
+                    input.shape(),
+                    inverse,
+                    native_shape,
+                    axis,
+                    [&](double value) { progress(0.35 + value * 0.15); });
+                inverse.sync();
+                transform_disk_axis(inverse, native_shape, DiskFftAxis::Width, true, budget, [&](double value) { progress(0.50 + value * 0.10); });
+                transform_disk_axis(inverse, native_shape, DiskFftAxis::Height, true, budget, [&](double value) { progress(0.60 + value * 0.10); });
+                transform_disk_axis(inverse, native_shape, DiskFftAxis::Time, true, budget, [&](double value) { progress(0.70 + value * 0.10); });
+                parallel_for(output.shape().t, [&](double value) { progress(0.80 + value * 0.15); }, [&](std::size_t t) {
+                    const auto source_t = scaled_coordinate(t, output.shape().t, native_shape.t);
+                    for (std::size_t y = 0; y < output.shape().h; ++y) {
+                        const auto source_y = scaled_coordinate(y, output.shape().h, native_shape.h);
+                        for (std::size_t x = 0; x < output.shape().w; ++x) {
+                            const auto source_x = scaled_coordinate(x, output.shape().w, native_shape.w);
+                            for (std::size_t c = 0; c < output.shape().c; ++c) {
+                                output.mutable_data()[linear(t, y, x, c, output.shape())] =
+                                    sample_complex_real(inverse, native_shape, source_t, source_y, source_x, c);
+                            }
+                        }
+                    }
+                });
+            }
+        }
+        std::filesystem::remove(first_path);
+        std::filesystem::remove(second_path);
+        if (effect.options[1] != 0) {
+            auto* values = output.mutable_data();
+            const auto count = output.shape().element_count();
+            const auto [minimum, maximum] = std::minmax_element(values, values + count);
+            const auto minimum_value = *minimum;
+            const auto span = *maximum - minimum_value;
+            if (std::abs(span) > std::numeric_limits<float>::epsilon()) {
+                parallel_for(count, [&](double value) { progress(0.95 + value * 0.05); }, [&](std::size_t index) {
+                    values[index] = (values[index] - minimum_value) / span;
+                });
+            }
+        }
+        progress(1.0);
+    } catch (...) {
+        std::error_code ignored;
+        std::filesystem::remove(first_path, ignored);
+        std::filesystem::remove(second_path, ignored);
+        throw;
+    }
 }
 
 void apply(
@@ -483,7 +855,7 @@ void apply(
         case EffectOperation::LumaTimeShift:
             return "Luma-Time Shift";
         case EffectOperation::RadialChronoFunnel:
-            return "Radial Chrono-Funnel";
+            return "Radial Time Loom";
         case EffectOperation::TemporalPixelSort:
             return "Temporal Pixel Sort";
         case EffectOperation::Tensor3dRotation:

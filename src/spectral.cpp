@@ -168,13 +168,54 @@ void normalize_range(VideoTensor& output) {
         return;
     }
     const auto [minimum, maximum] = std::minmax_element(values.begin(), values.end());
-    const auto span = *maximum - *minimum;
+    const auto minimum_value = *minimum;
+    const auto span = *maximum - minimum_value;
     if (std::abs(span) < std::numeric_limits<float>::epsilon()) {
         return;
     }
     for (auto& value : values) {
-        value = (value - *minimum) / span;
+        value = (value - minimum_value) / span;
     }
+}
+
+[[nodiscard]] float scaled_coordinate(std::size_t coordinate, std::size_t destination_extent, std::size_t source_extent) {
+    if (destination_extent <= 1 || source_extent <= 1) {
+        return 0.0F;
+    }
+    return static_cast<float>(coordinate) * static_cast<float>(source_extent - 1) /
+           static_cast<float>(destination_extent - 1);
+}
+
+[[nodiscard]] VideoTensor resample_tensor(const VideoTensor& input, const TensorShape& output_shape) {
+    VideoTensor output(output_shape, 0.0F, input.metadata());
+    const auto& source = input.shape();
+    for (std::size_t t = 0; t < output_shape.t; ++t) {
+        const auto source_t = scaled_coordinate(t, output_shape.t, source.t);
+        const auto t0 = static_cast<std::size_t>(std::floor(source_t));
+        const auto t1 = std::min(t0 + 1, source.t - 1);
+        const auto ft = source_t - static_cast<float>(t0);
+        for (std::size_t y = 0; y < output_shape.h; ++y) {
+            const auto source_y = scaled_coordinate(y, output_shape.h, source.h);
+            const auto y0 = static_cast<std::size_t>(std::floor(source_y));
+            const auto y1 = std::min(y0 + 1, source.h - 1);
+            const auto fy = source_y - static_cast<float>(y0);
+            for (std::size_t x = 0; x < output_shape.w; ++x) {
+                const auto source_x = scaled_coordinate(x, output_shape.w, source.w);
+                const auto x0 = static_cast<std::size_t>(std::floor(source_x));
+                const auto x1 = std::min(x0 + 1, source.w - 1);
+                const auto fx = source_x - static_cast<float>(x0);
+                for (std::size_t c = 0; c < output_shape.c; ++c) {
+                    const auto c00 = input.at(t0, y0, x0, c) + (input.at(t0, y0, x1, c) - input.at(t0, y0, x0, c)) * fx;
+                    const auto c01 = input.at(t0, y1, x0, c) + (input.at(t0, y1, x1, c) - input.at(t0, y1, x0, c)) * fx;
+                    const auto c10 = input.at(t1, y0, x0, c) + (input.at(t1, y0, x1, c) - input.at(t1, y0, x0, c)) * fx;
+                    const auto c11 = input.at(t1, y1, x0, c) + (input.at(t1, y1, x1, c) - input.at(t1, y1, x0, c)) * fx;
+                    output.at(t, y, x, c) = (c00 + (c01 - c00) * fy) +
+                                             ((c10 + (c11 - c10) * fy) - (c00 + (c01 - c00) * fy)) * ft;
+                }
+            }
+        }
+    }
+    return output;
 }
 
 }  // namespace
@@ -222,6 +263,13 @@ VideoTensor spectral_fft_swap(const VideoTensor& input, const SpectralSwapParams
         }
     }
     VideoTensor output(output_shape, std::move(values), input.metadata());
+    if (params.resolution == SpectralResolution::FitSourceTensor) {
+        auto fitted = resample_tensor(output, shape);
+        if (params.normalize) {
+            normalize_range(fitted);
+        }
+        return fitted;
+    }
     if (params.normalize) {
         normalize_range(output);
     }

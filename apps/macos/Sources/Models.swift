@@ -53,7 +53,7 @@ enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
         switch self {
         case .spaceTimeTranspose: "Space–Time Transpose"
         case .lumaTimeShift: "Luma–Time Shift"
-        case .radialChronoFunnel: "Radial Chrono-Funnel"
+        case .radialChronoFunnel: "Radial Time Loom"
         case .temporalPixelSort: "Temporal Pixel Sort"
         case .tensor3DRotation: "Tensor 3D Rotation"
         case .spectralFFTSwap: "Spectral FFT Swap"
@@ -98,18 +98,72 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
         case .lumaTimeShift:
             return .init(kind: kind, inputNodeID: inputNodeID, values: [20, 0, 0, 0], options: [0, 0, 0, 0])
         case .radialChronoFunnel:
-            return .init(kind: kind, inputNodeID: inputNodeID, values: [0.5, 0.5, 0.08, 0], options: [1, 0, 0, 0])
+            return .init(kind: kind, inputNodeID: inputNodeID, values: [0.5, 0.5, 0.08, 0.75], options: [1, 0, 0, 0])
         case .temporalPixelSort:
             return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 0, 0, 0])
         case .tensor3DRotation:
             return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 15, 0, 0], options: [0, 0, 0, 0])
         case .spectralFFTSwap:
-            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 1, 0, 0])
+            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 1, 1, 0])
         }
     }
 }
 
-enum RenderQuality: String, CaseIterable, Identifiable {
+enum RenderQueueStatus: Equatable, Sendable {
+    case waiting
+    case running
+    case completed
+    case failed(String)
+    case cancelled
+
+    var title: String {
+        switch self {
+        case .waiting: "Waiting"
+        case .running: "Rendering"
+        case .completed: "Complete"
+        case .failed: "Failed"
+        case .cancelled: "Cancelled"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .waiting: "clock"
+        case .running: "gearshape.2"
+        case .completed: "checkmark.circle.fill"
+        case .failed: "exclamationmark.triangle.fill"
+        case .cancelled: "xmark.circle"
+        }
+    }
+}
+
+struct RenderQueueItem: Identifiable, Sendable {
+    let id: UUID
+    let source: DecodedProxy
+    let effects: [EffectNode]
+    let quality: RenderQuality
+    let audioMode: AudioMode
+    let destinationURL: URL
+    var status: RenderQueueStatus
+
+    init(
+        source: DecodedProxy,
+        effects: [EffectNode],
+        quality: RenderQuality,
+        audioMode: AudioMode,
+        destinationURL: URL
+    ) {
+        id = UUID()
+        self.source = source
+        self.effects = effects
+        self.quality = quality
+        self.audioMode = audioMode
+        self.destinationURL = destinationURL
+        status = .waiting
+    }
+}
+
+enum RenderQuality: String, CaseIterable, Identifiable, Sendable {
     case proxy
     case full
 
@@ -117,7 +171,7 @@ enum RenderQuality: String, CaseIterable, Identifiable {
     var title: String { self == .proxy ? "Proxy" : "Full quality" }
 }
 
-enum AudioMode: String, CaseIterable, Identifiable, Codable {
+enum AudioMode: String, CaseIterable, Identifiable, Codable, Sendable {
     case none
     case preserveOriginal
 

@@ -74,6 +74,8 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptor& des
                     descriptor.values[1],
                     descriptor.values[2],
                     checked_enum<chronoforge::EdgeBehavior>(descriptor.options[0], 2, "edge behavior"),
+                    descriptor.values[3],
+                    checked_enum<chronoforge::RadialTopology>(descriptor.options[1], 2, "radial topology"),
                 });
         case CF_EFFECT_TEMPORAL_PIXEL_SORT:
             return chronoforge::temporal_pixel_sort(
@@ -90,7 +92,7 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptor& des
                     descriptor.values[0],
                     descriptor.values[1],
                     descriptor.values[2],
-                    checked_enum<chronoforge::FillMode>(descriptor.options[0], 2, "fill mode"),
+                    checked_enum<chronoforge::FillMode>(descriptor.options[0], 3, "fill mode"),
                 });
         case CF_EFFECT_SPECTRAL_FFT_SWAP:
             return chronoforge::spectral_fft_swap(
@@ -99,6 +101,7 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptor& des
                     checked_enum<chronoforge::SpectralSwapAxis>(descriptor.options[0], 2, "FFT swap axis"),
                     descriptor.options[1] != 0,
                     static_cast<std::size_t>(std::min<uint64_t>(budget, std::numeric_limits<std::size_t>::max())),
+                    checked_enum<chronoforge::SpectralResolution>(descriptor.options[2], 1, "FFT resolution"),
                 });
     }
     throw std::invalid_argument("Unsupported effect kind");
@@ -121,7 +124,7 @@ CFEffectDescriptor cf_effect_descriptor_make(
     return {kind, {value0, value1, value2, value3}, {option0, option1, option2, option3}};
 }
 
-const char* cf_core_version(void) { return "0.3.0"; }
+const char* cf_core_version(void) { return "0.4.0"; }
 
 int32_t cf_render_effect_chain(
     const float* input,

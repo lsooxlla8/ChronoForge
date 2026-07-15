@@ -25,16 +25,32 @@ final class ProjectStore: ObservableObject {
     @Published var cacheSizeDescription = "Calculating cache…"
     @Published var showsClearCacheConfirmation = false
     @Published var isPlaying = false
+    @Published var renderQueue: [RenderQueueItem] = []
+    @Published var isQueueRunning = false
+    @Published var isPreviewStale = false
 
     private var task: Task<Void, Never>?
     private var playbackTask: Task<Void, Never>?
 
     init() {
-        Task { await refreshCacheSize() }
+        Task {
+            _ = try? await CacheManager.shared.trim()
+            await refreshCacheSize()
+        }
     }
 
     var displayedTensor: VideoTensorData? { output ?? source?.tensor }
     var selectedNodeIndex: Int? { effects.firstIndex { $0.id == selectedNodeID } }
+
+    func effect(withID id: UUID) -> EffectNode? {
+        effects.first { $0.id == id }
+    }
+
+    func updateEffect(_ node: EffectNode) {
+        guard let index = effects.firstIndex(where: { $0.id == node.id }) else { return }
+        effects[index] = node
+        markEdited()
+    }
 
     func importVideo(from url: URL, markDirty: Bool = true) {
         stopPlayback()
@@ -54,9 +70,10 @@ final class ProjectStore: ObservableObject {
                 source = decoded
                 output = decoded.tensor
                 currentFrame = 0
+                isPreviewStale = !effects.isEmpty
                 statusMessage = "Proxy ready · \(decoded.tensor.frames) frames"
                 if markDirty {
-                    markEdited()
+                    markEdited(invalidatePreview: !effects.isEmpty)
                 } else {
                     isDirty = false
                 }
@@ -79,6 +96,7 @@ final class ProjectStore: ObservableObject {
 
     func removeSelectedEffect() {
         guard let index = selectedNodeIndex else { return }
+        selectedNodeID = nil
         let removed = effects.remove(at: index)
         for candidate in effects.indices where effects[candidate].inputNodeID == removed.id {
             effects[candidate].inputNodeID = removed.inputNodeID
@@ -86,6 +104,19 @@ final class ProjectStore: ObservableObject {
         if outputNodeID == removed.id { outputNodeID = removed.inputNodeID }
         selectedNodeID = effects.indices.contains(index) ? effects[index].id : effects.last?.id
         markEdited()
+    }
+
+    func removeMedia() {
+        stopPlayback()
+        cancelWork()
+        source = nil
+        output = nil
+        isPreviewStale = false
+        currentFrame = 0
+        isDirty = true
+        RecoveryStore.remove()
+        hasRecovery = false
+        statusMessage = "No media selected"
     }
 
     func moveEffect(from offsets: IndexSet, to destination: Int) {
@@ -98,7 +129,9 @@ final class ProjectStore: ObservableObject {
         cancelWork()
         source = nil
         output = nil
+        isPreviewStale = false
         effects = []
+        renderQueue = []
         selectedNodeID = nil
         outputNodeID = nil
         currentFrame = 0
@@ -109,8 +142,11 @@ final class ProjectStore: ObservableObject {
         statusMessage = "Choose a video to begin"
     }
 
-    func markEdited() {
+    func markEdited(invalidatePreview: Bool = true) {
         isDirty = true
+        if invalidatePreview, source != nil {
+            isPreviewStale = true
+        }
         guard let source else { return }
         try? RecoveryStore.save(SavedChronoForgeProject(
             source: source, effects: effects, outputNodeID: outputNodeID, quality: quality, audioMode: audioMode))
@@ -204,6 +240,7 @@ final class ProjectStore: ObservableObject {
             do {
                 if let cached = await ProxyCache.shared.load(key: cacheKey) {
                     output = cached
+                    isPreviewStale = false
                     currentFrame = min(currentFrame, max(0, cached.frames - 1))
                     statusMessage = "Loaded from render cache"
                     return
@@ -211,20 +248,25 @@ final class ProjectStore: ObservableObject {
                 let result = try await CoreRenderer.render(input: input, effects: graph)
                 try Task.checkCancellation()
                 output = result
+                isPreviewStale = false
                 currentFrame = min(currentFrame, max(0, result.frames - 1))
                 statusMessage = "Rendered · \(result.frames) × \(result.width) × \(result.height)"
                 try? await ProxyCache.shared.store(result, key: cacheKey)
+                _ = try? await CacheManager.shared.trim()
+                await refreshCacheSize()
             } catch is CancellationError {
                 statusMessage = "Render cancelled"
             } catch {
                 errorMessage = error.localizedDescription
                 statusMessage = "Render failed"
             }
+            _ = try? await CacheManager.shared.trim()
+            await refreshCacheSize()
         }
     }
 
     func chooseExportLocation() {
-        guard output != nil else { return }
+        guard source != nil else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.mpeg4Movie]
         panel.canCreateDirectories = true
@@ -236,7 +278,7 @@ final class ProjectStore: ObservableObject {
     }
 
     func exportVideo(to url: URL) {
-        guard let output, let source else { return }
+        guard let source else { return }
         cancelWork()
         isExporting = true
         renderProgress = 0
@@ -249,27 +291,20 @@ final class ProjectStore: ObservableObject {
             }
             do {
                 let renderEffects = try activeEffectChain()
-                if quality == .full {
-                    let access = source.sourceURL.startAccessingSecurityScopedResource()
-                    defer { if access { source.sourceURL.stopAccessingSecurityScopedResource() } }
-                    try await FullRenderPipeline.export(source: source, effects: renderEffects, audioMode: audioMode, to: url) { fraction, stage in
-                        Task { @MainActor in
-                            self.renderProgress = fraction
-                            self.statusMessage = stage
-                        }
-                    }
-                } else {
-                    if audioMode == .preserveOriginal {
-                        let temporary = url.deletingLastPathComponent().appendingPathComponent(".chronoforge-video-\(UUID().uuidString).mp4")
-                        try await VideoExporter.export(output, to: temporary)
-                        let access = source.sourceURL.startAccessingSecurityScopedResource()
-                        defer { if access { source.sourceURL.stopAccessingSecurityScopedResource() } }
-                        try await MediaMuxer.addOriginalAudio(videoURL: temporary, sourceURL: source.sourceURL, destinationURL: url)
-                    } else {
-                        try await VideoExporter.export(output, to: url)
+                try await performExport(
+                    source: source,
+                    effects: renderEffects,
+                    quality: quality,
+                    audioMode: audioMode,
+                    destination: url
+                ) { fraction, stage in
+                    Task { @MainActor in
+                        self.renderProgress = fraction
+                        self.statusMessage = stage
                     }
                 }
                 statusMessage = "Export complete · \(url.lastPathComponent)"
+                _ = try? await CacheManager.shared.trim()
                 await refreshCacheSize()
                 NSWorkspace.shared.activateFileViewerSelecting([url])
             } catch is CancellationError {
@@ -278,7 +313,131 @@ final class ProjectStore: ObservableObject {
                 errorMessage = error.localizedDescription
                 statusMessage = "Export failed"
             }
+            _ = try? await CacheManager.shared.trim()
+            await refreshCacheSize()
         }
+    }
+
+    func addCurrentRenderToQueue() {
+        guard let source else {
+            errorMessage = "Import a video before adding a render."
+            return
+        }
+        let renderEffects: [EffectNode]
+        do {
+            renderEffects = try activeEffectChain()
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.mpeg4Movie]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = "ChronoForge-Queue-\(renderQueue.count + 1).mp4"
+        panel.begin { [weak self] response in
+            guard response == .OK, let destination = panel.url, let self else { return }
+            self.renderQueue.append(RenderQueueItem(
+                source: source,
+                effects: renderEffects,
+                quality: self.quality,
+                audioMode: self.audioMode,
+                destinationURL: destination
+            ))
+            self.statusMessage = "Added to render queue · \(destination.lastPathComponent)"
+        }
+    }
+
+    func removeQueueItem(_ id: UUID) {
+        guard !isQueueRunning else { return }
+        renderQueue.removeAll { $0.id == id }
+    }
+
+    func startRenderQueue() {
+        guard !isQueueRunning, renderQueue.contains(where: { $0.status == .waiting }) else { return }
+        cancelWork()
+        isQueueRunning = true
+        isExporting = true
+        renderProgress = 0
+        errorMessage = nil
+        task = Task {
+            defer {
+                isQueueRunning = false
+                isExporting = false
+                renderProgress = nil
+            }
+            for index in renderQueue.indices where renderQueue[index].status == .waiting {
+                if Task.isCancelled {
+                    renderQueue[index].status = .cancelled
+                    break
+                }
+                renderQueue[index].status = .running
+                let item = renderQueue[index]
+                statusMessage = "Queue \(index + 1)/\(renderQueue.count) · \(item.destinationURL.lastPathComponent)"
+                do {
+                    try await performExport(
+                        source: item.source,
+                        effects: item.effects,
+                        quality: item.quality,
+                        audioMode: item.audioMode,
+                        destination: item.destinationURL
+                    ) { fraction, stage in
+                        Task { @MainActor in
+                            self.renderProgress = fraction
+                            self.statusMessage = "Queue \(index + 1)/\(self.renderQueue.count) · \(stage)"
+                        }
+                    }
+                    renderQueue[index].status = .completed
+                } catch is CancellationError {
+                    renderQueue[index].status = .cancelled
+                    break
+                } catch {
+                    renderQueue[index].status = .failed(error.localizedDescription)
+                }
+                try? await CacheManager.shared.clear()
+                await refreshCacheSize()
+            }
+            statusMessage = Task.isCancelled ? "Render queue cancelled" : "Render queue finished"
+        }
+    }
+
+    private func performExport(
+        source: DecodedProxy,
+        effects: [EffectNode],
+        quality: RenderQuality,
+        audioMode: AudioMode,
+        destination: URL,
+        progress: @escaping @Sendable (Double, String) -> Void
+    ) async throws {
+        let access = source.sourceURL.startAccessingSecurityScopedResource()
+        defer { if access { source.sourceURL.stopAccessingSecurityScopedResource() } }
+        if quality == .full {
+            try await FullRenderPipeline.export(
+                source: source,
+                effects: effects,
+                audioMode: audioMode,
+                to: destination,
+                progress: progress
+            )
+            return
+        }
+        progress(0.05, "Rendering proxy")
+        let proxyOutput = try await CoreRenderer.render(input: source.tensor, effects: effects)
+        try Task.checkCancellation()
+        progress(0.55, "Encoding proxy")
+        if audioMode == .preserveOriginal {
+            let temporary = destination.deletingLastPathComponent()
+                .appendingPathComponent(".chronoforge-video-\(UUID().uuidString).mp4")
+            try await VideoExporter.export(proxyOutput, to: temporary)
+            progress(0.90, "Muxing original audio")
+            try await MediaMuxer.addOriginalAudio(
+                videoURL: temporary,
+                sourceURL: source.sourceURL,
+                destinationURL: destination
+            )
+        } else {
+            try await VideoExporter.export(proxyOutput, to: destination)
+        }
+        progress(1, "Proxy export complete")
     }
 
     func cancelWork() {

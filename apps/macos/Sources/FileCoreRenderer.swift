@@ -72,7 +72,7 @@ enum FileCoreRenderer {
                 if status == 3 { throw CancellationError() }
                 guard status == 0 else { throw CoreRendererError.renderFailed(String(cString: error)) }
                 let changesTimelineExtent = effects.contains {
-                    $0.enabled && ($0.kind == .spaceTimeTranspose || $0.kind == .spectralFFTSwap)
+                    $0.enabled && ($0.kind == .spaceTimeTranspose || ($0.kind == .spectralFFTSwap && $0.options[2] == 0))
                 }
                 let outputFPS = Double(outputInfo.frame_rate_numerator) / Double(outputInfo.frame_rate_denominator)
                 let outputTimestamps = changesTimelineExtent ? nil : input.timestamps

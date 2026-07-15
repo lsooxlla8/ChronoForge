@@ -68,7 +68,9 @@ void test_time_shift_and_funnel() {
     const auto shifted = chronoforge::luma_time_shift(input, {3.0F, chronoforge::ShiftSource::Luma, chronoforge::EdgeBehavior::Clamp});
     require_near(shifted.at(3, 0, 0, 0), input.at(0, 0, 0, 0), "Luma shift samples an earlier frame");
 
-    const auto funnel = chronoforge::radial_chrono_funnel(input, {0.0F, 0.0F, 1.0F, chronoforge::EdgeBehavior::Wrap});
+    const auto funnel = chronoforge::radial_chrono_funnel(
+        input,
+        {0.0F, 0.0F, 0.25F, chronoforge::EdgeBehavior::Wrap, 0.0F, chronoforge::RadialTopology::TimeLoom});
     require_near(funnel.at(3, 0, 1, 0), input.at(0, 0, 1, 0), "Radial funnel wraps time at an outer pixel");
 }
 
@@ -84,6 +86,16 @@ void test_sort_and_rotation() {
 
     const auto rotation = chronoforge::tensor_3d_rotation(input, {});
     require(rotation.values() == input.values(), "Zero 3D rotation is identity");
+
+    chronoforge::VideoTensor canvas({2, 3, 3, 1}, 1.0F);
+    const auto black_rotation = chronoforge::tensor_3d_rotation(
+        canvas,
+        {45.0F, 0, 0, chronoforge::FillMode::Black});
+    const auto fit_rotation = chronoforge::tensor_3d_rotation(
+        canvas,
+        {45.0F, 0, 0, chronoforge::FillMode::Fit});
+    require_near(black_rotation.at(0, 0, 0, 0), 0.0F, "Black rotation exposes an empty corner");
+    require_near(fit_rotation.at(0, 0, 0, 0), 1.0F, "Fit rotation zooms the tensor to cover the frame");
 }
 
 void test_fft_swap() {
@@ -94,6 +106,10 @@ void test_fft_swap() {
     for (std::size_t i = 0; i < output.values().size(); ++i) {
         require_near(output.values()[i], expected.values()[i], "FFT swap matches axis permutation for distinct extents");
     }
+    const auto fitted = chronoforge::spectral_fft_swap(
+        input,
+        {chronoforge::SpectralSwapAxis::XTime, false, 1024 * 1024, chronoforge::SpectralResolution::FitSourceTensor});
+    require(fitted.shape() == input.shape(), "Fitted FFT preserves the complete input tensor shape");
 }
 
 void test_cache_and_graph() {
@@ -146,7 +162,7 @@ void test_file_backed_effect_chain() {
         {chronoforge::EffectOperation::LumaTimeShift, {2.0F, 0, 0, 0}, {0, 1, 0, 0}},
         {chronoforge::EffectOperation::RadialChronoFunnel, {0.5F, 0.5F, 0.2F, 0}, {2, 0, 0, 0}},
         {chronoforge::EffectOperation::TemporalPixelSort, {0.1F, 0, 0, 0}, {0, 0, 0, 0}},
-        {chronoforge::EffectOperation::Tensor3dRotation, {5.0F, 10.0F, 0, 0}, {2, 0, 0, 0}},
+        {chronoforge::EffectOperation::Tensor3dRotation, {5.0F, 10.0F, 0, 0}, {3, 0, 0, 0}},
         {chronoforge::EffectOperation::SpaceTimeTranspose, {0, 0, 0, 0}, {0, 0, 0, 0}},
         {chronoforge::EffectOperation::SpectralFftSwap, {0, 0, 0, 0}, {1, 0, 0, 0}},
     };
@@ -168,9 +184,11 @@ void test_file_backed_effect_chain() {
         });
 
     auto expected = chronoforge::luma_time_shift(input, {2.0F, chronoforge::ShiftSource::Luma, chronoforge::EdgeBehavior::Wrap});
-    expected = chronoforge::radial_chrono_funnel(expected, {0.5F, 0.5F, 0.2F, chronoforge::EdgeBehavior::Mirror});
+    expected = chronoforge::radial_chrono_funnel(
+        expected,
+        {0.5F, 0.5F, 0.2F, chronoforge::EdgeBehavior::Mirror, 0.0F, chronoforge::RadialTopology::TimeLoom});
     expected = chronoforge::temporal_pixel_sort(expected, {chronoforge::SortCriterion::Luma, chronoforge::SortDirection::Ascending, 0.1F});
-    expected = chronoforge::tensor_3d_rotation(expected, {5.0F, 10.0F, 0, chronoforge::FillMode::Repeat});
+    expected = chronoforge::tensor_3d_rotation(expected, {5.0F, 10.0F, 0, chronoforge::FillMode::Fit});
     expected = chronoforge::space_time_transpose(expected, chronoforge::SpatialAxis::X);
     expected = chronoforge::spectral_fft_swap(expected, {chronoforge::SpectralSwapAxis::YTime, false, 64 * 1024 * 1024});
 
@@ -204,6 +222,28 @@ void test_file_backed_effect_chain() {
         chronoforge::MappedTensor::Access::ReadOnly);
     for (std::size_t i = 0; i < fitted_expected.values().size(); ++i) {
         require_near(fitted_output.data()[i], fitted_expected.values()[i], "File-backed fitted transpose matches preview");
+    }
+
+    const auto fft_path = root / "fft-fit.raw";
+    const std::vector<chronoforge::EffectSpec> fft_effects{
+        {chronoforge::EffectOperation::SpectralFftSwap, {0, 0, 0, 0}, {0, 0, 1, 0}},
+    };
+    const auto fft_result = chronoforge::render_file_effect_chain(
+        input_path,
+        fft_path,
+        root / "fft-scratch",
+        input.shape(),
+        input.metadata(),
+        fft_effects,
+        1024,
+        {});
+    const auto fft_expected = chronoforge::spectral_fft_swap(
+        input,
+        {chronoforge::SpectralSwapAxis::XTime, false, 64 * 1024 * 1024, chronoforge::SpectralResolution::FitSourceTensor});
+    require(fft_result.shape == input.shape(), "Out-of-core fitted FFT keeps the source tensor shape");
+    const auto fft_output = chronoforge::MappedTensor::open(fft_path, fft_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
+    for (std::size_t i = 0; i < fft_expected.values().size(); ++i) {
+        require_near(fft_output.data()[i], fft_expected.values()[i], "Out-of-core FFT matches the in-memory reference with a tiny RAM budget");
     }
 
     bool cancelled = false;

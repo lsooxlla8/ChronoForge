@@ -57,19 +57,19 @@ Nodes fall into three scheduling classes:
 | Class | Examples | Scheduling rule |
 | --- | --- | --- |
 | Local | Colour conversion, transform with bounded sample footprint | Process independent tiles plus halo. |
-| Per-pixel temporal | Luma-Time Shift, Radial Chrono-Funnel, Temporal Pixel Sort | Keep the complete `T` vector for every pixel within an `H × W` tile. |
-| Global | 3D rotation with temporal mixing, 3D FFT | Preflight RAM/SSD/GPU budget. Use slab algorithms only where mathematically valid; otherwise force proxy or refuse. |
+| Per-pixel temporal | Luma-Time Shift, Radial Time Loom, Temporal Pixel Sort | Keep the complete `T` vector for every pixel within an `H × W` tile. |
+| Global | 3D rotation with temporal mixing, 3D FFT | Preflight SSD space. FFT maps complex tensors and transforms independent lines with bounded RAM. |
 
 The supplied `TilePlanner` implements the per-pixel-temporal class. It will be generalised after executor integration.
 
 ## The six effects and implementation notes
 
-1. **Space-Time Transpose** is an extent permutation. `X↔T` changes `(T,H,W,C)` to `(W,H,T,C)`, while `Y↔T` changes it to `(H,T,W,C)`. An optional Fit Source Canvas mode linearly resamples the new spatial time slice to the original width or height.
+1. **Space-Time Transpose** is an extent permutation. `X↔T` changes `(T,H,W,C)` to `(W,H,T,C)`, while `Y↔T` changes it to `(H,T,W,C)`. Fit Source Canvas resamples the new frame canvas but intentionally keeps the swapped time extent. At a fixed output FPS, duration therefore becomes the new frame count divided by FPS.
 2. **Luma-Time Shift** determines the source frame from the input sample at the output coordinate. It supports luma/R/G/B/alpha and clamp, wrap or mirror edges. The UI must constrain the multiplier in user-facing frame units.
-3. **Radial Chrono-Funnel** computes distance in source pixel space. Its center is normalised so proxy and full-quality compositions align.
+3. **Radial Time Loom** combines normalized radius, polar angle and playback phase into animated time braids. Kaleido Fold and Event Horizon provide mirrored and singular topologies while retaining proxy/full parity.
 4. **Temporal Pixel Sort** sorts complete colour vectors by a scalar key along `T`. Pixels below threshold retain their time slots; selected samples are stably sorted into the selected slots.
-5. **Tensor 3D Rotation** samples backward with trilinear interpolation in normalised `T/H/W` space. Normalisation prevents a long duration from visually overpowering spatial axes. Output bounds remain fixed in this milestone; a future fit/crop node will expose canvas bounds explicitly.
-6. **3D FFT Swap** uses a padded Cooley–Tukey CPU implementation for arbitrary extents. It is tracked as a global resource job and runs only after a conservative RAM preflight.
+5. **Tensor 3D Rotation** samples backward with trilinear interpolation in normalised `T/H/W` space. Fill Fit computes an inscribed inverse-rotation scale so every output frame is covered without empty corners.
+6. **3D FFT Swap** uses Bluestein arbitrary-length transforms over memory-mapped tensors. Proxy graphs containing this node automatically switch to the same safe disk executor. Fit Source Tensor resamples the result to the original `T/H/W` extents.
 
 ## macOS-specific plan
 
@@ -97,4 +97,4 @@ The macOS codec backend is AVFoundation so the application bundle is self-contai
 
 Full renders use headerless linear-RGBA float files plus JSON metadata. They are mapped with `mmap`; local nodes read one mapped input and write one mapped output, then remove the prior scratch result. Temporal Pixel Sort retains only one pixel's complete time vector per worker. Space is checked before decode and before every node, with a 512 MiB filesystem reserve.
 
-Frequency swap is intentionally different: it is global and performs a padded in-memory FFT only after accounting for both the real input buffer and two complex work buffers against the configured budget.
+Frequency swap is intentionally different: it is global, but full render writes two temporary complex tensors to SSD and performs separable width, height and time transforms one line at a time. The RAM budget controls concurrent line buffers, not total video size. Temporary frequency files are removed on success, failure or cancellation.

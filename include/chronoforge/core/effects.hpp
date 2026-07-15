@@ -12,7 +12,8 @@ enum class EdgeBehavior { Clamp, Wrap, Mirror };
 enum class ShiftSource { Luma, Red, Green, Blue, Alpha };
 enum class SortCriterion { Luma, Hue, Saturation };
 enum class SortDirection { Ascending, Descending };
-enum class FillMode { Black, Transparent, Repeat };
+enum class FillMode { Black, Transparent, Repeat, Fit };
+enum class RadialTopology { TimeLoom, KaleidoFold, EventHorizon };
 
 struct LumaTimeShiftParams {
     float shift_multiplier{};
@@ -31,6 +32,8 @@ struct RadialChronoFunnelParams {
     float center_y{0.5F};
     float intensity{};
     EdgeBehavior edge_behavior{EdgeBehavior::Wrap};
+    float twist{0.75F};
+    RadialTopology topology{RadialTopology::TimeLoom};
 };
 
 struct TemporalPixelSortParams {

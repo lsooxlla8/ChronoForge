@@ -41,7 +41,7 @@ actor ProxyCache {
             height: input.height,
             width: input.width,
             effects: effects,
-            engineVersion: "0.3.0"
+            engineVersion: "0.4.0"
         )
         let data = (try? JSONEncoder().encode(signature)) ?? Data()
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
@@ -63,6 +63,7 @@ actor ProxyCache {
         _ = values.withUnsafeMutableBytes { destination in
             data.copyBytes(to: destination, from: headerEnd..<data.count)
         }
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
         return VideoTensorData(
             values: values,
             frames: header.frames,
