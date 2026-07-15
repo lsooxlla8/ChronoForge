@@ -1,0 +1,123 @@
+import AVFoundation
+import CoreVideo
+import Foundation
+
+enum SelfTestRunner {
+    static func run() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ChronoForge-SelfTest-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source.mov")
+        let input = root.appendingPathComponent("input.raw")
+        let output = root.appendingPathComponent("output.raw")
+        let videoOnly = root.appendingPathComponent("video-only.mp4")
+        let movie = root.appendingPathComponent("result.mp4")
+        try await makeMovie(at: source)
+        let projectURL = root.appendingPathComponent("test.chronoforge")
+        let projectSource = DecodedProxy(
+            tensor: VideoTensorData(values: [0, 0, 0, 1], frames: 1, height: 1, width: 1, channels: 4, framesPerSecond: 8, duration: 0.125),
+            displayName: source.lastPathComponent,
+            sourceURL: source,
+            sourceSize: CGSize(width: 64, height: 48),
+            sourceDuration: 1,
+            securityScopedBookmark: nil
+        )
+        let firstNode = EffectNode.make(.lumaTimeShift)
+        let branchA = EffectNode.make(.radialChronoFunnel, inputNodeID: firstNode.id)
+        let branchB = EffectNode.make(.temporalPixelSort, inputNodeID: firstNode.id)
+        let savedProject = SavedChronoForgeProject(
+            source: projectSource,
+            effects: [firstNode, branchA, branchB],
+            outputNodeID: branchB.id,
+            quality: .full,
+            audioMode: .preserveOriginal
+        )
+        try ProjectPersistence.save(savedProject, to: projectURL)
+        let restoredProject = try ProjectPersistence.load(from: projectURL)
+        guard restoredProject.effects == savedProject.effects,
+              restoredProject.quality == RenderQuality.full.rawValue,
+              restoredProject.audioMode == AudioMode.preserveOriginal.rawValue,
+              restoredProject.outputNodeID == branchB.id,
+              restoredProject.effects.last?.inputNodeID == firstNode.id,
+              try restoredProject.sourceURL() == source else {
+            throw IntegrationSelfTestError.message("Project persistence round-trip failed")
+        }
+        let proxy = try await VideoDecoder.decodeProxy(from: source)
+        guard proxy.tensor.width == 48, proxy.tensor.height == 64, proxy.tensor.values.count == proxy.tensor.valueCount else {
+            throw IntegrationSelfTestError.message("Proxy decoder did not honor source orientation")
+        }
+        let decoded = try await FullVideoDecoder.decode(sourceURL: source, destinationURL: input) { _, _ in }
+        guard decoded.frames == 8, decoded.width == 48, decoded.height == 64, decoded.isValidOnDisk() else {
+            throw IntegrationSelfTestError.message("Full decoder returned an invalid disk tensor")
+        }
+        let effect = EffectNode.make(.lumaTimeShift)
+        let rendered = try await FileCoreRenderer.render(
+            input: decoded,
+            effects: [effect],
+            outputURL: output,
+            scratchDirectory: root.appendingPathComponent("scratch")
+        ) { _, _ in }
+        guard rendered.isValidOnDisk() else { throw IntegrationSelfTestError.message("File renderer output is invalid") }
+        try await FullVideoExporter.export(rendered, to: videoOnly) { _, _ in }
+        try await MediaMuxer.addOriginalAudio(videoURL: videoOnly, sourceURL: source, destinationURL: movie)
+        let resultAsset = AVURLAsset(url: movie)
+        guard try await !resultAsset.loadTracks(withMediaType: .video).isEmpty,
+              (try movie.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) > 0 else {
+            throw IntegrationSelfTestError.message("Full exporter did not create a playable MP4")
+        }
+    }
+
+    private static func makeMovie(at url: URL) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: 64,
+            AVVideoHeightKey: 48,
+        ])
+        input.transform = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 48, ty: 0)
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: 64,
+            kCVPixelBufferHeightKey as String: 48,
+        ])
+        guard writer.canAdd(input) else { throw IntegrationSelfTestError.message("Cannot configure source writer") }
+        writer.add(input)
+        guard writer.startWriting() else { throw writer.error ?? IntegrationSelfTestError.message("Source writer failed") }
+        writer.startSession(atSourceTime: .zero)
+        for frame in 0..<8 {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(2)) }
+            guard let pool = adaptor.pixelBufferPool else { throw IntegrationSelfTestError.message("No source pixel pool") }
+            var optional: CVPixelBuffer?
+            guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &optional) == kCVReturnSuccess,
+                  let buffer = optional else { throw IntegrationSelfTestError.message("Cannot create source frame") }
+            fill(buffer, frame: frame)
+            guard adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 8)) else {
+                throw writer.error ?? IntegrationSelfTestError.message("Cannot append source frame")
+            }
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        guard writer.status == .completed else { throw writer.error ?? IntegrationSelfTestError.message("Source writer did not finish") }
+    }
+
+    private static func fill(_ buffer: CVPixelBuffer, frame: Int) {
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return }
+        let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
+        for y in 0..<48 {
+            let row = base.advanced(by: y * rowBytes).assumingMemoryBound(to: UInt8.self)
+            for x in 0..<64 {
+                let pixel = row.advanced(by: x * 4)
+                pixel[0] = UInt8((x * 4 + frame * 8) % 255)
+                pixel[1] = UInt8((y * 5 + frame * 12) % 255)
+                pixel[2] = UInt8((frame * 30) % 255)
+                pixel[3] = 255
+            }
+        }
+    }
+}
+
+private enum IntegrationSelfTestError: Error {
+    case message(String)
+}

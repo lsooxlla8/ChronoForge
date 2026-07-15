@@ -1,8 +1,8 @@
-# ChronoForge architecture — macOS foundation
+# ChronoForge architecture — macOS application
 
-## Scope of this milestone
+## Scope
 
-The first macOS build establishes a reliable, testable contract between the editor and processing core. It does not claim real-time 4K rendering yet. Its job is to make future FFmpeg, Metal and export work safe to add.
+The macOS build is a complete CPU reference application: it imports and previews real media, persists editable projects, evaluates a branched graph, renders through SSD-backed tensors, and exports H.264 MP4. It does not claim real-time 4K processing; proxy quality is the interactive path and full quality is an offline render.
 
 ## Data contract
 
@@ -10,23 +10,23 @@ The first macOS build establishes a reliable, testable contract between the edit
 
 Input Decode performs these operations before a tensor enters the graph:
 
-1. Decode compressed media to a known pixel format through FFmpeg.
+1. Decode compressed media to a known pixel format through AVFoundation on macOS.
 2. Convert transfer function to linear light and preserve source colour-space metadata.
 3. Convert to `RGB` or premultiplied `RGBA` float32.
-4. Persist a source fingerprint: canonical source path, stream index, duration, dimensions, frame timestamps, colour metadata and a fast content hash.
+4. Persist a source fingerprint from the canonical path, file metadata, media dimensions and timeline.
 
-`T` is a logical sequence index, not an assumption that frames are exactly `1 / fps` apart. The first FFmpeg integration must store a PTS table. Variable-frame-rate sources are sampled onto a declared proxy/export timeline; this is required for meaningful temporal shifts.
+`T` is a logical sequence index, not an assumption that frames are exactly `1 / fps` apart. Full decode retains presentation timestamps; axis-changing effects deliberately establish a new uniform output timeline.
 
 ## Node and execution model
 
 ```mermaid
 flowchart LR
-    source["Input / FFmpeg decode"] --> proxy["Proxy sampler"]
+    source["Input / AVFoundation decode"] --> proxy["Proxy sampler"]
     proxy --> graph["Validated DAG"]
     graph --> scheduler["Tile & dependency scheduler"]
     scheduler --> cache["SSD content-addressed cache"]
-    cache --> preview["Metal preview texture"]
-    cache --> export["FFmpeg encode"]
+    cache --> preview["SwiftUI preview"]
+    cache --> export["AVFoundation encode"]
 ```
 
 Every node declares:
@@ -37,11 +37,11 @@ Every node declares:
 - deterministic backend capability: CPU reference, Metal kernel, or global FFT;
 - cacheability and cache version.
 
-The current `NodeGraph` handles ordering and cycle prevention. The next executor will evaluate graph outputs by `(node signature, quality, tile extent)` rather than materialising an entire video.
+The editor stores explicit input edges and an Output selection, rejects cycles before applying a connection, and evaluates only the selected output's ancestors. Proxy and full caches are keyed by source fingerprint, graph signature, quality and engine version.
 
 ## Out-of-core strategy
 
-Cache files are binary float chunks with a versioned header and an atomic temporary-file rename. The final cache key must be SHA-256 over:
+Proxy cache files use an atomic versioned container. Full renders use mapped linear-float tensors with sidecar metadata and delete incomplete scratch results on cancellation. Cache keys include:
 
 ```text
 engine/cache format version
@@ -64,22 +64,22 @@ The supplied `TilePlanner` implements the per-pixel-temporal class. It will be g
 
 ## The six effects and implementation notes
 
-1. **Space-Time Transpose** is a lossless extent permutation. `X↔T` changes `(T,H,W,C)` to `(W,H,T,C)`, while `Y↔T` changes it to `(H,T,W,C)`.
+1. **Space-Time Transpose** is an extent permutation. `X↔T` changes `(T,H,W,C)` to `(W,H,T,C)`, while `Y↔T` changes it to `(H,T,W,C)`. An optional Fit Source Canvas mode linearly resamples the new spatial time slice to the original width or height.
 2. **Luma-Time Shift** determines the source frame from the input sample at the output coordinate. It supports luma/R/G/B/alpha and clamp, wrap or mirror edges. The UI must constrain the multiplier in user-facing frame units.
 3. **Radial Chrono-Funnel** computes distance in source pixel space. Its center is normalised so proxy and full-quality compositions align.
 4. **Temporal Pixel Sort** sorts complete colour vectors by a scalar key along `T`. Pixels below threshold retain their time slots; selected samples are stably sorted into the selected slots.
 5. **Tensor 3D Rotation** samples backward with trilinear interpolation in normalised `T/H/W` space. Normalisation prevents a long duration from visually overpowering spatial axes. Output bounds remain fixed in this milestone; a future fit/crop node will expose canvas bounds explicitly.
-6. **3D FFT Swap** uses a Cooley–Tukey reference implementation for small power-of-two proxies. Production implementation must use Metal FFT or FFTW/FFmpeg-adjacent CPU worker constraints, tracked as a global resource job.
+6. **3D FFT Swap** uses a padded Cooley–Tukey CPU implementation for arbitrary extents. It is tracked as a global resource job and runs only after a conservative RAM preflight.
 
 ## macOS-specific plan
 
 | Phase | Deliverable |
 | --- | --- |
-| 0 — current | C++20 tensor rules, CPU references, cache format, SwiftUI workspace shell, tests. |
-| 1 | Objective-C++ bridge, FFmpeg decode with PTS index, proxy sampling, display of a cached tile in `MTKView`. |
-| 2 | Actor-backed render queue, cancellable DAG executor, cache-key hashing, FFmpeg export. |
-| 3 | Metal kernels for local/per-pixel effects and a tile atlas for preview. |
-| 4 | Metal FFT/global transform policy, render estimates, disk reservation, diagnostics and recovery. |
+| 0 — complete | C++20 tensor rules, CPU references, cache format and deterministic tests. |
+| 1 — complete | C bridge, native AVFoundation proxy decode, editable SwiftUI graph, preview cache and H.264 MP4 export. |
+| 2 — complete | File-backed full-resolution decoder/executor, thread pools, cancellation, project persistence and recovery. |
+| 3 — optional optimization | Metal kernels for local/per-pixel effects and a tile atlas for preview. |
+| 4 — optional optimization | Metal FFT/global transform acceleration. Disk reservation, diagnostics and recovery already ship in the CPU path. |
 | 5 | Windows frontend / shared GPU abstraction only after parity tests pass. |
 
 ## Guardrails that must remain non-negotiable
@@ -90,3 +90,11 @@ The supplied `TilePlanner` implements the per-pixel-temporal class. It will be g
 - Treat alpha intentionally. Colour interpolation in premultiplied linear RGB avoids fringes.
 - Do not claim preview equals final render unless the same node backend and colour policy were used.
 - Record engine version and GPU backend in render metadata so a project can explain a changed cache result.
+
+## Shipping implementation notes
+
+The macOS codec backend is AVFoundation so the application bundle is self-contained and uses hardware H.264 decode/encode without a Homebrew dependency. The portable core and C ABI do not depend on AVFoundation. The Windows port will attach FFmpeg at the same decoded-tensor/file-tensor boundary.
+
+Full renders use headerless linear-RGBA float files plus JSON metadata. They are mapped with `mmap`; local nodes read one mapped input and write one mapped output, then remove the prior scratch result. Temporal Pixel Sort retains only one pixel's complete time vector per worker. Space is checked before decode and before every node, with a 512 MiB filesystem reserve.
+
+Frequency swap is intentionally different: it is global and performs a padded in-memory FFT only after accounting for both the real input buffer and two complex work buffers against the configured budget.

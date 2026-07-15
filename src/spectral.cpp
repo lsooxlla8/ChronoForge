@@ -14,8 +14,18 @@ namespace {
 
 using Complex = std::complex<float>;
 
-[[nodiscard]] bool is_power_of_two(std::size_t value) {
-    return value > 0 && (value & (value - 1)) == 0;
+[[nodiscard]] std::size_t next_power_of_two(std::size_t value) {
+    if (value == 0) {
+        throw std::invalid_argument("FFT dimension cannot be zero");
+    }
+    std::size_t result = 1;
+    while (result < value) {
+        if (result > std::numeric_limits<std::size_t>::max() / 2) {
+            throw std::overflow_error("FFT padded dimension overflows size_t");
+        }
+        result <<= 1U;
+    }
+    return result;
 }
 
 [[nodiscard]] std::size_t linear_index(
@@ -171,31 +181,45 @@ void normalize_range(VideoTensor& output) {
 
 VideoTensor spectral_fft_swap(const VideoTensor& input, const SpectralSwapParams& params) {
     const auto& shape = input.shape();
-    if (!is_power_of_two(shape.t) || !is_power_of_two(shape.h) || !is_power_of_two(shape.w)) {
-        throw std::invalid_argument("3D FFT proxy dimensions must be powers of two; use a padded GPU backend for full renders");
-    }
-
-    const auto elements = shape.element_count();
+    const TensorShape padded_shape{
+        next_power_of_two(shape.t),
+        next_power_of_two(shape.h),
+        next_power_of_two(shape.w),
+        shape.c,
+    };
+    const auto elements = padded_shape.element_count();
     if (elements > std::numeric_limits<std::size_t>::max() / (2 * sizeof(Complex)) ||
         elements * 2 * sizeof(Complex) > params.max_working_set_bytes) {
         throw std::runtime_error("3D FFT exceeds the configured working-set budget; render a smaller proxy or use the GPU backend");
     }
 
-    std::vector<Complex> spectrum;
-    spectrum.reserve(elements);
-    for (const auto value : input.values()) {
-        spectrum.emplace_back(value, 0.0F);
+    std::vector<Complex> spectrum(elements, Complex{0.0F, 0.0F});
+    for (std::size_t t = 0; t < shape.t; ++t) {
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                for (std::size_t c = 0; c < shape.c; ++c) {
+                    spectrum[linear_index(t, y, x, c, padded_shape)] = input.at(t, y, x, c);
+                }
+            }
+        }
     }
-    fft_3d(spectrum, shape, false);
+    fft_3d(spectrum, padded_shape, false);
+
+    const auto padded_output_shape = transposed_shape(padded_shape, params.axis);
+    auto transposed = transpose_spectrum(spectrum, padded_shape, params.axis);
+    fft_3d(transposed, padded_output_shape, true);
 
     const auto output_shape = transposed_shape(shape, params.axis);
-    auto transposed = transpose_spectrum(spectrum, shape, params.axis);
-    fft_3d(transposed, output_shape, true);
-
-    std::vector<float> values;
-    values.reserve(transposed.size());
-    for (const auto value : transposed) {
-        values.push_back(value.real());
+    std::vector<float> values(output_shape.element_count());
+    for (std::size_t t = 0; t < output_shape.t; ++t) {
+        for (std::size_t y = 0; y < output_shape.h; ++y) {
+            for (std::size_t x = 0; x < output_shape.w; ++x) {
+                for (std::size_t c = 0; c < output_shape.c; ++c) {
+                    values[linear_index(t, y, x, c, output_shape)] =
+                        transposed[linear_index(t, y, x, c, padded_output_shape)].real();
+                }
+            }
+        }
     }
     VideoTensor output(output_shape, std::move(values), input.metadata());
     if (params.normalize) {

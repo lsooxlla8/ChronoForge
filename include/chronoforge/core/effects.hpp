@@ -7,6 +7,7 @@
 namespace chronoforge {
 
 enum class SpatialAxis { X, Y };
+enum class TransposeResolution { NativeTensor, FitSourceCanvas };
 enum class EdgeBehavior { Clamp, Wrap, Mirror };
 enum class ShiftSource { Luma, Red, Green, Blue, Alpha };
 enum class SortCriterion { Luma, Hue, Saturation };
@@ -17,6 +18,11 @@ struct LumaTimeShiftParams {
     float shift_multiplier{};
     ShiftSource source{ShiftSource::Luma};
     EdgeBehavior edge_behavior{EdgeBehavior::Clamp};
+};
+
+struct SpaceTimeTransposeParams {
+    SpatialAxis axis{SpatialAxis::X};
+    TransposeResolution resolution{TransposeResolution::NativeTensor};
 };
 
 struct RadialChronoFunnelParams {
@@ -43,6 +49,7 @@ struct TensorRotationParams {
 };
 
 VideoTensor space_time_transpose(const VideoTensor& input, SpatialAxis axis);
+VideoTensor space_time_transpose(const VideoTensor& input, const SpaceTimeTransposeParams& params);
 VideoTensor luma_time_shift(const VideoTensor& input, const LumaTimeShiftParams& params);
 VideoTensor radial_chrono_funnel(const VideoTensor& input, const RadialChronoFunnelParams& params);
 VideoTensor temporal_pixel_sort(const VideoTensor& input, const TemporalPixelSortParams& params);

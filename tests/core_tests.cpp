@@ -1,5 +1,7 @@
 #include "chronoforge/core/cache_store.hpp"
 #include "chronoforge/core/effects.hpp"
+#include "chronoforge/core/file_executor.hpp"
+#include "chronoforge/core/mapped_tensor.hpp"
 #include "chronoforge/core/node_graph.hpp"
 #include "chronoforge/core/resource_planner.hpp"
 #include "chronoforge/core/spectral.hpp"
@@ -45,6 +47,15 @@ void test_transpose() {
     require(output.shape() == chronoforge::TensorShape{4, 3, 2, 1}, "X/T transpose shape");
     require_near(output.at(3, 2, 1, 0), input.at(1, 2, 3, 0), "X/T transpose value");
     require(output.metadata() == metadata, "Effects preserve tensor colour and playback metadata");
+
+    const auto fitted = chronoforge::space_time_transpose(
+        input,
+        {chronoforge::SpatialAxis::X, chronoforge::TransposeResolution::FitSourceCanvas});
+    require(fitted.shape() == chronoforge::TensorShape{4, 3, 4, 1}, "Fitted X/T transpose uses the source canvas width");
+    require_near(
+        fitted.at(3, 2, 1, 0),
+        input.at(0, 2, 3, 0) + (input.at(1, 2, 3, 0) - input.at(0, 2, 3, 0)) / 3.0F,
+        "Fitted transpose interpolates along source time");
 }
 
 void test_time_shift_and_funnel() {
@@ -76,7 +87,7 @@ void test_sort_and_rotation() {
 }
 
 void test_fft_swap() {
-    const auto input = numbered({2, 4, 8, 1});
+    const auto input = numbered({3, 5, 6, 1});
     const auto output = chronoforge::spectral_fft_swap(input, {chronoforge::SpectralSwapAxis::XTime, false, 1024 * 1024});
     const auto expected = chronoforge::space_time_transpose(input, chronoforge::SpatialAxis::X);
     require(output.shape() == expected.shape(), "FFT swap has transposed shape");
@@ -118,6 +129,104 @@ void test_tiling() {
     require(tiles.front().t_begin == 0 && tiles.front().t_end == 4, "Temporal tiles keep full time vectors");
 }
 
+void test_file_backed_effect_chain() {
+    const auto root = std::filesystem::temp_directory_path() / "chronoforge-file-executor-test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    const auto input_path = root / "input.raw";
+    const auto output_path = root / "output.raw";
+    const auto input = numbered({3, 2, 4, 4});
+    {
+        auto mapped = chronoforge::MappedTensor::create(input_path, input.shape());
+        std::copy(input.values().begin(), input.values().end(), mapped.mutable_data());
+        mapped.sync();
+    }
+
+    const std::vector<chronoforge::EffectSpec> effects{
+        {chronoforge::EffectOperation::LumaTimeShift, {2.0F, 0, 0, 0}, {0, 1, 0, 0}},
+        {chronoforge::EffectOperation::RadialChronoFunnel, {0.5F, 0.5F, 0.2F, 0}, {2, 0, 0, 0}},
+        {chronoforge::EffectOperation::TemporalPixelSort, {0.1F, 0, 0, 0}, {0, 0, 0, 0}},
+        {chronoforge::EffectOperation::Tensor3dRotation, {5.0F, 10.0F, 0, 0}, {2, 0, 0, 0}},
+        {chronoforge::EffectOperation::SpaceTimeTranspose, {0, 0, 0, 0}, {0, 0, 0, 0}},
+        {chronoforge::EffectOperation::SpectralFftSwap, {0, 0, 0, 0}, {1, 0, 0, 0}},
+    };
+    std::size_t progress_calls = 0;
+    double last_progress = 0.0;
+    const auto result = chronoforge::render_file_effect_chain(
+        input_path,
+        output_path,
+        root / "scratch",
+        input.shape(),
+        input.metadata(),
+        effects,
+        64 * 1024 * 1024,
+        [&](double fraction, std::string_view) {
+            ++progress_calls;
+            require(fraction >= last_progress, "File executor progress is monotonic");
+            last_progress = fraction;
+            return true;
+        });
+
+    auto expected = chronoforge::luma_time_shift(input, {2.0F, chronoforge::ShiftSource::Luma, chronoforge::EdgeBehavior::Wrap});
+    expected = chronoforge::radial_chrono_funnel(expected, {0.5F, 0.5F, 0.2F, chronoforge::EdgeBehavior::Mirror});
+    expected = chronoforge::temporal_pixel_sort(expected, {chronoforge::SortCriterion::Luma, chronoforge::SortDirection::Ascending, 0.1F});
+    expected = chronoforge::tensor_3d_rotation(expected, {5.0F, 10.0F, 0, chronoforge::FillMode::Repeat});
+    expected = chronoforge::space_time_transpose(expected, chronoforge::SpatialAxis::X);
+    expected = chronoforge::spectral_fft_swap(expected, {chronoforge::SpectralSwapAxis::YTime, false, 64 * 1024 * 1024});
+
+    require(result.shape == expected.shape(), "File executor reports the final transposed shape");
+    require(progress_calls >= effects.size() + 2 && last_progress == 1.0, "File executor reports granular progress through completion");
+    const auto mapped_output = chronoforge::MappedTensor::open(output_path, result.shape, chronoforge::MappedTensor::Access::ReadOnly);
+    for (std::size_t i = 0; i < expected.values().size(); ++i) {
+        require_near(mapped_output.data()[i], expected.values()[i], "File-backed chain matches in-memory reference");
+    }
+
+    const auto fitted_path = root / "fitted.raw";
+    const std::vector<chronoforge::EffectSpec> fitted_effects{
+        {chronoforge::EffectOperation::SpaceTimeTranspose, {0, 0, 0, 0}, {0, 1, 0, 0}},
+    };
+    const auto fitted_result = chronoforge::render_file_effect_chain(
+        input_path,
+        fitted_path,
+        root / "fit-scratch",
+        input.shape(),
+        input.metadata(),
+        fitted_effects,
+        64 * 1024 * 1024,
+        {});
+    const auto fitted_expected = chronoforge::space_time_transpose(
+        input,
+        {chronoforge::SpatialAxis::X, chronoforge::TransposeResolution::FitSourceCanvas});
+    require(fitted_result.shape == fitted_expected.shape(), "File-backed fitted transpose reports the source canvas shape");
+    const auto fitted_output = chronoforge::MappedTensor::open(
+        fitted_path,
+        fitted_result.shape,
+        chronoforge::MappedTensor::Access::ReadOnly);
+    for (std::size_t i = 0; i < fitted_expected.values().size(); ++i) {
+        require_near(fitted_output.data()[i], fitted_expected.values()[i], "File-backed fitted transpose matches preview");
+    }
+
+    bool cancelled = false;
+    try {
+        const std::vector<chronoforge::EffectSpec> cancellable{
+            {chronoforge::EffectOperation::LumaTimeShift, {2.0F, 0, 0, 0}, {0, 1, 0, 0}},
+        };
+        static_cast<void>(chronoforge::render_file_effect_chain(
+            input_path,
+            root / "cancelled.raw",
+            root / "cancel-scratch",
+            input.shape(),
+            input.metadata(),
+            cancellable,
+            64 * 1024 * 1024,
+            [](double fraction, std::string_view) { return fraction < 0.1; }));
+    } catch (const std::runtime_error&) {
+        cancelled = true;
+    }
+    require(cancelled && !std::filesystem::exists(root / "cancelled.raw"), "Cancelled file render removes partial output");
+    std::filesystem::remove_all(root);
+}
+
 }  // namespace
 
 int main() {
@@ -128,6 +237,7 @@ int main() {
         test_fft_swap();
         test_cache_and_graph();
         test_tiling();
+        test_file_backed_effect_chain();
         std::cout << "All ChronoForge core tests passed.\n";
         return 0;
     } catch (const std::exception& error) {

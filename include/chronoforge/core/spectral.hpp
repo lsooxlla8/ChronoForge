@@ -15,8 +15,9 @@ struct SpectralSwapParams {
     std::size_t max_working_set_bytes{512ULL * 1024ULL * 1024ULL};
 };
 
-// In-process CPU reference for power-of-two proxy dimensions. It fails fast if
-// the full complex working set exceeds the supplied safety budget.
+// In-process CPU reference. Arbitrary dimensions are zero-padded to the next
+// powers of two and cropped after the inverse transform. It fails before
+// allocation if the padded complex working set exceeds the safety budget.
 VideoTensor spectral_fft_swap(const VideoTensor& input, const SpectralSwapParams& params);
 
 }  // namespace chronoforge

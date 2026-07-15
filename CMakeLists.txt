@@ -11,6 +11,8 @@ option(CHRONOFORGE_BUILD_TESTS "Build core verification tests" ON)
 add_library(chronoforge_core
     src/cache_store.cpp
     src/effects.cpp
+    src/file_executor.cpp
+    src/mapped_tensor.cpp
     src/node_graph.cpp
     src/resource_planner.cpp
     src/spectral.cpp
