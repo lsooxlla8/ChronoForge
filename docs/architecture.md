@@ -2,7 +2,7 @@
 
 ## Scope
 
-The macOS build is a complete CPU reference application: it imports and previews real media, persists editable projects, evaluates a branched graph, renders through SSD-backed tensors, and exports H.264 MP4. It does not claim real-time 4K processing; proxy quality is the interactive path and full quality is an offline render.
+The macOS build is a complete CPU reference application: it imports and previews multiple media sources, persists editable projects, evaluates a routed effect stack, renders through SSD-backed tensors, and exports H.264 MP4. It does not claim real-time 4K processing; proxy quality is the interactive path and full quality is an offline render.
 
 ## Data contract
 
@@ -37,7 +37,7 @@ Every node declares:
 - deterministic backend capability: CPU reference, Metal kernel, or global FFT;
 - cacheability and cache version.
 
-The editor presents one ordered effect stack and automatically reconnects every input after insertion, duplication, deletion or drag reordering. The core retains explicit validated edges and cycle rejection. Proxy and full caches are keyed by source fingerprint, stack signature, quality and engine version.
+The editor presents one ordered effect stack and automatically reconnects every A input after insertion, duplication, deletion or drag reordering. Cross-tensor effects also store an independent media-pool B identifier. The core retains explicit validated edges and cycle rejection. Proxy and full caches include fingerprints for A and every referenced B source.
 
 ## Out-of-core strategy
 
@@ -62,13 +62,18 @@ Nodes fall into three scheduling classes:
 
 The supplied `TilePlanner` implements the per-pixel-temporal class. It will be generalised after executor integration.
 
-## The five effect families and implementation notes
+## Effect families and implementation notes
 
 1. **Tensor Transform** groups geometric tensor operations. Axis Swap permutes `X↔T` or `Y↔T`; 3D Rotation samples backward with trilinear interpolation in normalised `T/H/W`. Fit Source Size is the default for both modes.
 2. **Channel Time Shift** determines the source frame from luma/R/G/B/alpha at the output coordinate and supports clamp, wrap or mirror edges.
 3. **Polar Time Warp** jointly warps fractional time, radius and polar angle into animated braids. Kaleido Fold creates moving spatial sectors; Event Horizon bends radius into orbiting temporal echoes.
 4. **Temporal Pixel Sort** sorts complete colour vectors by a scalar key along `T`. Pixels below threshold retain their time slots; selected samples are stably sorted into the selected slots.
 5. **Spectral Transform** uses Bluestein arbitrary-length transforms over memory-mapped tensors. It swaps frequency axes or rotates the complex spectrum in X–Time, Y–Time or X–Y while keeping the full volume off RAM.
+6. **Dimensional Splicer** takes colour from A while any A/B source can define the output X, Y and Time extents. The semantic axes must be a permutation of X/Y/T; volumetric interpolation is nearest, trilinear or tricubic.
+7. **Tensor Displacement** samples A at time/X/Y coordinates offset by a channel from B. Clamp, Stretch and Crop define mismatched tensor sizes explicitly.
+8. **Motion Time Warp** estimates a dense local Lucas–Kanade flow field from adjacent frames and bends time by motion magnitude, threshold and direction.
+9. **Chrono Feedback** is sequential along Time: it reads prior output for recursive echoes and future input for look-ahead echoes without requiring a future-output recursion.
+10. **Structural Datamosh** carries samples along Time, X or Y after deterministic edge, luma or random triggers.
 
 Spatial and Temporal Prefilter are project-level output settings rather than editable nodes. The renderer injects one deterministic hidden low-pass stage after the visible stack, so preview, direct export and queued renders share the same cache signature and result.
 
@@ -97,5 +102,7 @@ Spatial and Temporal Prefilter are project-level output settings rather than edi
 The macOS codec backend is AVFoundation so the application bundle is self-contained and uses hardware H.264 decode/encode without a Homebrew dependency. The portable core and C ABI do not depend on AVFoundation. The Windows port will attach FFmpeg at the same decoded-tensor/file-tensor boundary.
 
 Full renders use headerless linear-RGBA float files plus JSON metadata. They are mapped with `mmap`; local nodes read one mapped input and write one mapped output, then remove the prior scratch result. Temporal Pixel Sort retains only one pixel's complete time vector per worker. Space is checked before decode and before every node, with a 512 MiB filesystem reserve.
+
+Two-input full renders decode each referenced B source once into its own content-addressed mapped tensor. Dimensional Splicer and Tensor Displacement read A and B concurrently through virtual-memory paging and write only the current output tensor; neither input volume is copied into process RAM. Motion Time Warp currently uses the deterministic CPU reference on macOS. Metal/Vision acceleration is an interchangeable future backend, not a different node format.
 
 Frequency transformation is intentionally different: it is global, but full render writes two temporary complex tensors to SSD and performs separable width, height and time transforms one line at a time. Swap permutes this spectrum; Rotate periodically resamples its complex values before the inverse FFT. The RAM budget controls concurrent line buffers, not total video size. Temporary frequency files are removed on success, failure or cancellation.

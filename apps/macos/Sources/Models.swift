@@ -47,6 +47,11 @@ enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
     case tensor3DRotation = 4
     case spectralFFTSwap = 5
     case selectivePrefilter = 6
+    case dimensionalSplicer = 7
+    case tensorDisplacement = 8
+    case opticalFlowTimeWarp = 9
+    case chronoFeedback = 10
+    case structuralDatamosh = 11
 
     var id: Int32 { rawValue }
 
@@ -58,6 +63,11 @@ enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
         case .temporalPixelSort: "Temporal Pixel Sort"
         case .spectralFFTSwap: "Spectral Transform"
         case .selectivePrefilter: "Output Prefilter"
+        case .dimensionalSplicer: "Dimensional Splicer"
+        case .tensorDisplacement: "Tensor Displacement"
+        case .opticalFlowTimeWarp: "Motion Time Warp"
+        case .chronoFeedback: "Chrono Feedback"
+        case .structuralDatamosh: "Structural Datamosh"
         }
     }
 
@@ -69,6 +79,11 @@ enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
         case .temporalPixelSort: "arrow.up.arrow.down.square"
         case .spectralFFTSwap: "waveform.path.ecg.rectangle"
         case .selectivePrefilter: "camera.filters"
+        case .dimensionalSplicer: "arrow.triangle.branch"
+        case .tensorDisplacement: "move.3d"
+        case .opticalFlowTimeWarp: "figure.run.motion"
+        case .chronoFeedback: "arrow.triangle.2.circlepath.circle"
+        case .structuralDatamosh: "waveform.path.badge.minus"
         }
     }
 
@@ -80,12 +95,20 @@ enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
         case .temporalPixelSort: "purple"
         case .spectralFFTSwap: "indigo"
         case .selectivePrefilter: "gray"
+        case .dimensionalSplicer: "mint"
+        case .tensorDisplacement: "blue"
+        case .opticalFlowTimeWarp: "green"
+        case .chronoFeedback: "pink"
+        case .structuralDatamosh: "red"
         }
     }
 
     static let addableKinds: [EffectKind] = [
         .spaceTimeTranspose, .lumaTimeShift, .radialChronoFunnel, .temporalPixelSort, .spectralFFTSwap,
+        .dimensionalSplicer, .tensorDisplacement, .opticalFlowTimeWarp, .chronoFeedback, .structuralDatamosh,
     ]
+
+    var requiresDriver: Bool { self == .dimensionalSplicer || self == .tensorDisplacement }
 }
 
 struct EffectNode: Identifiable, Codable, Equatable, Sendable {
@@ -93,6 +116,7 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
     var kind: EffectKind
     var enabled = true
     var inputNodeID: UUID?
+    var driverMediaID: UUID? = nil
     var values: [Float]
     var options: [Int32]
 
@@ -112,6 +136,16 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
             return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 1, 1, 0])
         case .selectivePrefilter:
             return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 0, 0, 0])
+        case .dimensionalSplicer:
+            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 1, 5, 1])
+        case .tensorDisplacement:
+            return .init(kind: kind, inputNodeID: inputNodeID, values: [12, 24, 24, 0], options: [0, 1, 0, 0])
+        case .opticalFlowTimeWarp:
+            return .init(kind: kind, inputNodeID: inputNodeID, values: [0.02, 4, 0, 180], options: [0, 0, 0, 0])
+        case .chronoFeedback:
+            return .init(kind: kind, inputNodeID: inputNodeID, values: [2, 0.35, 2, 0.15], options: [1, 0, 0, 0])
+        case .structuralDatamosh:
+            return .init(kind: kind, inputNodeID: inputNodeID, values: [0.2, 8, 0.05, 0], options: [0, 0, 0, 0])
         }
     }
 
@@ -132,6 +166,11 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
         case .temporalPixelSort: ["Luma", "Hue", "Saturation"][min(max(Int(options[0]), 0), 2)]
         case .spectralFFTSwap: options[3] == 0 ? "Frequency Swap" : "Frequency Rotation"
         case .selectivePrefilter: "Spatial + Temporal"
+        case .dimensionalSplicer: "Source A + Geometry B"
+        case .tensorDisplacement: "Target A + Map B"
+        case .opticalFlowTimeWarp: "Motion-driven time"
+        case .chronoFeedback: "Past + future echo"
+        case .structuralDatamosh: ["Time", "Horizontal", "Vertical"][min(max(Int(options[0]), 0), 2)]
         }
     }
 }
@@ -168,6 +207,7 @@ struct RenderQueueItem: Identifiable, Sendable {
     let id: UUID
     let source: DecodedProxy
     let effects: [EffectNode]
+    let mediaPool: [DecodedProxy]
     let audioMode: AudioMode
     let destinationURL: URL
     var status: RenderQueueStatus
@@ -175,12 +215,14 @@ struct RenderQueueItem: Identifiable, Sendable {
     init(
         source: DecodedProxy,
         effects: [EffectNode],
+        mediaPool: [DecodedProxy],
         audioMode: AudioMode,
         destinationURL: URL
     ) {
         id = UUID()
         self.source = source
         self.effects = effects
+        self.mediaPool = mediaPool
         self.audioMode = audioMode
         self.destinationURL = destinationURL
         status = .waiting

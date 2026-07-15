@@ -5,18 +5,31 @@ import UniformTypeIdentifiers
 @main
 struct ChronoForgeMacApp: App {
     @StateObject private var project = ProjectStore()
-    private static var sidebarShortcutMonitor: Any?
+    private static var globalShortcutMonitor: Any?
 
     init() {
-        if Self.sidebarShortcutMonitor == nil {
-            Self.sidebarShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        if Self.globalShortcutMonitor == nil {
+            Self.globalShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-                guard !event.isARepeat,
-                      event.charactersIgnoringModifiers?.lowercased() == "s",
-                      modifiers.contains(.shift),
-                      modifiers.intersection([.command, .option, .control]).isEmpty else { return event }
-                NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
-                return nil
+                guard !event.isARepeat else { return event }
+
+                if event.keyCode == 49,
+                   modifiers.intersection([.command, .option, .control, .shift]).isEmpty {
+                    if event.window?.firstResponder is NSTextView || event.window?.sheetParent != nil {
+                        return event
+                    }
+                    NotificationCenter.default.post(name: .togglePreviewPlayback, object: nil)
+                    return nil
+                }
+
+                if event.charactersIgnoringModifiers?.lowercased() == "s",
+                   modifiers.contains(.shift),
+                   modifiers.intersection([.command, .option, .control]).isEmpty {
+                    NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
+                    return nil
+                }
+
+                return event
             }
         }
         if CommandLine.arguments.contains("--self-test") {
@@ -46,7 +59,7 @@ struct ChronoForgeMacApp: App {
                     .keyboardShortcut("n", modifiers: .command)
                 Button("Open Project…") { project.chooseProjectToOpen() }
                     .keyboardShortcut("o", modifiers: .command)
-                Button("Import Video…") { project.showsImporter = true }
+                Button("Import Video…") { project.addMedia() }
                     .keyboardShortcut("i", modifiers: .command)
                 Divider()
                 Button("Save Project") { project.saveProject() }
@@ -94,6 +107,9 @@ private struct WorkspaceView: View {
                 Divider()
                 timeline
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .togglePreviewPlayback)) { _ in
+            project.togglePlayback()
         }
         .fileImporter(
             isPresented: $project.showsImporter,
@@ -146,23 +162,32 @@ private struct WorkspaceView: View {
     private var sidebar: some View {
         List(selection: $project.selectedNodeID) {
             Section("Media") {
-                if let source = project.source {
-                    Label(source.displayName, systemImage: "film")
-                        .contextMenu {
-                            Button("Replace Video…") { project.showsImporter = true }
-                            Button("Remove Video", role: .destructive) { project.removeMedia() }
+                if !project.mediaPool.isEmpty {
+                    ForEach(project.mediaPool, id: \.id) { media in
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack {
+                                Label(media.displayName, systemImage: project.source?.id == media.id ? "film.fill" : "film")
+                                if project.source?.id == media.id {
+                                    Text("A").font(.caption2.bold()).padding(.horizontal, 5).background(.quaternary, in: Capsule())
+                                }
+                            }
+                            Text("\(Int(media.sourceSize.width)) × \(Int(media.sourceSize.height)) · \(media.sourceDuration, format: .number.precision(.fractionLength(1))) s · \(media.sourceFrameCountIsExact ? "" : "≈")\(media.sourceFrameCount) frames")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
-                    Text("\(Int(source.sourceSize.width)) × \(Int(source.sourceSize.height)) · \(source.sourceDuration, format: .number.precision(.fractionLength(1))) s · \(source.sourceFrameCountIsExact ? "" : "≈")\(source.sourceFrameCount) frames")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    HStack {
-                        Button("Replace…", systemImage: "arrow.triangle.2.circlepath") { project.showsImporter = true }
-                        Button("Remove", systemImage: "trash", role: .destructive) { project.removeMedia() }
+                        .contextMenu {
+                            if project.source?.id != media.id {
+                                Button("Use as Primary (A)") { project.setPrimaryMedia(media.id) }
+                            }
+                            Button("Replace Video…") { project.replaceMedia(media.id) }
+                            Button("Remove Video", role: .destructive) { project.removeMedia(media.id) }
+                        }
                     }
-                    .font(.caption)
+                    Button("Add video…", systemImage: "plus.rectangle.on.folder") { project.addMedia() }
+                        .font(.caption)
                 } else {
                     Button("Import video…", systemImage: "plus.rectangle.on.folder") {
-                        project.showsImporter = true
+                        project.addMedia()
                     }
                     if project.hasRecovery {
                         Button("Recover last autosave", systemImage: "clock.arrow.circlepath") {
@@ -330,7 +355,7 @@ private struct WorkspaceView: View {
                 } description: {
                     Text("Import a movie to create a proxy tensor.")
                 } actions: {
-                    Button("Import Video…") { project.showsImporter = true }
+                    Button("Import Video…") { project.addMedia() }
                 }
                 .foregroundStyle(.white.opacity(0.8))
             }
@@ -370,7 +395,7 @@ private struct WorkspaceView: View {
                 EffectInspector(node: Binding(
                     get: { project.effect(withID: nodeID) ?? selectedNode },
                     set: { project.updateEffect($0) }
-                ))
+                ), mediaPool: project.mediaPool)
             } else {
                 ContentUnavailableView("Select an effect", systemImage: "slider.horizontal.3")
             }
@@ -413,8 +438,13 @@ private struct WorkspaceView: View {
     }
 }
 
+private extension Notification.Name {
+    static let togglePreviewPlayback = Notification.Name("ChronoForge.togglePreviewPlayback")
+}
+
 private struct EffectInspector: View {
     @Binding var node: EffectNode
+    let mediaPool: [DecodedProxy]
 
     var body: some View {
         Toggle("Enabled", isOn: $node.enabled)
@@ -474,6 +504,45 @@ private struct EffectInspector: View {
             Text("The output prefilter is controlled from the toolbar and is not part of the editable effect stack.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        case .dimensionalSplicer:
+            driverPicker()
+            let axes = ["A · X", "A · Y", "A · Time", "B · X", "B · Y", "B · Time"]
+            optionPicker("Output X", value: option(0), options: axes)
+            optionPicker("Output Y", value: option(1), options: axes)
+            optionPicker("Output Time", value: option(2), options: axes)
+            optionPicker("Interpolation", value: option(3), options: ["Nearest", "Linear (3D)", "Cubic (3D)"])
+            Text("A supplies the pixels. A or B can supply each output dimension. X, Y and Time must each appear exactly once.")
+                .font(.caption).foregroundStyle(.secondary)
+        case .tensorDisplacement:
+            driverPicker()
+            valueSlider("Time shift", index: 0, range: -240...240, format: "%.2f frames")
+            valueSlider("X shift", index: 1, range: -1000...1000, format: "%.2f px")
+            valueSlider("Y shift", index: 2, range: -1000...1000, format: "%.2f px")
+            optionPicker("Map channel", value: option(0), options: ["Luma", "Red", "Green", "Blue", "Alpha"])
+            optionPicker("Size matching", value: option(1), options: ["Clamp", "Stretch", "Crop"])
+            edgePicker(option(2))
+        case .opticalFlowTimeWarp:
+            valueSlider("Motion threshold", index: 0, range: 0...2, format: "%.4f px")
+            valueSlider("Time bend", index: 1, range: -120...120, format: "%.3f frames/px")
+            valueSlider("Direction", index: 2, range: -180...180, format: "%.2f°")
+            valueSlider("Direction tolerance", index: 3, range: 0...180, format: "%.2f°")
+            edgePicker(option(0))
+            Text("Only motion near the chosen direction bends time. Set tolerance to 180° to include all movement.")
+                .font(.caption).foregroundStyle(.secondary)
+        case .chronoFeedback:
+            valueSlider("Past delay", index: 0, range: 0...300, format: "%.0f frames")
+            valueSlider("Past blend", index: 1, range: 0...1, format: "%.4f")
+            valueSlider("Future delay", index: 2, range: 0...300, format: "%.0f frames")
+            valueSlider("Future blend", index: 3, range: 0...1, format: "%.4f")
+            optionPicker("Blend mode", value: option(0), options: ["Add", "Screen", "Multiply", "Lighten"])
+        case .structuralDatamosh:
+            optionPicker("Freeze axis", value: option(0), options: ["Time", "Horizontal", "Vertical"])
+            optionPicker("Trigger", value: option(1), options: ["Edge", "Luma", "Random"])
+            valueSlider("Trigger threshold", index: 0, range: 0...1, format: "%.4f")
+            valueSlider("Maximum hold", index: 1, range: 0...600, format: "%.0f samples")
+            if node.options[1] == 2 {
+                valueSlider("Random probability", index: 2, range: 0...1, format: "%.5f")
+            }
         }
     }
 
@@ -527,6 +596,15 @@ private struct EffectInspector: View {
 
     private func edgePicker(_ value: Binding<Int32>) -> some View {
         optionPicker("Edge behavior", value: value, options: ["Clamp", "Wrap", "Mirror"])
+    }
+
+    private func driverPicker() -> some View {
+        Picker("Driver video (B)", selection: $node.driverMediaID) {
+            Text("Choose a video…").tag(nil as UUID?)
+            ForEach(mediaPool, id: \.id) { media in
+                Text(media.displayName).tag(Optional(media.id))
+            }
+        }
     }
 }
 

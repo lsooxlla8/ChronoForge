@@ -203,6 +203,42 @@ void parallel_for(std::size_t count, const LocalProgress& progress, Function&& f
     return (c00 + (c01 - c00) * fy) + ((c10 + (c11 - c10) * fy) - (c00 + (c01 - c00) * fy)) * ft;
 }
 
+[[nodiscard]] float cubic_weight(float distance) {
+    distance = std::abs(distance);
+    if (distance <= 1.0F) return 1.5F * distance * distance * distance - 2.5F * distance * distance + 1.0F;
+    if (distance < 2.0F) return -0.5F * distance * distance * distance + 2.5F * distance * distance - 4.0F * distance + 2.0F;
+    return 0.0F;
+}
+
+[[nodiscard]] float sample_mapped_cubic(
+    const MappedTensor& input,
+    float t,
+    float y,
+    float x,
+    std::size_t channel) {
+    const auto& shape = input.shape();
+    const auto base_t = static_cast<std::ptrdiff_t>(std::floor(t));
+    const auto base_y = static_cast<std::ptrdiff_t>(std::floor(y));
+    const auto base_x = static_cast<std::ptrdiff_t>(std::floor(x));
+    float value = 0.0F;
+    float total = 0.0F;
+    for (std::ptrdiff_t dt = -1; dt <= 2; ++dt) {
+        const auto st = resolve_time(base_t + dt, shape.t, EdgeBehavior::Clamp);
+        const auto wt = cubic_weight(t - static_cast<float>(base_t + dt));
+        for (std::ptrdiff_t dy = -1; dy <= 2; ++dy) {
+            const auto sy = resolve_time(base_y + dy, shape.h, EdgeBehavior::Clamp);
+            const auto wy = cubic_weight(y - static_cast<float>(base_y + dy));
+            for (std::ptrdiff_t dx = -1; dx <= 2; ++dx) {
+                const auto sx = resolve_time(base_x + dx, shape.w, EdgeBehavior::Clamp);
+                const auto weight = wt * wy * cubic_weight(x - static_cast<float>(base_x + dx));
+                value += read(input, st, sy, sx, channel) * weight;
+                total += weight;
+            }
+        }
+    }
+    return std::abs(total) <= std::numeric_limits<float>::epsilon() ? value : value / total;
+}
+
 [[nodiscard]] float sort_key(
     const MappedTensor& input,
     std::size_t t,
@@ -1012,6 +1048,146 @@ void prefilter(const MappedTensor& input, MappedTensor& output, const EffectSpec
     });
 }
 
+void optical_flow_warp(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
+    require_option(effect.options[0], 2, "flow edge behavior");
+    const auto edge = static_cast<EdgeBehavior>(effect.options[0]);
+    const auto& shape = input.shape();
+    const auto clamped = [](std::size_t value, int offset, std::size_t extent) {
+        return static_cast<std::size_t>(std::clamp<std::ptrdiff_t>(
+            static_cast<std::ptrdiff_t>(value) + offset, 0, static_cast<std::ptrdiff_t>(extent - 1)));
+    };
+    auto* destination = output.mutable_data();
+    parallel_for(shape.t, progress, [&](std::size_t t) {
+        const auto next_t = std::min(t + 1, shape.t - 1);
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                float xx = 0.0F, yy = 0.0F, xy = 0.0F, xt = 0.0F, yt = 0.0F;
+                for (int oy = -1; oy <= 1; ++oy) {
+                    const auto sy = clamped(y, oy, shape.h);
+                    for (int ox = -1; ox <= 1; ++ox) {
+                        const auto sx = clamped(x, ox, shape.w);
+                        const auto ix = 0.5F * (luma(input, t, sy, clamped(sx, 1, shape.w)) -
+                                                luma(input, t, sy, clamped(sx, -1, shape.w)));
+                        const auto iy = 0.5F * (luma(input, t, clamped(sy, 1, shape.h), sx) -
+                                                luma(input, t, clamped(sy, -1, shape.h), sx));
+                        const auto it = luma(input, next_t, sy, sx) - luma(input, t, sy, sx);
+                        xx += ix * ix; yy += iy * iy; xy += ix * iy; xt += ix * it; yt += iy * it;
+                    }
+                }
+                const auto determinant = (xx + 0.0001F) * (yy + 0.0001F) - xy * xy;
+                const auto flow_x = determinant == 0.0F ? 0.0F : (-xt * (yy + 0.0001F) + xy * yt) / determinant;
+                const auto flow_y = determinant == 0.0F ? 0.0F : (xy * xt - (xx + 0.0001F) * yt) / determinant;
+                auto magnitude = std::sqrt(flow_x * flow_x + flow_y * flow_y);
+                const auto angle = std::atan2(flow_y, flow_x) * 180.0F / std::numbers::pi_v<float>;
+                auto difference = std::fmod(std::abs(angle - effect.values[2]), 360.0F);
+                difference = std::min(difference, 360.0F - difference);
+                if (difference > std::clamp(effect.values[3], 0.0F, 180.0F)) magnitude = 0.0F;
+                magnitude = std::max(0.0F, magnitude - std::max(0.0F, effect.values[0]));
+                const auto source_t = static_cast<float>(t) + effect.values[1] * magnitude;
+                for (std::size_t c = 0; c < shape.c; ++c) {
+                    destination[linear(t, y, x, c, shape)] = sample_mapped(
+                        input, source_t, static_cast<float>(y), static_cast<float>(x), c, edge);
+                }
+            }
+        }
+    });
+}
+
+void feedback(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
+    require_option(effect.options[0], 3, "feedback blend mode");
+    const auto mode = static_cast<FeedbackBlendMode>(effect.options[0]);
+    const auto past_delay = static_cast<std::size_t>(std::max(0.0F, std::round(effect.values[0])));
+    const auto future_delay = static_cast<std::size_t>(std::max(0.0F, std::round(effect.values[2])));
+    const auto past_amount = std::clamp(effect.values[1], 0.0F, 1.0F);
+    const auto future_amount = std::clamp(effect.values[3], 0.0F, 1.0F);
+    const auto& shape = input.shape();
+    auto* destination = output.mutable_data();
+    const auto blend = [&](float base, float layer) {
+        switch (mode) {
+            case FeedbackBlendMode::Add: return base + layer;
+            case FeedbackBlendMode::Screen: return 1.0F - (1.0F - base) * (1.0F - layer);
+            case FeedbackBlendMode::Multiply: return base * layer;
+            case FeedbackBlendMode::Lighten: return std::max(base, layer);
+        }
+        return base;
+    };
+    for (std::size_t t = 0; t < shape.t; ++t) {
+        const auto has_past = past_delay > 0 && t >= past_delay;
+        const auto past_t = has_past ? t - past_delay : 0;
+        const auto future_t = std::min(t + future_delay, shape.t - 1);
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                for (std::size_t c = 0; c < shape.c; ++c) {
+                    const auto current = read(input, t, y, x, c);
+                    const auto past = has_past ? destination[linear(past_t, y, x, c, shape)] : current;
+                    const auto future = read(input, future_t, y, x, c);
+                    if (mode == FeedbackBlendMode::Add) {
+                        destination[linear(t, y, x, c, shape)] =
+                            current * std::max(0.0F, 1.0F - past_amount - future_amount) +
+                            past * past_amount + future * future_amount;
+                    } else {
+                        auto value = current + (blend(current, past) - current) * past_amount;
+                        value += (blend(value, future) - value) * future_amount;
+                        destination[linear(t, y, x, c, shape)] = value;
+                    }
+                }
+            }
+        }
+        progress(static_cast<double>(t + 1) / static_cast<double>(shape.t));
+    }
+}
+
+void datamosh(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
+    require_option(effect.options[0], 2, "freeze axis");
+    require_option(effect.options[1], 2, "freeze trigger");
+    const auto axis = static_cast<FreezeAxis>(effect.options[0]);
+    const auto trigger = static_cast<FreezeTrigger>(effect.options[1]);
+    const auto max_hold = static_cast<std::size_t>(std::max(0.0F, std::round(effect.values[1])));
+    const auto& shape = input.shape();
+    std::memcpy(output.mutable_data(), input.data(), shape.byte_count());
+    const auto should_trigger = [&](std::size_t t, std::size_t y, std::size_t x,
+                                    std::size_t pt, std::size_t py, std::size_t px) {
+        if (trigger == FreezeTrigger::Edge) return std::abs(luma(input, t, y, x) - luma(input, pt, py, px)) > effect.values[0];
+        if (trigger == FreezeTrigger::Luma) return luma(input, t, y, x) >= effect.values[0];
+        std::uint64_t hash = (static_cast<std::uint64_t>(t) + 1) * 0x9E3779B185EBCA87ULL;
+        hash ^= (static_cast<std::uint64_t>(y) + 1) * 0xC2B2AE3D27D4EB4FULL;
+        hash ^= (static_cast<std::uint64_t>(x) + 1) * 0x165667B19E3779F9ULL;
+        hash ^= hash >> 29U;
+        return static_cast<double>(hash & 0xFFFFFFU) / static_cast<double>(0x1000000U) <
+               std::clamp(static_cast<double>(effect.values[2]), 0.0, 1.0);
+    };
+    const auto process_line = [&](std::size_t length, auto coordinate) {
+        std::size_t remaining = 0;
+        for (std::size_t index = 1; index < length; ++index) {
+            const auto [t, y, x] = coordinate(index);
+            const auto [pt, py, px] = coordinate(index - 1);
+            if (remaining == 0 && should_trigger(t, y, x, pt, py, px)) remaining = max_hold;
+            if (remaining > 0) {
+                for (std::size_t c = 0; c < shape.c; ++c) {
+                    output.mutable_data()[linear(t, y, x, c, shape)] = output.data()[linear(pt, py, px, c, shape)];
+                }
+                --remaining;
+            }
+        }
+    };
+    if (axis == FreezeAxis::Time) {
+        parallel_for(shape.h * shape.w, progress, [&](std::size_t line) {
+            const auto y = line / shape.w, x = line % shape.w;
+            process_line(shape.t, [&](std::size_t i) { return std::array<std::size_t, 3>{i, y, x}; });
+        });
+    } else if (axis == FreezeAxis::Horizontal) {
+        parallel_for(shape.t * shape.h, progress, [&](std::size_t line) {
+            const auto t = line / shape.h, y = line % shape.h;
+            process_line(shape.w, [&](std::size_t i) { return std::array<std::size_t, 3>{t, y, i}; });
+        });
+    } else {
+        parallel_for(shape.t * shape.w, progress, [&](std::size_t line) {
+            const auto t = line / shape.w, x = line % shape.w;
+            process_line(shape.h, [&](std::size_t i) { return std::array<std::size_t, 3>{t, i, x}; });
+        });
+    }
+}
+
 void apply(
     const MappedTensor& input,
     MappedTensor& output,
@@ -1041,6 +1217,18 @@ void apply(
         case EffectOperation::SelectivePrefilter:
             prefilter(input, output, effect, progress);
             return;
+        case EffectOperation::OpticalFlowTimeWarp:
+            optical_flow_warp(input, output, effect, progress);
+            return;
+        case EffectOperation::ChronoFeedback:
+            feedback(input, output, effect, progress);
+            return;
+        case EffectOperation::StructuralDatamosh:
+            datamosh(input, output, effect, progress);
+            return;
+        case EffectOperation::DimensionalSplicer:
+        case EffectOperation::TensorDisplacement:
+            throw std::invalid_argument("This effect requires a driver tensor");
     }
     throw std::invalid_argument("Invalid effect operation");
 }
@@ -1061,6 +1249,16 @@ void apply(
             return "Spectral Transform";
         case EffectOperation::SelectivePrefilter:
             return "Output Prefilter";
+        case EffectOperation::DimensionalSplicer:
+            return "Dimensional Splicer";
+        case EffectOperation::TensorDisplacement:
+            return "Tensor Displacement";
+        case EffectOperation::OpticalFlowTimeWarp:
+            return "Motion Time Warp";
+        case EffectOperation::ChronoFeedback:
+            return "Chrono Feedback";
+        case EffectOperation::StructuralDatamosh:
+            return "Structural Datamosh";
     }
     return "Unknown";
 }
@@ -1136,6 +1334,131 @@ FileRenderResult render_file_effect_chain(
         std::filesystem::remove(output_path.string() + ".partial", ignored);
         throw;
     }
+}
+
+FileRenderResult render_file_cross_tensor_effect(
+    const std::filesystem::path& source_path,
+    const std::filesystem::path& driver_path,
+    const std::filesystem::path& output_path,
+    TensorShape source_shape,
+    TensorShape driver_shape,
+    VideoTensorMetadata metadata,
+    VideoTensorMetadata driver_metadata,
+    const EffectSpec& effect,
+    const FileRenderProgress& progress) {
+    TensorShape result_shape = source_shape;
+    if (effect.kind == EffectOperation::DimensionalSplicer) {
+        require_option(effect.options[0], 5, "output X axis source");
+        require_option(effect.options[1], 5, "output Y axis source");
+        require_option(effect.options[2], 5, "output Time axis source");
+        require_option(effect.options[3], 2, "splicer interpolation");
+        const std::array<std::int32_t, 3> selections{effect.options[0], effect.options[1], effect.options[2]};
+        std::array<bool, 3> used{};
+        for (const auto selection : selections) {
+            const auto semantic = static_cast<std::size_t>(selection % 3);
+            if (used[semantic]) throw std::invalid_argument("Dimensional Splicer must use X, Y and Time exactly once");
+            used[semantic] = true;
+        }
+        const auto extent = [&](std::int32_t selection) {
+            const auto& shape = selection < 3 ? source_shape : driver_shape;
+            if (selection % 3 == 0) return shape.w;
+            if (selection % 3 == 1) return shape.h;
+            return shape.t;
+        };
+        result_shape = {extent(effect.options[2]), extent(effect.options[1]), extent(effect.options[0]), source_shape.c};
+    } else if (effect.kind == EffectOperation::TensorDisplacement) {
+        require_option(effect.options[0], 4, "displacement source");
+        require_option(effect.options[1], 2, "tensor broadcast");
+        require_option(effect.options[2], 2, "displacement edge behavior");
+        if (effect.options[1] == static_cast<std::int32_t>(TensorBroadcast::Crop)) {
+            result_shape.t = std::min(source_shape.t, driver_shape.t);
+            result_shape.h = std::min(source_shape.h, driver_shape.h);
+            result_shape.w = std::min(source_shape.w, driver_shape.w);
+        }
+    } else {
+        throw std::invalid_argument("The selected effect does not accept a driver tensor");
+    }
+
+    std::filesystem::create_directories(output_path.parent_path());
+    ensure_disk_space(output_path.parent_path(), result_shape.byte_count());
+    auto source = MappedTensor::open(source_path, source_shape, MappedTensor::Access::ReadOnly);
+    auto driver = MappedTensor::open(driver_path, driver_shape, MappedTensor::Access::ReadOnly);
+    auto output = MappedTensor::create(output_path, result_shape);
+    auto* destination = output.mutable_data();
+
+    if (effect.kind == EffectOperation::DimensionalSplicer) {
+        const std::array<std::int32_t, 3> selections{effect.options[0], effect.options[1], effect.options[2]};
+        const auto scale = [](std::size_t coordinate, std::size_t output_extent, std::size_t input_extent) {
+            return output_extent <= 1 || input_extent <= 1
+                       ? 0.0F
+                       : static_cast<float>(coordinate) * static_cast<float>(input_extent - 1) /
+                             static_cast<float>(output_extent - 1);
+        };
+        parallel_for(result_shape.t, [&](double fraction) { report(progress, fraction, "Dimensional Splicer"); }, [&](std::size_t t) {
+            for (std::size_t y = 0; y < result_shape.h; ++y) {
+                for (std::size_t x = 0; x < result_shape.w; ++x) {
+                    std::array<float, 3> source_coordinates{};
+                    const std::array<std::size_t, 3> coordinates{x, y, t};
+                    const std::array<std::size_t, 3> output_extents{result_shape.w, result_shape.h, result_shape.t};
+                    for (std::size_t axis = 0; axis < 3; ++axis) {
+                        const auto semantic = static_cast<std::size_t>(selections[axis] % 3);
+                        const auto input_extent = semantic == 0 ? source_shape.w : (semantic == 1 ? source_shape.h : source_shape.t);
+                        source_coordinates[semantic] = scale(coordinates[axis], output_extents[axis], input_extent);
+                    }
+                    for (std::size_t c = 0; c < result_shape.c; ++c) {
+                        float value{};
+                        if (effect.options[3] == static_cast<std::int32_t>(TensorInterpolation::Nearest)) {
+                            value = read(source,
+                                static_cast<std::size_t>(std::round(source_coordinates[2])),
+                                static_cast<std::size_t>(std::round(source_coordinates[1])),
+                                static_cast<std::size_t>(std::round(source_coordinates[0])), c);
+                        } else if (effect.options[3] == static_cast<std::int32_t>(TensorInterpolation::Cubic)) {
+                            value = sample_mapped_cubic(source, source_coordinates[2], source_coordinates[1], source_coordinates[0], c);
+                        } else {
+                            value = sample_mapped(source, source_coordinates[2], source_coordinates[1], source_coordinates[0], c, EdgeBehavior::Clamp);
+                        }
+                        destination[linear(t, y, x, c, result_shape)] = value;
+                    }
+                }
+            }
+        });
+    } else {
+        const auto broadcast = static_cast<TensorBroadcast>(effect.options[1]);
+        const auto edge = static_cast<EdgeBehavior>(effect.options[2]);
+        const auto source_channel = static_cast<ShiftSource>(effect.options[0]);
+        const auto driver_coordinate = [&](std::size_t coordinate, std::size_t output_extent, std::size_t driver_extent) {
+            if (broadcast == TensorBroadcast::Stretch) {
+                return output_extent <= 1 || driver_extent <= 1 ? std::size_t{0} : static_cast<std::size_t>(std::round(
+                    static_cast<double>(coordinate) * static_cast<double>(driver_extent - 1) /
+                    static_cast<double>(output_extent - 1)));
+            }
+            return std::min(coordinate, driver_extent - 1);
+        };
+        parallel_for(result_shape.t, [&](double fraction) { report(progress, fraction, "Tensor Displacement"); }, [&](std::size_t t) {
+            const auto dt = driver_coordinate(t, result_shape.t, driver_shape.t);
+            for (std::size_t y = 0; y < result_shape.h; ++y) {
+                const auto dy = driver_coordinate(y, result_shape.h, driver_shape.h);
+                for (std::size_t x = 0; x < result_shape.w; ++x) {
+                    const auto dx = driver_coordinate(x, result_shape.w, driver_shape.w);
+                    const auto amount = shift_key(driver, dt, dy, dx, source_channel);
+                    for (std::size_t c = 0; c < result_shape.c; ++c) {
+                        destination[linear(t, y, x, c, result_shape)] = sample_mapped(
+                            source,
+                            static_cast<float>(t) + effect.values[0] * amount,
+                            static_cast<float>(y) + effect.values[2] * amount,
+                            static_cast<float>(x) + effect.values[1] * amount,
+                            c, edge);
+                    }
+                }
+            }
+        });
+    }
+    output.sync();
+    report(progress, 1.0, stage_name(effect.kind));
+    const auto result_metadata = effect.kind == EffectOperation::DimensionalSplicer && effect.options[2] == 5
+                                     ? driver_metadata
+                                     : metadata;
+    return {result_shape, result_metadata};
 }
 
 }  // namespace chronoforge

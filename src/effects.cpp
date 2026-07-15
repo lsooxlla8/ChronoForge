@@ -4,7 +4,9 @@
 #include <atomic>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <exception>
+#include <limits>
 #include <mutex>
 #include <numbers>
 #include <stdexcept>
@@ -142,6 +144,46 @@ void parallel_for(std::size_t count, Function&& function) {
     const auto c10 = input.at(t1, y0, x0, channel) + (input.at(t1, y0, x1, channel) - input.at(t1, y0, x0, channel)) * fx;
     const auto c11 = input.at(t1, y1, x0, channel) + (input.at(t1, y1, x1, channel) - input.at(t1, y1, x0, channel)) * fx;
     return (c00 + (c01 - c00) * fy) + ((c10 + (c11 - c10) * fy) - (c00 + (c01 - c00) * fy)) * ft;
+}
+
+[[nodiscard]] float cubic_weight(float distance) {
+    distance = std::abs(distance);
+    if (distance <= 1.0F) {
+        return 1.5F * distance * distance * distance - 2.5F * distance * distance + 1.0F;
+    }
+    if (distance < 2.0F) {
+        return -0.5F * distance * distance * distance + 2.5F * distance * distance - 4.0F * distance + 2.0F;
+    }
+    return 0.0F;
+}
+
+[[nodiscard]] float sample_tensor_cubic(
+    const VideoTensor& input,
+    float t,
+    float y,
+    float x,
+    std::size_t channel) {
+    const auto& shape = input.shape();
+    const auto base_t = static_cast<std::ptrdiff_t>(std::floor(t));
+    const auto base_y = static_cast<std::ptrdiff_t>(std::floor(y));
+    const auto base_x = static_cast<std::ptrdiff_t>(std::floor(x));
+    float value = 0.0F;
+    float total_weight = 0.0F;
+    for (std::ptrdiff_t dt = -1; dt <= 2; ++dt) {
+        const auto st = resolve_time(base_t + dt, shape.t, EdgeBehavior::Clamp);
+        const auto wt = cubic_weight(t - static_cast<float>(base_t + dt));
+        for (std::ptrdiff_t dy = -1; dy <= 2; ++dy) {
+            const auto sy = resolve_time(base_y + dy, shape.h, EdgeBehavior::Clamp);
+            const auto wy = cubic_weight(y - static_cast<float>(base_y + dy));
+            for (std::ptrdiff_t dx = -1; dx <= 2; ++dx) {
+                const auto sx = resolve_time(base_x + dx, shape.w, EdgeBehavior::Clamp);
+                const auto weight = wt * wy * cubic_weight(x - static_cast<float>(base_x + dx));
+                value += input.at(st, sy, sx, channel) * weight;
+                total_weight += weight;
+            }
+        }
+    }
+    return std::abs(total_weight) <= std::numeric_limits<float>::epsilon() ? value : value / total_weight;
 }
 
 [[nodiscard]] float luma(const VideoTensor& input, std::size_t t, std::size_t y, std::size_t x) {
@@ -552,6 +594,262 @@ VideoTensor selective_prefilter(const VideoTensor& input, const SelectivePrefilt
             }
         }
     });
+    return output;
+}
+
+VideoTensor dimensional_splicer(
+    const VideoTensor& source,
+    const VideoTensor& driver,
+    const DimensionalSplicerParams& params) {
+    const std::array<TensorAxisSource, 3> selections{params.output_x, params.output_y, params.output_t};
+    std::array<bool, 3> semantic_axes{};
+    for (const auto selection : selections) {
+        const auto semantic = static_cast<std::size_t>(selection) % 3;
+        if (semantic_axes[semantic]) {
+            throw std::invalid_argument("Dimensional Splicer must use X, Y and Time exactly once");
+        }
+        semantic_axes[semantic] = true;
+    }
+    const auto extent = [&](TensorAxisSource selection) {
+        const auto& shape = static_cast<int>(selection) < 3 ? source.shape() : driver.shape();
+        switch (static_cast<int>(selection) % 3) {
+            case 0: return shape.w;
+            case 1: return shape.h;
+            default: return shape.t;
+        }
+    };
+    const TensorShape output_shape{extent(params.output_t), extent(params.output_y), extent(params.output_x), source.shape().c};
+    const auto output_metadata = params.output_t == TensorAxisSource::BT ? driver.metadata() : source.metadata();
+    VideoTensor output(output_shape, 0.0F, output_metadata);
+    const auto scale = [](std::size_t coordinate, std::size_t output_extent, std::size_t source_extent) {
+        return output_extent <= 1 || source_extent <= 1
+                   ? 0.0F
+                   : static_cast<float>(coordinate) * static_cast<float>(source_extent - 1) /
+                         static_cast<float>(output_extent - 1);
+    };
+    parallel_for(output_shape.t, [&](std::size_t t) {
+        for (std::size_t y = 0; y < output_shape.h; ++y) {
+            for (std::size_t x = 0; x < output_shape.w; ++x) {
+                std::array<float, 3> source_coordinates{};  // X, Y, T
+                const std::array<std::size_t, 3> coordinates{x, y, t};
+                const std::array<std::size_t, 3> output_extents{output_shape.w, output_shape.h, output_shape.t};
+                for (std::size_t axis = 0; axis < 3; ++axis) {
+                    const auto semantic = static_cast<std::size_t>(selections[axis]) % 3;
+                    const auto source_extent = semantic == 0 ? source.shape().w : (semantic == 1 ? source.shape().h : source.shape().t);
+                    source_coordinates[semantic] = scale(coordinates[axis], output_extents[axis], source_extent);
+                }
+                for (std::size_t c = 0; c < output_shape.c; ++c) {
+                    if (params.interpolation == TensorInterpolation::Nearest) {
+                        output.at(t, y, x, c) = source.at(
+                            static_cast<std::size_t>(std::round(source_coordinates[2])),
+                            static_cast<std::size_t>(std::round(source_coordinates[1])),
+                            static_cast<std::size_t>(std::round(source_coordinates[0])), c);
+                    } else if (params.interpolation == TensorInterpolation::Cubic) {
+                        output.at(t, y, x, c) = sample_tensor_cubic(
+                            source, source_coordinates[2], source_coordinates[1], source_coordinates[0], c);
+                    } else {
+                        output.at(t, y, x, c) = sample_tensor(
+                            source, source_coordinates[2], source_coordinates[1], source_coordinates[0], c, EdgeBehavior::Clamp);
+                    }
+                }
+            }
+        }
+    });
+    return output;
+}
+
+VideoTensor tensor_displacement(
+    const VideoTensor& target,
+    const VideoTensor& displacement,
+    const TensorDisplacementParams& params) {
+    TensorShape output_shape = target.shape();
+    if (params.broadcast == TensorBroadcast::Crop) {
+        output_shape.t = std::min(target.shape().t, displacement.shape().t);
+        output_shape.h = std::min(target.shape().h, displacement.shape().h);
+        output_shape.w = std::min(target.shape().w, displacement.shape().w);
+    }
+    VideoTensor output(output_shape, 0.0F, target.metadata());
+    const auto driver_coordinate = [&](std::size_t coordinate, std::size_t output_extent, std::size_t driver_extent) {
+        if (params.broadcast == TensorBroadcast::Stretch) {
+            return output_extent <= 1 || driver_extent <= 1
+                       ? std::size_t{0}
+                       : static_cast<std::size_t>(std::round(
+                             static_cast<double>(coordinate) * static_cast<double>(driver_extent - 1) /
+                             static_cast<double>(output_extent - 1)));
+        }
+        return std::min(coordinate, driver_extent - 1);
+    };
+    parallel_for(output_shape.t, [&](std::size_t t) {
+        const auto dt = driver_coordinate(t, output_shape.t, displacement.shape().t);
+        for (std::size_t y = 0; y < output_shape.h; ++y) {
+            const auto dy = driver_coordinate(y, output_shape.h, displacement.shape().h);
+            for (std::size_t x = 0; x < output_shape.w; ++x) {
+                const auto dx = driver_coordinate(x, output_shape.w, displacement.shape().w);
+                const auto amount = shift_value(displacement, dt, dy, dx, params.source);
+                const auto source_t = static_cast<float>(t) + params.time_multiplier * amount;
+                const auto source_y = static_cast<float>(y) + params.y_multiplier * amount;
+                const auto source_x = static_cast<float>(x) + params.x_multiplier * amount;
+                for (std::size_t c = 0; c < output_shape.c; ++c) {
+                    output.at(t, y, x, c) = sample_tensor(target, source_t, source_y, source_x, c, params.edge_behavior);
+                }
+            }
+        }
+    });
+    return output;
+}
+
+VideoTensor optical_flow_time_warp(const VideoTensor& input, const OpticalFlowTimeWarpParams& params) {
+    const auto& shape = input.shape();
+    VideoTensor output(shape, 0.0F, input.metadata());
+    const auto clamped = [](std::size_t value, int offset, std::size_t extent) {
+        return static_cast<std::size_t>(std::clamp<std::ptrdiff_t>(
+            static_cast<std::ptrdiff_t>(value) + offset, 0, static_cast<std::ptrdiff_t>(extent - 1)));
+    };
+    parallel_for(shape.t, [&](std::size_t t) {
+        const auto next_t = std::min(t + 1, shape.t - 1);
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                float xx = 0.0F;
+                float yy = 0.0F;
+                float xy = 0.0F;
+                float xt = 0.0F;
+                float yt = 0.0F;
+                for (int oy = -1; oy <= 1; ++oy) {
+                    const auto sy = clamped(y, oy, shape.h);
+                    for (int ox = -1; ox <= 1; ++ox) {
+                        const auto sx = clamped(x, ox, shape.w);
+                        const auto ix = 0.5F * (luma(input, t, sy, clamped(sx, 1, shape.w)) -
+                                                luma(input, t, sy, clamped(sx, -1, shape.w)));
+                        const auto iy = 0.5F * (luma(input, t, clamped(sy, 1, shape.h), sx) -
+                                                luma(input, t, clamped(sy, -1, shape.h), sx));
+                        const auto it = luma(input, next_t, sy, sx) - luma(input, t, sy, sx);
+                        xx += ix * ix;
+                        yy += iy * iy;
+                        xy += ix * iy;
+                        xt += ix * it;
+                        yt += iy * it;
+                    }
+                }
+                const auto determinant = (xx + 0.0001F) * (yy + 0.0001F) - xy * xy;
+                const auto flow_x = determinant == 0.0F ? 0.0F : (-xt * (yy + 0.0001F) + xy * yt) / determinant;
+                const auto flow_y = determinant == 0.0F ? 0.0F : (xy * xt - (xx + 0.0001F) * yt) / determinant;
+                auto magnitude = std::sqrt(flow_x * flow_x + flow_y * flow_y);
+                const auto angle = std::atan2(flow_y, flow_x) * 180.0F / std::numbers::pi_v<float>;
+                auto difference = std::fmod(std::abs(angle - params.direction_degrees), 360.0F);
+                difference = std::min(difference, 360.0F - difference);
+                if (difference > std::clamp(params.direction_tolerance, 0.0F, 180.0F)) {
+                    magnitude = 0.0F;
+                }
+                magnitude = std::max(0.0F, magnitude - std::max(0.0F, params.sensitivity));
+                const auto source_t = static_cast<float>(t) + params.intensity * magnitude;
+                for (std::size_t c = 0; c < shape.c; ++c) {
+                    output.at(t, y, x, c) = sample_tensor(input, source_t, static_cast<float>(y), static_cast<float>(x), c, params.edge_behavior);
+                }
+            }
+        }
+    });
+    return output;
+}
+
+VideoTensor chrono_feedback(const VideoTensor& input, const ChronoFeedbackParams& params) {
+    const auto& shape = input.shape();
+    VideoTensor output(shape, 0.0F, input.metadata());
+    const auto past_amount = std::clamp(params.past_amount, 0.0F, 1.0F);
+    const auto future_amount = std::clamp(params.future_amount, 0.0F, 1.0F);
+    const auto blend = [&](float base, float layer) {
+        switch (params.blend_mode) {
+            case FeedbackBlendMode::Add: return base + layer;
+            case FeedbackBlendMode::Screen: return 1.0F - (1.0F - base) * (1.0F - layer);
+            case FeedbackBlendMode::Multiply: return base * layer;
+            case FeedbackBlendMode::Lighten: return std::max(base, layer);
+        }
+        return base;
+    };
+    for (std::size_t t = 0; t < shape.t; ++t) {
+        const auto has_past = params.past_delay > 0 && t >= params.past_delay;
+        const auto past_t = has_past ? t - params.past_delay : 0;
+        const auto future_t = std::min(t + params.future_delay, shape.t - 1);
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                for (std::size_t c = 0; c < shape.c; ++c) {
+                    const auto current = input.at(t, y, x, c);
+                    const auto past = has_past ? output.at(past_t, y, x, c) : current;
+                    const auto future = input.at(future_t, y, x, c);
+                    if (params.blend_mode == FeedbackBlendMode::Add) {
+                        const auto base_amount = std::max(0.0F, 1.0F - past_amount - future_amount);
+                        output.at(t, y, x, c) = current * base_amount + past * past_amount + future * future_amount;
+                    } else {
+                        auto value = current + (blend(current, past) - current) * past_amount;
+                        value += (blend(value, future) - value) * future_amount;
+                        output.at(t, y, x, c) = value;
+                    }
+                }
+            }
+        }
+    }
+    return output;
+}
+
+VideoTensor structural_datamosh(const VideoTensor& input, const StructuralDatamoshParams& params) {
+    const auto& shape = input.shape();
+    VideoTensor output = input;
+    const auto should_trigger = [&](std::size_t t, std::size_t y, std::size_t x,
+                                    std::size_t previous_t, std::size_t previous_y, std::size_t previous_x) {
+        switch (params.trigger) {
+            case FreezeTrigger::Edge:
+                return std::abs(luma(input, t, y, x) - luma(input, previous_t, previous_y, previous_x)) > params.threshold;
+            case FreezeTrigger::Luma:
+                return luma(input, t, y, x) >= params.threshold;
+            case FreezeTrigger::Random: {
+                std::uint64_t hash = (static_cast<std::uint64_t>(t) + 1) * 0x9E3779B185EBCA87ULL;
+                hash ^= (static_cast<std::uint64_t>(y) + 1) * 0xC2B2AE3D27D4EB4FULL;
+                hash ^= (static_cast<std::uint64_t>(x) + 1) * 0x165667B19E3779F9ULL;
+                hash ^= hash >> 29U;
+                return static_cast<double>(hash & 0xFFFFFFU) / static_cast<double>(0x1000000U) <
+                       std::clamp(static_cast<double>(params.probability), 0.0, 1.0);
+            }
+        }
+        return false;
+    };
+    const auto process_line = [&](std::size_t length, auto coordinate) {
+        std::size_t remaining = 0;
+        for (std::size_t index = 1; index < length; ++index) {
+            const auto [t, y, x] = coordinate(index);
+            const auto [pt, py, px] = coordinate(index - 1);
+            if (remaining == 0 && should_trigger(t, y, x, pt, py, px)) {
+                remaining = params.max_hold;
+            }
+            if (remaining > 0) {
+                for (std::size_t c = 0; c < shape.c; ++c) {
+                    output.at(t, y, x, c) = output.at(pt, py, px, c);
+                }
+                --remaining;
+            }
+        }
+    };
+    switch (params.axis) {
+        case FreezeAxis::Time:
+            parallel_for(shape.h * shape.w, [&](std::size_t line) {
+                const auto y = line / shape.w;
+                const auto x = line % shape.w;
+                process_line(shape.t, [&](std::size_t index) { return std::array<std::size_t, 3>{index, y, x}; });
+            });
+            break;
+        case FreezeAxis::Horizontal:
+            parallel_for(shape.t * shape.h, [&](std::size_t line) {
+                const auto t = line / shape.h;
+                const auto y = line % shape.h;
+                process_line(shape.w, [&](std::size_t index) { return std::array<std::size_t, 3>{t, y, index}; });
+            });
+            break;
+        case FreezeAxis::Vertical:
+            parallel_for(shape.t * shape.w, [&](std::size_t line) {
+                const auto t = line / shape.w;
+                const auto x = line % shape.w;
+                process_line(shape.h, [&](std::size_t index) { return std::array<std::size_t, 3>{t, index, x}; });
+            });
+            break;
+    }
     return output;
 }
 

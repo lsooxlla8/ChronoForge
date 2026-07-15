@@ -1,10 +1,11 @@
 # ChronoForge
 
-**ChronoForge** is a native macOS-first editor for treating video as a space-time tensor `(T, H, W, C)`, not a stack of isolated frames. It imports real video, evaluates a sequential five-family C++ effect stack, previews a bounded proxy and renders full-resolution H.264 MP4 through memory-mapped SSD tensors.
+**ChronoForge** is a native macOS-first editor for treating video as a space-time tensor `(T, H, W, C)`, not a stack of isolated frames. It combines multiple video sources in one effect stack, previews a bounded proxy and renders full-resolution H.264 MP4 through memory-mapped SSD tensors.
 
 ## What is included
 
-- Five coherent effect families: Tensor Transform (Axis Swap/3D Rotation), Channel Time Shift, Polar Time Warp, Temporal Pixel Sort and Spectral Transform (Swap/Rotate).
+- Ten coherent effects, including Tensor Transform, Spectral Transform, Dimensional Splicer, Tensor Displacement, Motion Time Warp, Chrono Feedback and Structural Datamosh.
+- A persistent media pool with primary A and per-effect driver B routing. Different tensor extents can Clamp, Stretch or Crop without loading full-resolution sources into RAM.
 - A directed acyclic node graph that rejects cycles.
 - SSD cache chunks written atomically, so cancelled or interrupted renders do not create valid-looking partial cache entries.
 - A tile planner designed for complete per-pixel time series: temporal effects split across `H × W`, while retaining all `T` samples needed to operate correctly.
@@ -18,7 +19,7 @@
 - Full-quality sequential render queue with a settings snapshot per item, automatic cache cleanup between jobs, ⌘⇧R start and completion sound.
 - Always-proxy preview with Standard/High quality choices; direct export and render queue always decode the original at full quality.
 - Independent spatial and temporal output prefilters with Off/Light/Strong levels, applied identically to proxy and SSD-backed full renders.
-- Exact numeric parameter entry, contextual default reset, Space play/pause and in-editor media replacement/removal.
+- Exact numeric parameter entry, contextual default reset, global Space play/pause and in-editor media add/replace/remove.
 - CPU thread pools for proxy and full local/temporal effects, granular progress and cancellation with partial-file cleanup.
 
 ## Key technical decisions
@@ -33,6 +34,8 @@ The original brief is strong, but a few details make the difference between a de
 | Cache key includes graph signature, node parameters, proxy scale and source fingerprint | Otherwise a changed node could display stale cached output. Proxy and full-render caches use content-addressed keys. |
 | FFT is a global operation | Graphs containing FFT automatically use separable arbitrary-length lines over memory-mapped complex tensors for both proxy and full render, so tensor volume consumes SSD rather than RAM. |
 | Effects sample backward into source coordinates | It avoids holes in radial/rotation transforms, and 3D rotation uses trilinear interpolation. |
+| Two-input nodes name A and B explicitly | Projects remain an easy-to-read sequential stack while driver media can be changed independently per effect. |
+| macOS reference optical flow is SSD-safe CPU code | CUDA is unavailable on Apple Silicon. The deterministic CPU backend works today; a future Metal/Vision backend can replace it without changing projects. |
 
 The complete operating model is in [docs/architecture.md](docs/architecture.md).
 

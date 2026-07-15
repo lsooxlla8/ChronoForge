@@ -5,6 +5,7 @@ import SwiftUI
 @MainActor
 final class ProjectStore: ObservableObject {
     @Published var source: DecodedProxy?
+    @Published var mediaPool: [DecodedProxy] = []
     @Published var output: VideoTensorData?
     @Published var effects: [EffectNode] = []
     @Published var selectedNodeID: UUID?
@@ -31,6 +32,7 @@ final class ProjectStore: ObservableObject {
     @Published var renderQueue: [RenderQueueItem] = []
     @Published var isQueueRunning = false
     @Published var isPreviewStale = false
+    var mediaReplacementID: UUID?
 
     private var task: Task<Void, Never>?
     private var playbackTask: Task<Void, Never>?
@@ -69,19 +71,36 @@ final class ProjectStore: ObservableObject {
         errorMessage = nil
         statusMessage = "Building proxy…"
         let accessGranted = url.startAccessingSecurityScopedResource()
+        let replacementID = mediaReplacementID
+        mediaReplacementID = nil
         task = Task {
             defer {
                 if accessGranted { url.stopAccessingSecurityScopedResource() }
                 isImporting = false
             }
             do {
-                let decoded = try await VideoDecoder.decodeProxy(from: url, quality: proxyQuality)
+                var decoded = try await VideoDecoder.decodeProxy(from: url, quality: proxyQuality)
                 try Task.checkCancellation()
-                source = decoded
-                output = decoded.tensor
-                currentFrame = 0
+                if let replacementID, let index = mediaPool.firstIndex(where: { $0.id == replacementID }) {
+                    decoded.id = replacementID
+                    mediaPool[index] = decoded
+                    if source?.id == replacementID {
+                        source = decoded
+                        output = decoded.tensor
+                        currentFrame = 0
+                    }
+                } else {
+                    mediaPool.append(decoded)
+                    if source == nil {
+                        source = decoded
+                        output = decoded.tensor
+                        currentFrame = 0
+                    }
+                }
                 isPreviewStale = !effects.isEmpty
-                statusMessage = "Proxy ready · \(decoded.tensor.frames) frames"
+                statusMessage = source?.id == decoded.id
+                    ? "Proxy ready · \(decoded.tensor.frames) frames"
+                    : "Media added · \(decoded.tensor.frames) proxy frames"
                 if markDirty {
                     markEdited(invalidatePreview: !effects.isEmpty)
                 } else {
@@ -96,8 +115,29 @@ final class ProjectStore: ObservableObject {
         }
     }
 
+    func addMedia() {
+        mediaReplacementID = nil
+        showsImporter = true
+    }
+
+    func replaceMedia(_ id: UUID) {
+        mediaReplacementID = id
+        showsImporter = true
+    }
+
+    func setPrimaryMedia(_ id: UUID) {
+        guard let media = mediaPool.first(where: { $0.id == id }), source?.id != id else { return }
+        source = media
+        output = media.tensor
+        currentFrame = 0
+        markEdited()
+    }
+
     func addEffect(_ kind: EffectKind) {
-        let node = EffectNode.make(kind, inputNodeID: effects.last?.id)
+        var node = EffectNode.make(kind, inputNodeID: effects.last?.id)
+        if kind.requiresDriver {
+            node.driverMediaID = mediaPool.first(where: { $0.id != source?.id })?.id ?? source?.id
+        }
         effects.append(node)
         selectedNodeID = node.id
         outputNodeID = node.id
@@ -141,18 +181,26 @@ final class ProjectStore: ObservableObject {
         markEdited()
     }
 
-    func removeMedia() {
+    func removeMedia(_ id: UUID? = nil) {
         stopPlayback()
         cancelWork()
-        source = nil
-        output = nil
+        let targetID = id ?? source?.id
+        guard let targetID else { return }
+        mediaPool.removeAll { $0.id == targetID }
+        for index in effects.indices where effects[index].driverMediaID == targetID {
+            effects[index].driverMediaID = nil
+        }
+        if source?.id == targetID {
+            source = mediaPool.first
+            output = source?.tensor
+        }
         isPreviewStale = false
         currentFrame = 0
         isDirty = true
         recoveryTask?.cancel()
         RecoveryStore.remove()
         hasRecovery = false
-        statusMessage = "No media selected"
+        statusMessage = source == nil ? "No media selected" : "Media removed"
     }
 
     func moveEffect(from offsets: IndexSet, to destination: Int) {
@@ -171,9 +219,34 @@ final class ProjectStore: ObservableObject {
     func changeProxyQuality(to quality: ProxyQuality) {
         guard quality != proxyQuality else { return }
         proxyQuality = quality
-        guard let url = source?.sourceURL else { return }
+        guard !mediaPool.isEmpty else { return }
         markEdited(invalidatePreview: false)
-        importVideo(from: url)
+        stopPlayback()
+        cancelWork()
+        isImporting = true
+        let existing = mediaPool
+        let primaryID = source?.id
+        task = Task {
+            defer { isImporting = false }
+            do {
+                var rebuilt: [DecodedProxy] = []
+                for media in existing {
+                    let access = media.sourceURL.startAccessingSecurityScopedResource()
+                    var decoded = try await VideoDecoder.decodeProxy(from: media.sourceURL, quality: quality)
+                    if access { media.sourceURL.stopAccessingSecurityScopedResource() }
+                    decoded.id = media.id
+                    rebuilt.append(decoded)
+                }
+                mediaPool = rebuilt
+                source = rebuilt.first(where: { $0.id == primaryID }) ?? rebuilt.first
+                output = source?.tensor
+                isPreviewStale = !effects.isEmpty
+                statusMessage = "Proxy quality updated"
+            } catch {
+                errorMessage = error.localizedDescription
+                statusMessage = "Proxy update failed"
+            }
+        }
     }
 
     func setSpatialPrefilter(_ strength: PrefilterStrength) {
@@ -192,6 +265,7 @@ final class ProjectStore: ObservableObject {
         stopPlayback()
         cancelWork()
         source = nil
+        mediaPool = []
         output = nil
         isPreviewStale = false
         effects = []
@@ -223,7 +297,7 @@ final class ProjectStore: ObservableObject {
         recoveryTask?.cancel()
         guard let source else { return }
         let saved = SavedChronoForgeProject(
-            source: source, effects: effects, outputNodeID: outputNodeID,
+            source: source, mediaPool: mediaPool, effects: effects, outputNodeID: outputNodeID,
             proxyQuality: proxyQuality, spatialPrefilter: spatialPrefilter,
             temporalPrefilter: temporalPrefilter, audioMode: audioMode)
         recoveryTask = Task {
@@ -261,10 +335,43 @@ final class ProjectStore: ObservableObject {
             audioMode = saved.audioMode.flatMap(AudioMode.init(rawValue:)) ?? .none
             projectURL = url
             isDirty = false
-            importVideo(from: try saved.sourceURL(), markDirty: false)
+            loadSavedMedia(saved)
             statusMessage = "Opening \(url.lastPathComponent)…"
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+
+    private func loadSavedMedia(_ saved: SavedChronoForgeProject) {
+        stopPlayback()
+        cancelWork()
+        isImporting = true
+        let references = saved.mediaReferences()
+        let primaryID = saved.primaryMediaID ?? references.first?.id
+        task = Task {
+            defer { isImporting = false }
+            do {
+                var decodedMedia: [DecodedProxy] = []
+                for reference in references {
+                    let url = try reference.url()
+                    let access = url.startAccessingSecurityScopedResource()
+                    defer { if access { url.stopAccessingSecurityScopedResource() } }
+                    var decoded = try await VideoDecoder.decodeProxy(from: url, quality: proxyQuality)
+                    decoded.id = reference.id
+                    decodedMedia.append(decoded)
+                }
+                mediaPool = decodedMedia
+                source = decodedMedia.first(where: { $0.id == primaryID }) ?? decodedMedia.first
+                output = source?.tensor
+                currentFrame = 0
+                isPreviewStale = !effects.isEmpty
+                isDirty = false
+                statusMessage = "Project ready · \(decodedMedia.count) media"
+            } catch {
+                errorMessage = error.localizedDescription
+                statusMessage = "Project media could not be opened"
+            }
         }
     }
 
@@ -290,7 +397,7 @@ final class ProjectStore: ObservableObject {
     private func writeProject(source: DecodedProxy, to url: URL) {
         do {
             try ProjectPersistence.save(SavedChronoForgeProject(
-                source: source, effects: effects, outputNodeID: outputNodeID,
+                source: source, mediaPool: mediaPool, effects: effects, outputNodeID: outputNodeID,
                 proxyQuality: proxyQuality, spatialPrefilter: spatialPrefilter,
                 temporalPrefilter: temporalPrefilter, audioMode: audioMode), to: url)
             projectURL = url
@@ -320,7 +427,10 @@ final class ProjectStore: ObservableObject {
             isRendering = false
             return
         }
-        let cacheKey = ProxyCache.key(source: source!.sourceURL, input: input, effects: graph)
+        let driverURLs = graph.compactMap { effect in
+            effect.driverMediaID.flatMap { id in mediaPool.first(where: { $0.id == id })?.sourceURL }
+        }
+        let cacheKey = ProxyCache.key(source: source!.sourceURL, input: input, effects: graph, drivers: driverURLs)
         task = Task {
             defer { isRendering = false }
             do {
@@ -331,7 +441,8 @@ final class ProjectStore: ObservableObject {
                     statusMessage = "Loaded from render cache"
                     return
                 }
-                let result = try await CoreRenderer.render(input: input, effects: graph)
+                let drivers = Dictionary(uniqueKeysWithValues: mediaPool.map { ($0.id, $0.tensor) })
+                let result = try await CoreRenderer.render(input: input, effects: graph, drivers: drivers)
                 try Task.checkCancellation()
                 output = result
                 isPreviewStale = false
@@ -424,6 +535,7 @@ final class ProjectStore: ObservableObject {
             self.renderQueue.append(RenderQueueItem(
                 source: source,
                 effects: renderEffects,
+                mediaPool: self.mediaPool,
                 audioMode: self.audioMode,
                 destinationURL: destination
             ))
@@ -461,6 +573,7 @@ final class ProjectStore: ObservableObject {
                     try await performExport(
                         source: item.source,
                         effects: item.effects,
+                        mediaPool: item.mediaPool,
                         audioMode: item.audioMode,
                         destination: item.destinationURL
                     ) { fraction, stage in
@@ -495,15 +608,18 @@ final class ProjectStore: ObservableObject {
     private func performExport(
         source: DecodedProxy,
         effects: [EffectNode],
+        mediaPool: [DecodedProxy]? = nil,
         audioMode: AudioMode,
         destination: URL,
         progress: @escaping @Sendable (Double, String) -> Void
     ) async throws {
-        let access = source.sourceURL.startAccessingSecurityScopedResource()
-        defer { if access { source.sourceURL.stopAccessingSecurityScopedResource() } }
+        let allMedia = mediaPool ?? self.mediaPool
+        let accessed = allMedia.map { ($0.sourceURL, $0.sourceURL.startAccessingSecurityScopedResource()) }
+        defer { for (url, granted) in accessed where granted { url.stopAccessingSecurityScopedResource() } }
         try await FullRenderPipeline.export(
             source: source,
             effects: effects,
+            mediaPool: allMedia,
             audioMode: audioMode,
             to: destination,
             progress: progress

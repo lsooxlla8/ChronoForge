@@ -4,6 +4,7 @@ enum FullRenderPipeline {
     static func export(
         source: DecodedProxy,
         effects: [EffectNode],
+        mediaPool: [DecodedProxy] = [],
         audioMode: AudioMode,
         to destination: URL,
         progress: @escaping @Sendable (Double, String) -> Void
@@ -11,7 +12,10 @@ enum FullRenderPipeline {
         let cacheRoot = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
             .appendingPathComponent("ChronoForge/Full", isDirectory: true)
         let sourceKey = ProxyCache.key(source: source.sourceURL, input: source.tensor, effects: [])
-        let graphKey = ProxyCache.key(source: source.sourceURL, input: source.tensor, effects: effects)
+        let graphDrivers = effects.compactMap { effect in
+            effect.driverMediaID.flatMap { id in mediaPool.first(where: { $0.id == id })?.sourceURL }
+        }
+        let graphKey = ProxyCache.key(source: source.sourceURL, input: source.tensor, effects: effects, drivers: graphDrivers)
         let sourceDirectory = cacheRoot.appendingPathComponent(sourceKey, isDirectory: true)
         let graphDirectory = cacheRoot.appendingPathComponent(graphKey, isDirectory: true)
         try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
@@ -22,14 +26,42 @@ enum FullRenderPipeline {
         if let cached = loadMetadata(decodedMetadataURL), cached.isValidOnDisk() {
             decoded = cached
             try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: sourceDirectory.path)
-            progress(0.25, "Using decoded source cache")
+            progress(0.15, "Using decoded source cache")
         } else {
             decoded = try await FullVideoDecoder.decode(
                 sourceURL: source.sourceURL,
                 destinationURL: sourceDirectory.appendingPathComponent("input.raw")
-            ) { fraction, stage in progress(fraction * 0.25, stage) }
+            ) { fraction, stage in progress(fraction * 0.15, stage) }
             try saveMetadata(decoded, to: decodedMetadataURL)
         }
+
+        let driverIDs = Set(effects.compactMap { $0.enabled && $0.kind.requiresDriver ? $0.driverMediaID : nil })
+        var decodedDrivers: [UUID: DiskTensorData] = [:]
+        let driverList = driverIDs.compactMap { id in mediaPool.first { $0.id == id } }
+        for (index, driver) in driverList.enumerated() {
+            if driver.id == source.id {
+                decodedDrivers[driver.id] = decoded
+                continue
+            }
+            let key = ProxyCache.key(source: driver.sourceURL, input: driver.tensor, effects: [])
+            let directory = cacheRoot.appendingPathComponent(key, isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let metadataURL = directory.appendingPathComponent("input.json")
+            let start = 0.15 + 0.10 * Double(index) / Double(max(1, driverList.count))
+            let span = 0.10 / Double(max(1, driverList.count))
+            if let cached = loadMetadata(metadataURL), cached.isValidOnDisk() {
+                decodedDrivers[driver.id] = cached
+                progress(start + span, "Using driver cache")
+            } else {
+                let tensor = try await FullVideoDecoder.decode(
+                    sourceURL: driver.sourceURL,
+                    destinationURL: directory.appendingPathComponent("input.raw")
+                ) { fraction, stage in progress(start + fraction * span, stage) }
+                try saveMetadata(tensor, to: metadataURL)
+                decodedDrivers[driver.id] = tensor
+            }
+        }
+        progress(0.25, driverList.isEmpty ? "Source ready" : "Source and drivers ready")
 
         let renderMetadataURL = graphDirectory.appendingPathComponent("output.json")
         var rendered: DiskTensorData
@@ -43,6 +75,7 @@ enum FullRenderPipeline {
             rendered = try await FileCoreRenderer.render(
                 input: decoded,
                 effects: effects,
+                drivers: decodedDrivers,
                 outputURL: graphDirectory.appendingPathComponent("output.raw"),
                 scratchDirectory: scratch
             ) { fraction, stage in progress(0.25 + fraction * 0.55, stage) }

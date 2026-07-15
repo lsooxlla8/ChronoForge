@@ -152,6 +152,79 @@ void test_fft_swap() {
     require(rotated.values() != input.values(), "Angled spectral rotation changes frequency geometry");
 }
 
+void test_cross_tensor_and_flow_effects() {
+    const auto source = numbered({2, 2, 3, 1});
+    chronoforge::VideoTensor driver(
+        {4, 1, 5, 1}, std::vector<float>(20, 1.0F),
+        {8, 1, chronoforge::ColorTransfer::Linear, chronoforge::AlphaRepresentation::None});
+    const auto spliced = chronoforge::dimensional_splicer(source, driver, {});
+    require(spliced.shape() == chronoforge::TensorShape{4, 2, 3, 1}, "Splicer takes Time extent from driver B");
+    require_near(spliced.at(3, 1, 2, 0), source.at(1, 1, 2, 0), "Splicer normalizes B geometry into A pixels");
+    require(spliced.metadata().frame_rate_numerator == 8, "Splicer inherits driver FPS when output Time comes from B Time");
+
+    chronoforge::VideoTensor timeline({3, 1, 1, 1});
+    timeline.at(0, 0, 0, 0) = 0.0F;
+    timeline.at(1, 0, 0, 0) = 0.5F;
+    timeline.at(2, 0, 0, 0) = 1.0F;
+    chronoforge::VideoTensor map({1, 1, 1, 1}, 1.0F);
+    const auto displaced = chronoforge::tensor_displacement(
+        timeline, map,
+        {1.0F, 0, 0, chronoforge::ShiftSource::Luma, chronoforge::TensorBroadcast::Stretch,
+         chronoforge::EdgeBehavior::Clamp});
+    require_near(displaced.at(0, 0, 0, 0), 0.5F, "Tensor displacement uses B to move A through time");
+
+    chronoforge::VideoTensor still({3, 3, 3, 1}, 0.4F);
+    const auto flow = chronoforge::optical_flow_time_warp(still, {});
+    require(flow.values() == still.values(), "Motion time warp preserves a static tensor");
+
+    chronoforge::VideoTensor pulse({3, 1, 1, 1});
+    pulse.at(1, 0, 0, 0) = 1.0F;
+    const auto feedback = chronoforge::chrono_feedback(
+        pulse, {1, 0.5F, 0, 0, chronoforge::FeedbackBlendMode::Add});
+    require_near(feedback.at(1, 0, 0, 0), 0.5F, "Feedback blends a recursive past sample");
+    require_near(feedback.at(2, 0, 0, 0), 0.25F, "Feedback recursively decays through later frames");
+
+    chronoforge::VideoTensor edge({1, 1, 3, 1});
+    edge.at(0, 0, 0, 0) = 0.0F;
+    edge.at(0, 0, 1, 0) = 0.6F;
+    edge.at(0, 0, 2, 0) = 1.0F;
+    const auto datamosh = chronoforge::structural_datamosh(
+        edge, {chronoforge::FreezeAxis::Horizontal, chronoforge::FreezeTrigger::Edge, 0.2F, 2, 0});
+    require_near(datamosh.at(0, 0, 2, 0), 0.0F, "Structural datamosh holds an edge along the selected axis");
+}
+
+void test_file_backed_cross_tensor() {
+    const auto root = std::filesystem::temp_directory_path() / "chronoforge-cross-tensor-file-test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    const auto source = numbered({2, 2, 3, 1});
+    const chronoforge::VideoTensor driver(
+        {4, 1, 5, 1}, std::vector<float>(20, 1.0F),
+        {8, 1, chronoforge::ColorTransfer::Linear, chronoforge::AlphaRepresentation::None});
+    const auto source_path = root / "source.raw";
+    const auto driver_path = root / "driver.raw";
+    {
+        auto mapped = chronoforge::MappedTensor::create(source_path, source.shape());
+        std::copy(source.values().begin(), source.values().end(), mapped.mutable_data());
+        mapped.sync();
+    }
+    {
+        auto mapped = chronoforge::MappedTensor::create(driver_path, driver.shape());
+        std::copy(driver.values().begin(), driver.values().end(), mapped.mutable_data());
+        mapped.sync();
+    }
+    const chronoforge::EffectSpec effect{
+        chronoforge::EffectOperation::DimensionalSplicer, {}, {0, 1, 5, 1}};
+    const auto output_path = root / "output.raw";
+    const auto result = chronoforge::render_file_cross_tensor_effect(
+        source_path, driver_path, output_path, source.shape(), driver.shape(), source.metadata(), driver.metadata(), effect, {});
+    require(result.shape == chronoforge::TensorShape{4, 2, 3, 1}, "Out-of-core Splicer reports B-driven Time extent");
+    require(result.metadata.frame_rate_numerator == 8, "Out-of-core Splicer reports driver FPS for B Time");
+    const auto output = chronoforge::MappedTensor::open(output_path, result.shape, chronoforge::MappedTensor::Access::ReadOnly);
+    require_near(output.data()[((3 * 2 + 1) * 3 + 2)], source.at(1, 1, 2, 0), "Out-of-core Splicer matches in-memory sampling");
+    std::filesystem::remove_all(root);
+}
+
 void test_cache_and_graph() {
     const auto root = std::filesystem::temp_directory_path() / "chronoforge-core-test-cache";
     std::filesystem::remove_all(root);
@@ -338,6 +411,8 @@ int main() {
         test_time_shift_and_funnel();
         test_sort_and_rotation();
         test_fft_swap();
+        test_cross_tensor_and_flow_effects();
+        test_file_backed_cross_tensor();
         test_cache_and_graph();
         test_tiling();
         test_file_backed_effect_chain();
