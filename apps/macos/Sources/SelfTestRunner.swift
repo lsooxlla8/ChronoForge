@@ -73,7 +73,10 @@ enum SelfTestRunner {
             let store = ProjectStore()
             guard EffectKind.addableKinds.count == 10,
                   EffectKind.spaceTimeTranspose.title == EffectKind.tensor3DRotation.title,
-                  EffectKind.spaceTimeTranspose.title == "Tensor Transform" else {
+                  EffectKind.spaceTimeTranspose.title == "Space-Time Transform",
+                  EffectKind.singleInputKinds.count == 8,
+                  EffectKind.twoInputKinds.count == 2,
+                  EffectKind.opticalFlowTimeWarp.symbol == "wind" else {
                 throw IntegrationSelfTestError.message("Effect families were not exposed as a homogeneous effect stack")
             }
             store.addEffect(.lumaTimeShift)

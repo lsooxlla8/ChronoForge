@@ -18,7 +18,7 @@ enum class PrefilterStrength { Off, Light, Strong };
 enum class TensorAxisSource { AX, AY, AT, BX, BY, BT };
 enum class TensorInterpolation { Nearest, Linear, Cubic };
 enum class TensorBroadcast { Clamp, Stretch, Crop };
-enum class FeedbackBlendMode { Add, Screen, Multiply, Lighten };
+enum class FeedbackBlendMode { Add, Screen, Multiply, Lighten, Difference, Displace };
 enum class FreezeAxis { Time, Horizontal, Vertical };
 enum class FreezeTrigger { Edge, Luma, Random };
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0 — clear names, real mapping and dark mode
+
+- Reworked Space-Time Map so B's red, green and blue values genuinely map A's X, Y and Time coordinates instead of only borrowing B's dimensions.
+- Split the Add Effect menu into clear One Video and Two Videos groups and added an available SF Symbol for Optical Flow Time Warp.
+- Renamed the effect families around familiar VFX terms: Space-Time Transform, Self Time Displacement, Pixel Sort, Space-Time Displacement, Optical Flow Time Warp, Time Feedback and Axis Datamosh.
+- Added Difference and coordinate-driven Displace modes to Time Feedback.
+- Added a persistent light/dark appearance switch in the top-right toolbar.
+- Rewrote the README as a practical product introduction and quick-start guide.
+
 ## 0.7.0 — Cross-Tensor & Flow
 
 - Added a persistent multi-video media pool with primary A and per-effect driver B routing, including add, replace, remove and primary-source controls.

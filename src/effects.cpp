@@ -606,7 +606,7 @@ VideoTensor dimensional_splicer(
     for (const auto selection : selections) {
         const auto semantic = static_cast<std::size_t>(selection) % 3;
         if (semantic_axes[semantic]) {
-            throw std::invalid_argument("Dimensional Splicer must use X, Y and Time exactly once");
+            throw std::invalid_argument("Space-Time Map must use X, Y and Time exactly once");
         }
         semantic_axes[semantic] = true;
     }
@@ -633,10 +633,20 @@ VideoTensor dimensional_splicer(
                 std::array<float, 3> source_coordinates{};  // X, Y, T
                 const std::array<std::size_t, 3> coordinates{x, y, t};
                 const std::array<std::size_t, 3> output_extents{output_shape.w, output_shape.h, output_shape.t};
+                const auto driver_t = scale(t, output_shape.t, driver.shape().t);
+                const auto driver_y = scale(y, output_shape.h, driver.shape().h);
+                const auto driver_x = scale(x, output_shape.w, driver.shape().w);
                 for (std::size_t axis = 0; axis < 3; ++axis) {
                     const auto semantic = static_cast<std::size_t>(selections[axis]) % 3;
                     const auto source_extent = semantic == 0 ? source.shape().w : (semantic == 1 ? source.shape().h : source.shape().t);
-                    source_coordinates[semantic] = scale(coordinates[axis], output_extents[axis], source_extent);
+                    if (static_cast<int>(selections[axis]) < 3) {
+                        source_coordinates[semantic] = scale(coordinates[axis], output_extents[axis], source_extent);
+                    } else {
+                        const auto map_channel = std::min(semantic, driver.shape().c - 1);
+                        const auto map_value = std::clamp(sample_tensor(
+                            driver, driver_t, driver_y, driver_x, map_channel, EdgeBehavior::Clamp), 0.0F, 1.0F);
+                        source_coordinates[semantic] = map_value * static_cast<float>(source_extent - 1);
+                    }
                 }
                 for (std::size_t c = 0; c < output_shape.c; ++c) {
                     if (params.interpolation == TensorInterpolation::Nearest) {
@@ -762,6 +772,8 @@ VideoTensor chrono_feedback(const VideoTensor& input, const ChronoFeedbackParams
             case FeedbackBlendMode::Screen: return 1.0F - (1.0F - base) * (1.0F - layer);
             case FeedbackBlendMode::Multiply: return base * layer;
             case FeedbackBlendMode::Lighten: return std::max(base, layer);
+            case FeedbackBlendMode::Difference: return std::abs(base - layer);
+            case FeedbackBlendMode::Displace: return base;
         }
         return base;
     };
@@ -771,6 +783,22 @@ VideoTensor chrono_feedback(const VideoTensor& input, const ChronoFeedbackParams
         const auto future_t = std::min(t + params.future_delay, shape.t - 1);
         for (std::size_t y = 0; y < shape.h; ++y) {
             for (std::size_t x = 0; x < shape.w; ++x) {
+                if (params.blend_mode == FeedbackBlendMode::Displace) {
+                    const auto pixel_luma = [&](const VideoTensor& tensor, std::size_t sample_t) {
+                        return luma(tensor, sample_t, y, x);
+                    };
+                    const auto past_luma = has_past ? pixel_luma(output, past_t) : 0.5F;
+                    const auto future_luma = pixel_luma(input, future_t);
+                    const auto source_x = static_cast<float>(x) +
+                        (past_luma - 0.5F) * 0.5F * past_amount * static_cast<float>(shape.w);
+                    const auto source_y = static_cast<float>(y) +
+                        (future_luma - 0.5F) * 0.5F * future_amount * static_cast<float>(shape.h);
+                    for (std::size_t c = 0; c < shape.c; ++c) {
+                        output.at(t, y, x, c) = sample_tensor(
+                            input, static_cast<float>(t), source_y, source_x, c, EdgeBehavior::Clamp);
+                    }
+                    continue;
+                }
                 for (std::size_t c = 0; c < shape.c; ++c) {
                     const auto current = input.at(t, y, x, c);
                     const auto past = has_past ? output.at(past_t, y, x, c) : current;

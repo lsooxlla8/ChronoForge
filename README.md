@@ -1,89 +1,84 @@
 # ChronoForge
 
-**ChronoForge** is a native macOS-first editor for treating video as a space-time tensor `(T, H, W, C)`, not a stack of isolated frames. It combines multiple video sources in one effect stack, previews a bounded proxy and renders full-resolution H.264 MP4 through memory-mapped SSD tensors.
+**Break video across space and time.**
 
-## What is included
+ChronoForge is a native macOS video-effects app for VJs, glitch artists and motion designers. Import one or two clips, stack strange time-based effects, watch a fast proxy preview, then export the result at full resolution.
 
-- Ten coherent effects, including Tensor Transform, Spectral Transform, Dimensional Splicer, Tensor Displacement, Motion Time Warp, Chrono Feedback and Structural Datamosh.
-- A persistent media pool with primary A and per-effect driver B routing. Different tensor extents can Clamp, Stretch or Crop without loading full-resolution sources into RAM.
-- A directed acyclic node graph that rejects cycles.
-- SSD cache chunks written atomically, so cancelled or interrupted renders do not create valid-looking partial cache entries.
-- A tile planner designed for complete per-pixel time series: temporal effects split across `H × W`, while retaining all `T` samples needed to operate correctly.
-- Arbitrary-length full-resolution 3D FFT that maps complex tensors to SSD and keeps only individual frequency lines in RAM.
-- A native macOS 14+ SwiftUI editor with real video import, frame preview, editable effect parameters, reordering/bypass, render cancellation and MP4 export.
-- A content-addressed proxy cache keyed by source fingerprint, graph parameters and engine version.
-- A native H.264 integration check that generates a movie, decodes it and sends it through the C++ bridge.
-- Full-resolution out-of-core decode, processing and encode. Intermediate tensors are mapped from SSD and each completed node replaces the preceding scratch file.
-- A sequential UI stack that automatically reconnects inputs after drag reordering; the core dependency graph still validates and rejects cycles.
-- Project save/open, security-scoped source bookmarks, autosave recovery, automatic 8 GB cache trimming and optional original-audio muxing.
-- Full-quality sequential render queue with a settings snapshot per item, automatic cache cleanup between jobs, ⌘⇧R start and completion sound.
-- Always-proxy preview with Standard/High quality choices; direct export and render queue always decode the original at full quality.
-- Independent spatial and temporal output prefilters with Off/Light/Strong levels, applied identically to proxy and SSD-backed full renders.
-- Exact numeric parameter entry, contextual default reset, global Space play/pause and in-editor media add/replace/remove.
-- CPU thread pools for proxy and full local/temporal effects, granular progress and cancellation with partial-file cleanup.
+No formulas required. If you have used an effect stack, displacement map or render queue before, you already know the workflow.
 
-## Key technical decisions
+## What can it do?
 
-The original brief is strong, but a few details make the difference between a demo and a dependable editor:
+- Turn time into a visible image axis, or rotate the whole clip through space and time.
+- Sort every pixel through the duration of a video instead of across one frame.
+- Bend time with brightness, motion, polar shapes or another video.
+- Use a second clip as an RGB coordinate map or a space-time displacement map.
+- Build recursive past/future feedback, spectral FFT glitches and directional datamosh trails.
+- Queue several full-quality renders and let ChronoForge process them one after another.
 
-| Decision | Why it matters |
+## Effects
+
+### One video
+
+| Effect | What you see |
 | --- | --- |
-| Linear float working space with explicit transfer/alpha metadata | Brightness, interpolation and FFT are mathematically meaningful only after decoding video out of display-encoded sRGB/Rec.709. |
-| Logical playback rate is metadata, not an axis size | Swapping `T` and `X` changes the tensor extents; the desired export FPS remains an explicit Output choice. |
-| Tile contracts declare their temporal footprint | Pixel sort needs every time sample for a pixel. A scheduler must not accidentally run it on independent frame chunks. |
-| Cache key includes graph signature, node parameters, proxy scale and source fingerprint | Otherwise a changed node could display stale cached output. Proxy and full-render caches use content-addressed keys. |
-| FFT is a global operation | Graphs containing FFT automatically use separable arbitrary-length lines over memory-mapped complex tensors for both proxy and full render, so tensor volume consumes SSD rather than RAM. |
-| Effects sample backward into source coordinates | It avoids holes in radial/rotation transforms, and 3D rotation uses trilinear interpolation. |
-| Two-input nodes name A and B explicitly | Projects remain an easy-to-read sequential stack while driver media can be changed independently per effect. |
-| macOS reference optical flow is SSD-safe CPU code | CUDA is unavailable on Apple Silicon. The deterministic CPU backend works today; a future Metal/Vision backend can replace it without changing projects. |
+| **Space-Time Transform** | Swap width or height with time, or rotate the video volume in 3D. |
+| **Self Time Displacement** | Bright or coloured parts of the same clip jump forward or backward in time. |
+| **Polar Time Warp** | Braided, folded and orbiting time structures around a movable centre. |
+| **Pixel Sort (Time)** | Pixel sorting through frames, so shadows and highlights flow through time. |
+| **3D FFT Transform** | Swap or rotate spatial and temporal frequencies for spectral textures. |
+| **Optical Flow Time Warp** | Moving objects bend time more than the static background. |
+| **Time Feedback** | Recursive past and future echoes with colour and displacement blend modes. |
+| **Axis Datamosh** | Freeze and drag image data along time, horizontal or vertical lines. |
 
-The complete operating model is in [docs/architecture.md](docs/architecture.md).
+### Two videos
 
-## Build the core on macOS
+| Effect | What A and B do |
+| --- | --- |
+| **Space-Time Map** | A supplies the picture. B's red, green and blue channels choose where ChronoForge reads X, Y and Time from A. |
+| **Space-Time Displacement** | A is the target. Brightness or a channel from B pushes A through X, Y and Time. |
 
-Prerequisites: Xcode Command Line Tools and CMake 3.24+.
+## Five-minute workflow
+
+1. Click **Import Video**. This becomes the primary clip, **A**.
+2. Add effects from the sidebar. They run from top to bottom.
+3. Click **Update Preview**. Preview is always a smaller proxy so experimentation stays responsive.
+4. For a two-video effect, add another clip to Media and choose it as **Driver video (B)**.
+5. Click **Export MP4** for one full-quality render, or **Add to Queue** for a batch. Press **Shift–Command–R** to start the queue.
+
+Useful shortcuts: **Space** plays or pauses the preview, and **Shift–S** hides or shows the sidebar.
+
+## Why it is different
+
+Most video tools treat time as a playhead. ChronoForge treats time like another direction you can swap, rotate, sort, map and displace. The result is closer to a playable glitch instrument than a conventional editor.
+
+Large videos are processed through temporary SSD files instead of being loaded into RAM all at once. Preview always uses proxy media; export always goes back to the original files. The render cache trims itself automatically.
+
+## Download and requirements
+
+Download the latest macOS build from [Releases](https://github.com/lsooxlla8/ChronoForge/releases/latest).
+
+- Apple Silicon Mac
+- macOS 14 Sonoma or newer
+- Free SSD space for full-quality temporary renders
+
+The local build is ad-hoc signed. On first launch, macOS may ask you to confirm that you want to open it.
+
+## Build from source
+
+For developers: install Xcode Command Line Tools and CMake 3.24+, then run:
 
 ```bash
 cmake -S . -B build -DCHRONOFORGE_BUILD_TESTS=ON
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
-./build/chronoforge-cli
-```
-
-Build or run the native macOS application from the repository root:
-
-```bash
 swift run ChronoForgeMac
 ```
 
-Create a signed local application bundle:
+Create the app and DMG:
 
 ```bash
 ./scripts/package_macos.sh release
 ./scripts/create_dmg.sh
-open dist/ChronoForge.app
 ```
 
-Run the end-to-end application diagnostic (rotated H.264 input, proxy decode, project round-trip, disk tensor render and MP4 validation):
-
-```bash
-.build/arm64-apple-macosx/release/ChronoForgeMac --self-test
-```
-
-## Repository layout
-
-```text
-apps/
-  cli/             Core diagnostic executable
-  macos/           Native SwiftUI editor and AVFoundation pipeline (macOS 14+)
-include/           Public C++20 core interfaces
-src/               Core implementation
-tests/             Deterministic core tests
-docs/              Architecture and delivery milestones
-```
-
-## Practical limits in this milestone
-
-The bundled local build targets Apple Silicon and macOS 14+. A universal Intel/Apple Silicon package requires full Xcode (`xcbuild`), which is not present in the current build environment. Local builds are ad-hoc signed; public distribution still requires the owner's Apple Developer ID certificate and notarization.
-
-3D FFT remains computationally expensive and requires temporary SSD space for two complex tensors, but full-quality processing no longer requires the complete volume to fit in RAM. Original audio can be preserved explicitly; when an axis-changing effect makes the video longer, audio ends at its original duration.
+The processing core is C++20; the macOS interface is SwiftUI and AVFoundation. Full-resolution intermediate tensors are memory-mapped to SSD. More implementation detail lives in [docs/architecture.md](docs/architecture.md).
