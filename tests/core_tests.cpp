@@ -162,6 +162,14 @@ void test_cross_tensor_and_flow_effects() {
     require_near(spliced.at(3, 1, 2, 0), source.at(1, 1, 2, 0), "Splicer normalizes B geometry into A pixels");
     require(spliced.metadata().frame_rate_numerator == 8, "Splicer inherits driver FPS when output Time comes from B Time");
 
+    chronoforge::VideoTensor coordinate_map({2, 2, 3, 3}, 0.0F);
+    const auto mapped = chronoforge::dimensional_splicer(
+        source, coordinate_map,
+        {chronoforge::TensorAxisSource::BX, chronoforge::TensorAxisSource::BY,
+         chronoforge::TensorAxisSource::BT, chronoforge::TensorInterpolation::Nearest});
+    require(mapped.shape() == chronoforge::TensorShape{2, 2, 3, 1}, "Space-Time Map can take every output extent from B");
+    require_near(mapped.at(1, 1, 2, 0), source.at(0, 0, 0, 0), "B RGB values map A's X, Y and Time coordinates");
+
     chronoforge::VideoTensor timeline({3, 1, 1, 1});
     timeline.at(0, 0, 0, 0) = 0.0F;
     timeline.at(1, 0, 0, 0) = 0.5F;
@@ -184,6 +192,20 @@ void test_cross_tensor_and_flow_effects() {
     require_near(feedback.at(1, 0, 0, 0), 0.5F, "Feedback blends a recursive past sample");
     require_near(feedback.at(2, 0, 0, 0), 0.25F, "Feedback recursively decays through later frames");
 
+    chronoforge::VideoTensor layers({2, 1, 1, 1});
+    layers.at(0, 0, 0, 0) = 0.2F;
+    layers.at(1, 0, 0, 0) = 0.7F;
+    const auto difference = chronoforge::chrono_feedback(
+        layers, {0, 0, 1, 1.0F, chronoforge::FeedbackBlendMode::Difference});
+    require_near(difference.at(0, 0, 0, 0), 0.5F, "Difference feedback blends the absolute channel difference");
+
+    chronoforge::VideoTensor displacement_layers({2, 3, 1, 1});
+    for (std::size_t y = 0; y < 3; ++y) displacement_layers.at(0, y, 0, 0) = static_cast<float>(y) / 2.0F;
+    for (std::size_t y = 0; y < 3; ++y) displacement_layers.at(1, y, 0, 0) = 1.0F;
+    const auto displaced_feedback = chronoforge::chrono_feedback(
+        displacement_layers, {1, 0, 1, 1.0F, chronoforge::FeedbackBlendMode::Displace});
+    require(displaced_feedback.at(0, 0, 0, 0) > 0.0F, "Displace feedback uses the future layer to move the current frame vertically");
+
     chronoforge::VideoTensor edge({1, 1, 3, 1});
     edge.at(0, 0, 0, 0) = 0.0F;
     edge.at(0, 0, 1, 0) = 0.6F;
@@ -199,7 +221,7 @@ void test_file_backed_cross_tensor() {
     std::filesystem::create_directories(root);
     const auto source = numbered({2, 2, 3, 1});
     const chronoforge::VideoTensor driver(
-        {4, 1, 5, 1}, std::vector<float>(20, 1.0F),
+        {4, 1, 5, 3}, std::vector<float>(60, 1.0F),
         {8, 1, chronoforge::ColorTransfer::Linear, chronoforge::AlphaRepresentation::None});
     const auto source_path = root / "source.raw";
     const auto driver_path = root / "driver.raw";
@@ -214,14 +236,14 @@ void test_file_backed_cross_tensor() {
         mapped.sync();
     }
     const chronoforge::EffectSpec effect{
-        chronoforge::EffectOperation::DimensionalSplicer, {}, {0, 1, 5, 1}};
+        chronoforge::EffectOperation::DimensionalSplicer, {}, {3, 4, 5, 0}};
     const auto output_path = root / "output.raw";
     const auto result = chronoforge::render_file_cross_tensor_effect(
         source_path, driver_path, output_path, source.shape(), driver.shape(), source.metadata(), driver.metadata(), effect, {});
-    require(result.shape == chronoforge::TensorShape{4, 2, 3, 1}, "Out-of-core Splicer reports B-driven Time extent");
+    require(result.shape == chronoforge::TensorShape{4, 1, 5, 1}, "Out-of-core Space-Time Map reports B-driven extents");
     require(result.metadata.frame_rate_numerator == 8, "Out-of-core Splicer reports driver FPS for B Time");
     const auto output = chronoforge::MappedTensor::open(output_path, result.shape, chronoforge::MappedTensor::Access::ReadOnly);
-    require_near(output.data()[((3 * 2 + 1) * 3 + 2)], source.at(1, 1, 2, 0), "Out-of-core Splicer matches in-memory sampling");
+    require_near(output.data()[((3 * 1 + 0) * 5 + 4)], source.at(1, 1, 2, 0), "Out-of-core Space-Time Map uses B RGB coordinates");
     std::filesystem::remove_all(root);
 }
 

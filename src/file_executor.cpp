@@ -1094,7 +1094,7 @@ void optical_flow_warp(const MappedTensor& input, MappedTensor& output, const Ef
 }
 
 void feedback(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
-    require_option(effect.options[0], 3, "feedback blend mode");
+    require_option(effect.options[0], 5, "feedback blend mode");
     const auto mode = static_cast<FeedbackBlendMode>(effect.options[0]);
     const auto past_delay = static_cast<std::size_t>(std::max(0.0F, std::round(effect.values[0])));
     const auto future_delay = static_cast<std::size_t>(std::max(0.0F, std::round(effect.values[2])));
@@ -1108,6 +1108,8 @@ void feedback(const MappedTensor& input, MappedTensor& output, const EffectSpec&
             case FeedbackBlendMode::Screen: return 1.0F - (1.0F - base) * (1.0F - layer);
             case FeedbackBlendMode::Multiply: return base * layer;
             case FeedbackBlendMode::Lighten: return std::max(base, layer);
+            case FeedbackBlendMode::Difference: return std::abs(base - layer);
+            case FeedbackBlendMode::Displace: return base;
         }
         return base;
     };
@@ -1117,6 +1119,27 @@ void feedback(const MappedTensor& input, MappedTensor& output, const EffectSpec&
         const auto future_t = std::min(t + future_delay, shape.t - 1);
         for (std::size_t y = 0; y < shape.h; ++y) {
             for (std::size_t x = 0; x < shape.w; ++x) {
+                if (mode == FeedbackBlendMode::Displace) {
+                    const auto mapped_luma = [&](std::size_t sample_t, bool from_output) {
+                        const auto channel = [&](std::size_t c) {
+                            return from_output ? destination[linear(sample_t, y, x, c, shape)]
+                                               : read(input, sample_t, y, x, c);
+                        };
+                        if (shape.c >= 3) return 0.2126F * channel(0) + 0.7152F * channel(1) + 0.0722F * channel(2);
+                        return channel(0);
+                    };
+                    const auto past_luma = has_past ? mapped_luma(past_t, true) : 0.5F;
+                    const auto future_luma = mapped_luma(future_t, false);
+                    const auto source_x = static_cast<float>(x) +
+                        (past_luma - 0.5F) * 0.5F * past_amount * static_cast<float>(shape.w);
+                    const auto source_y = static_cast<float>(y) +
+                        (future_luma - 0.5F) * 0.5F * future_amount * static_cast<float>(shape.h);
+                    for (std::size_t c = 0; c < shape.c; ++c) {
+                        destination[linear(t, y, x, c, shape)] = sample_mapped(
+                            input, static_cast<float>(t), source_y, source_x, c, EdgeBehavior::Clamp);
+                    }
+                    continue;
+                }
                 for (std::size_t c = 0; c < shape.c; ++c) {
                     const auto current = read(input, t, y, x, c);
                     const auto past = has_past ? destination[linear(past_t, y, x, c, shape)] : current;
@@ -1236,29 +1259,29 @@ void apply(
 [[nodiscard]] std::string stage_name(EffectOperation operation) {
     switch (operation) {
         case EffectOperation::SpaceTimeTranspose:
-            return "Tensor Transform";
+            return "Space-Time Transform";
         case EffectOperation::LumaTimeShift:
-            return "Channel Time Shift";
+            return "Self Time Displacement";
         case EffectOperation::RadialChronoFunnel:
             return "Polar Time Warp";
         case EffectOperation::TemporalPixelSort:
-            return "Temporal Pixel Sort";
+            return "Pixel Sort (Time)";
         case EffectOperation::Tensor3dRotation:
-            return "Tensor Transform";
+            return "Space-Time Transform";
         case EffectOperation::SpectralFftSwap:
-            return "Spectral Transform";
+            return "3D FFT Transform";
         case EffectOperation::SelectivePrefilter:
             return "Output Prefilter";
         case EffectOperation::DimensionalSplicer:
-            return "Dimensional Splicer";
+            return "Space-Time Map";
         case EffectOperation::TensorDisplacement:
-            return "Tensor Displacement";
+            return "Space-Time Displacement";
         case EffectOperation::OpticalFlowTimeWarp:
-            return "Motion Time Warp";
+            return "Optical Flow Time Warp";
         case EffectOperation::ChronoFeedback:
-            return "Chrono Feedback";
+            return "Time Feedback";
         case EffectOperation::StructuralDatamosh:
-            return "Structural Datamosh";
+            return "Axis Datamosh";
     }
     return "Unknown";
 }
@@ -1356,7 +1379,7 @@ FileRenderResult render_file_cross_tensor_effect(
         std::array<bool, 3> used{};
         for (const auto selection : selections) {
             const auto semantic = static_cast<std::size_t>(selection % 3);
-            if (used[semantic]) throw std::invalid_argument("Dimensional Splicer must use X, Y and Time exactly once");
+            if (used[semantic]) throw std::invalid_argument("Space-Time Map must use X, Y and Time exactly once");
             used[semantic] = true;
         }
         const auto extent = [&](std::int32_t selection) {
@@ -1394,16 +1417,26 @@ FileRenderResult render_file_cross_tensor_effect(
                        : static_cast<float>(coordinate) * static_cast<float>(input_extent - 1) /
                              static_cast<float>(output_extent - 1);
         };
-        parallel_for(result_shape.t, [&](double fraction) { report(progress, fraction, "Dimensional Splicer"); }, [&](std::size_t t) {
+        parallel_for(result_shape.t, [&](double fraction) { report(progress, fraction, "Space-Time Map"); }, [&](std::size_t t) {
             for (std::size_t y = 0; y < result_shape.h; ++y) {
                 for (std::size_t x = 0; x < result_shape.w; ++x) {
                     std::array<float, 3> source_coordinates{};
                     const std::array<std::size_t, 3> coordinates{x, y, t};
                     const std::array<std::size_t, 3> output_extents{result_shape.w, result_shape.h, result_shape.t};
+                    const auto driver_t = scale(t, result_shape.t, driver_shape.t);
+                    const auto driver_y = scale(y, result_shape.h, driver_shape.h);
+                    const auto driver_x = scale(x, result_shape.w, driver_shape.w);
                     for (std::size_t axis = 0; axis < 3; ++axis) {
                         const auto semantic = static_cast<std::size_t>(selections[axis] % 3);
                         const auto input_extent = semantic == 0 ? source_shape.w : (semantic == 1 ? source_shape.h : source_shape.t);
-                        source_coordinates[semantic] = scale(coordinates[axis], output_extents[axis], input_extent);
+                        if (selections[axis] < 3) {
+                            source_coordinates[semantic] = scale(coordinates[axis], output_extents[axis], input_extent);
+                        } else {
+                            const auto map_channel = std::min(semantic, driver_shape.c - 1);
+                            const auto map_value = std::clamp(sample_mapped(
+                                driver, driver_t, driver_y, driver_x, map_channel, EdgeBehavior::Clamp), 0.0F, 1.0F);
+                            source_coordinates[semantic] = map_value * static_cast<float>(input_extent - 1);
+                        }
                     }
                     for (std::size_t c = 0; c < result_shape.c; ++c) {
                         float value{};
@@ -1434,7 +1467,7 @@ FileRenderResult render_file_cross_tensor_effect(
             }
             return std::min(coordinate, driver_extent - 1);
         };
-        parallel_for(result_shape.t, [&](double fraction) { report(progress, fraction, "Tensor Displacement"); }, [&](std::size_t t) {
+        parallel_for(result_shape.t, [&](double fraction) { report(progress, fraction, "Space-Time Displacement"); }, [&](std::size_t t) {
             const auto dt = driver_coordinate(t, result_shape.t, driver_shape.t);
             for (std::size_t y = 0; y < result_shape.h; ++y) {
                 const auto dy = driver_coordinate(y, result_shape.h, driver_shape.h);

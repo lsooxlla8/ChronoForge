@@ -93,6 +93,7 @@ struct ChronoForgeMacApp: App {
 
 private struct WorkspaceView: View {
     @EnvironmentObject private var project: ProjectStore
+    @AppStorage("ChronoForge.darkAppearance") private var darkAppearance = false
     var body: some View {
         NavigationSplitView {
             sidebar
@@ -111,6 +112,7 @@ private struct WorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: .togglePreviewPlayback)) { _ in
             project.togglePlayback()
         }
+        .preferredColorScheme(darkAppearance ? .dark : .light)
         .fileImporter(
             isPresented: $project.showsImporter,
             allowedContentTypes: [.movie, .mpeg4Movie, .quickTimeMovie],
@@ -244,8 +246,15 @@ private struct WorkspaceView: View {
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 7) {
                 Menu("Add effect", systemImage: "plus") {
-                    ForEach(EffectKind.addableKinds) { kind in
-                        Button(kind.title, systemImage: kind.symbol) { project.addEffect(kind) }
+                    Section("ONE VIDEO · A") {
+                        ForEach(EffectKind.singleInputKinds) { kind in
+                            Button(kind.title, systemImage: kind.symbol) { project.addEffect(kind) }
+                        }
+                    }
+                    Section("TWO VIDEOS · A + B") {
+                        ForEach(EffectKind.twoInputKinds) { kind in
+                            Button(kind.title, systemImage: kind.symbol) { project.addEffect(kind) }
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -296,6 +305,15 @@ private struct WorkspaceView: View {
                 Button("Export MP4…", systemImage: "square.and.arrow.up") { project.chooseExportLocation() }
                     .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
                     .help("Render the current effect stack from the original media at full quality and write an MP4 file.")
+                Divider().frame(height: 22)
+                HStack(spacing: 6) {
+                    Image(systemName: darkAppearance ? "moon.fill" : "sun.max.fill")
+                        .foregroundStyle(.secondary)
+                    Toggle("Dark appearance", isOn: $darkAppearance)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
+                .help(darkAppearance ? "Switch to light appearance" : "Switch to dark appearance")
             }
             HStack(spacing: 12) {
                 Picker("Proxy preview", selection: Binding(
@@ -506,12 +524,12 @@ private struct EffectInspector: View {
                 .foregroundStyle(.secondary)
         case .dimensionalSplicer:
             driverPicker()
-            let axes = ["A · X", "A · Y", "A · Time", "B · X", "B · Y", "B · Time"]
+            let axes = ["A · X position", "A · Y position", "A · Time position", "B Red → X", "B Green → Y", "B Blue → Time"]
             optionPicker("Output X", value: option(0), options: axes)
             optionPicker("Output Y", value: option(1), options: axes)
             optionPicker("Output Time", value: option(2), options: axes)
             optionPicker("Interpolation", value: option(3), options: ["Nearest", "Linear (3D)", "Cubic (3D)"])
-            Text("A supplies the pixels. A or B can supply each output dimension. X, Y and Time must each appear exactly once.")
+            Text("A supplies the picture. B is an RGB coordinate map: red chooses where to read X in A, green chooses Y and blue chooses Time. X, Y and Time must each appear exactly once.")
                 .font(.caption).foregroundStyle(.secondary)
         case .tensorDisplacement:
             driverPicker()
@@ -534,7 +552,11 @@ private struct EffectInspector: View {
             valueSlider("Past blend", index: 1, range: 0...1, format: "%.4f")
             valueSlider("Future delay", index: 2, range: 0...300, format: "%.0f frames")
             valueSlider("Future blend", index: 3, range: 0...1, format: "%.4f")
-            optionPicker("Blend mode", value: option(0), options: ["Add", "Screen", "Multiply", "Lighten"])
+            optionPicker("Blend mode", value: option(0), options: ["Add", "Screen", "Multiply", "Lighten", "Difference", "Displace"])
+            if node.options[0] == 5 {
+                Text("Past feedback displaces X; the future frame displaces Y. Mid-gray is neutral, while Past/Future Blend control displacement strength.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         case .structuralDatamosh:
             optionPicker("Freeze axis", value: option(0), options: ["Time", "Horizontal", "Vertical"])
             optionPicker("Trigger", value: option(1), options: ["Edge", "Luma", "Random"])

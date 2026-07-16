@@ -126,7 +126,7 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptor& des
                 {
                     static_cast<std::size_t>(std::max(0.0F, std::round(descriptor.values[0]))), descriptor.values[1],
                     static_cast<std::size_t>(std::max(0.0F, std::round(descriptor.values[2]))), descriptor.values[3],
-                    checked_enum<chronoforge::FeedbackBlendMode>(descriptor.options[0], 3, "feedback blend mode"),
+                    checked_enum<chronoforge::FeedbackBlendMode>(descriptor.options[0], 5, "feedback blend mode"),
                 });
         case CF_EFFECT_STRUCTURAL_DATAMOSH:
             return chronoforge::structural_datamosh(
@@ -193,7 +193,7 @@ CFEffectDescriptor cf_effect_descriptor_make(
     return {kind, {value0, value1, value2, value3}, {option0, option1, option2, option3}};
 }
 
-const char* cf_core_version(void) { return "0.7.0"; }
+const char* cf_core_version(void) { return "0.8.0"; }
 
 int32_t cf_render_effect_chain(
     const float* input,

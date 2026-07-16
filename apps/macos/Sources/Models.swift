@@ -57,17 +57,17 @@ enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .spaceTimeTranspose, .tensor3DRotation: "Tensor Transform"
-        case .lumaTimeShift: "Channel Time Shift"
+        case .spaceTimeTranspose, .tensor3DRotation: "Space-Time Transform"
+        case .lumaTimeShift: "Self Time Displacement"
         case .radialChronoFunnel: "Polar Time Warp"
-        case .temporalPixelSort: "Temporal Pixel Sort"
-        case .spectralFFTSwap: "Spectral Transform"
+        case .temporalPixelSort: "Pixel Sort (Time)"
+        case .spectralFFTSwap: "3D FFT Transform"
         case .selectivePrefilter: "Output Prefilter"
-        case .dimensionalSplicer: "Dimensional Splicer"
-        case .tensorDisplacement: "Tensor Displacement"
-        case .opticalFlowTimeWarp: "Motion Time Warp"
-        case .chronoFeedback: "Chrono Feedback"
-        case .structuralDatamosh: "Structural Datamosh"
+        case .dimensionalSplicer: "Space-Time Map"
+        case .tensorDisplacement: "Space-Time Displacement"
+        case .opticalFlowTimeWarp: "Optical Flow Time Warp"
+        case .chronoFeedback: "Time Feedback"
+        case .structuralDatamosh: "Axis Datamosh"
         }
     }
 
@@ -81,7 +81,7 @@ enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
         case .selectivePrefilter: "camera.filters"
         case .dimensionalSplicer: "arrow.triangle.branch"
         case .tensorDisplacement: "move.3d"
-        case .opticalFlowTimeWarp: "figure.run.motion"
+        case .opticalFlowTimeWarp: "wind"
         case .chronoFeedback: "arrow.triangle.2.circlepath.circle"
         case .structuralDatamosh: "waveform.path.badge.minus"
         }
@@ -103,10 +103,12 @@ enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
         }
     }
 
-    static let addableKinds: [EffectKind] = [
+    static let singleInputKinds: [EffectKind] = [
         .spaceTimeTranspose, .lumaTimeShift, .radialChronoFunnel, .temporalPixelSort, .spectralFFTSwap,
-        .dimensionalSplicer, .tensorDisplacement, .opticalFlowTimeWarp, .chronoFeedback, .structuralDatamosh,
+        .opticalFlowTimeWarp, .chronoFeedback, .structuralDatamosh,
     ]
+    static let twoInputKinds: [EffectKind] = [.dimensionalSplicer, .tensorDisplacement]
+    static let addableKinds: [EffectKind] = singleInputKinds + twoInputKinds
 
     var requiresDriver: Bool { self == .dimensionalSplicer || self == .tensorDisplacement }
 }
@@ -137,7 +139,7 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
         case .selectivePrefilter:
             return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 0, 0, 0])
         case .dimensionalSplicer:
-            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 1, 5, 1])
+            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 1, 2, 1])
         case .tensorDisplacement:
             return .init(kind: kind, inputNodeID: inputNodeID, values: [12, 24, 24, 0], options: [0, 1, 0, 0])
         case .opticalFlowTimeWarp:
@@ -166,7 +168,7 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
         case .temporalPixelSort: ["Luma", "Hue", "Saturation"][min(max(Int(options[0]), 0), 2)]
         case .spectralFFTSwap: options[3] == 0 ? "Frequency Swap" : "Frequency Rotation"
         case .selectivePrefilter: "Spatial + Temporal"
-        case .dimensionalSplicer: "Source A + Geometry B"
+        case .dimensionalSplicer: "RGB map B → A coordinates"
         case .tensorDisplacement: "Target A + Map B"
         case .opticalFlowTimeWarp: "Motion-driven time"
         case .chronoFeedback: "Past + future echo"
