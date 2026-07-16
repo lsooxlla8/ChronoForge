@@ -601,12 +601,15 @@ VideoTensor dimensional_splicer(
     const VideoTensor& source,
     const VideoTensor& driver,
     const DimensionalSplicerParams& params) {
-    const std::array<TensorAxisSource, 3> selections{params.output_x, params.output_y, params.output_t};
+    std::array<TensorAxisSource, 3> selections{params.output_x, params.output_y, params.output_t};
     std::array<bool, 3> semantic_axes{};
-    for (const auto selection : selections) {
-        const auto semantic = static_cast<std::size_t>(selection) % 3;
+    for (auto& selection : selections) {
+        auto semantic = static_cast<std::size_t>(selection) % 3;
         if (semantic_axes[semantic]) {
-            throw std::invalid_argument("Space-Time Map must use X, Y and Time exactly once");
+            const auto replacement = std::find(semantic_axes.begin(), semantic_axes.end(), false);
+            semantic = static_cast<std::size_t>(std::distance(semantic_axes.begin(), replacement));
+            const auto source_offset = static_cast<int>(selection) >= 3 ? 3 : 0;
+            selection = static_cast<TensorAxisSource>(source_offset + static_cast<int>(semantic));
         }
         semantic_axes[semantic] = true;
     }
@@ -618,8 +621,8 @@ VideoTensor dimensional_splicer(
             default: return shape.t;
         }
     };
-    const TensorShape output_shape{extent(params.output_t), extent(params.output_y), extent(params.output_x), source.shape().c};
-    const auto output_metadata = params.output_t == TensorAxisSource::BT ? driver.metadata() : source.metadata();
+    const TensorShape output_shape{extent(selections[2]), extent(selections[1]), extent(selections[0]), source.shape().c};
+    const auto output_metadata = selections[2] == TensorAxisSource::BT ? driver.metadata() : source.metadata();
     VideoTensor output(output_shape, 0.0F, output_metadata);
     const auto scale = [](std::size_t coordinate, std::size_t output_extent, std::size_t source_extent) {
         return output_extent <= 1 || source_extent <= 1
@@ -815,6 +818,66 @@ VideoTensor chrono_feedback(const VideoTensor& input, const ChronoFeedbackParams
             }
         }
     }
+    return output;
+}
+
+VideoTensor seamless_loop(const VideoTensor& input, const SeamlessLoopParams& params) {
+    const auto& shape = input.shape();
+    if (shape.t <= 1) return input;
+    if (params.mode == SeamlessLoopMode::PingPong) {
+        const TensorShape output_shape{shape.t * 2 - 2, shape.h, shape.w, shape.c};
+        VideoTensor output(output_shape, 0.0F, input.metadata());
+        parallel_for(output_shape.t, [&](std::size_t t) {
+            const auto source_t = t < shape.t ? t : (2 * shape.t - 2 - t);
+            for (std::size_t y = 0; y < shape.h; ++y) {
+                for (std::size_t x = 0; x < shape.w; ++x) {
+                    for (std::size_t c = 0; c < shape.c; ++c) {
+                        output.at(t, y, x, c) = input.at(source_t, y, x, c);
+                    }
+                }
+            }
+        });
+        return output;
+    }
+
+    const auto maximum_transition = std::max<std::size_t>(1, shape.t / 2);
+    const auto requested = std::max<std::size_t>(1, params.transition_frames);
+    const auto transition = std::min(requested, maximum_transition);
+    const TensorShape output_shape{shape.t - transition, shape.h, shape.w, shape.c};
+    VideoTensor output(output_shape, 0.0F, input.metadata());
+    const auto softness = std::clamp(params.weave_softness, 0.01F, 0.5F);
+    const auto smoothstep = [](float edge0, float edge1, float value) {
+        const auto normalized = std::clamp((value - edge0) / std::max(0.0001F, edge1 - edge0), 0.0F, 1.0F);
+        return normalized * normalized * (3.0F - 2.0F * normalized);
+    };
+    parallel_for(output_shape.t, [&](std::size_t t) {
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                if (t >= transition) {
+                    for (std::size_t c = 0; c < shape.c; ++c) output.at(t, y, x, c) = input.at(t, y, x, c);
+                    continue;
+                }
+                const auto tail_t = t + output_shape.t;
+                const auto progress = transition <= 1 ? 0.5F : static_cast<float>(t) / static_cast<float>(transition - 1);
+                auto mix = smoothstep(0.0F, 1.0F, progress);
+                if (params.mode == SeamlessLoopMode::LumaWeave && transition > 1) {
+                    if (t == 0) {
+                        mix = 0.0F;
+                    } else if (t + 1 == transition) {
+                        mix = 1.0F;
+                    } else {
+                        const auto threshold = std::clamp(
+                            0.5F * (luma(input, t, y, x) + luma(input, tail_t, y, x)), 0.0F, 1.0F);
+                        mix = smoothstep(threshold - softness, threshold + softness, progress);
+                    }
+                }
+                for (std::size_t c = 0; c < shape.c; ++c) {
+                    const auto tail = input.at(tail_t, y, x, c);
+                    output.at(t, y, x, c) = tail + (input.at(t, y, x, c) - tail) * mix;
+                }
+            }
+        }
+    });
     return output;
 }
 

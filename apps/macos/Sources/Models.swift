@@ -52,6 +52,7 @@ enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
     case opticalFlowTimeWarp = 9
     case chronoFeedback = 10
     case structuralDatamosh = 11
+    case seamlessLoop = 12
 
     var id: Int32 { rawValue }
 
@@ -68,6 +69,7 @@ enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
         case .opticalFlowTimeWarp: "Optical Flow Time Warp"
         case .chronoFeedback: "Time Feedback"
         case .structuralDatamosh: "Axis Datamosh"
+        case .seamlessLoop: "Seamless Loop"
         }
     }
 
@@ -84,6 +86,7 @@ enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
         case .opticalFlowTimeWarp: "wind"
         case .chronoFeedback: "arrow.triangle.2.circlepath.circle"
         case .structuralDatamosh: "waveform.path.badge.minus"
+        case .seamlessLoop: "repeat.circle"
         }
     }
 
@@ -100,12 +103,13 @@ enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
         case .opticalFlowTimeWarp: "green"
         case .chronoFeedback: "pink"
         case .structuralDatamosh: "red"
+        case .seamlessLoop: "teal"
         }
     }
 
     static let singleInputKinds: [EffectKind] = [
         .spaceTimeTranspose, .lumaTimeShift, .radialChronoFunnel, .temporalPixelSort, .spectralFFTSwap,
-        .opticalFlowTimeWarp, .chronoFeedback, .structuralDatamosh,
+        .opticalFlowTimeWarp, .chronoFeedback, .structuralDatamosh, .seamlessLoop,
     ]
     static let twoInputKinds: [EffectKind] = [.dimensionalSplicer, .tensorDisplacement]
     static let addableKinds: [EffectKind] = singleInputKinds + twoInputKinds
@@ -148,6 +152,8 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
             return .init(kind: kind, inputNodeID: inputNodeID, values: [2, 0.35, 2, 0.15], options: [1, 0, 0, 0])
         case .structuralDatamosh:
             return .init(kind: kind, inputNodeID: inputNodeID, values: [0.2, 8, 0.05, 0], options: [0, 0, 0, 0])
+        case .seamlessLoop:
+            return .init(kind: kind, inputNodeID: inputNodeID, values: [15, 0.12, 0, 0], options: [0, 0, 0, 0])
         }
     }
 
@@ -173,6 +179,7 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
         case .opticalFlowTimeWarp: "Motion-driven time"
         case .chronoFeedback: "Past + future echo"
         case .structuralDatamosh: ["Time", "Horizontal", "Vertical"][min(max(Int(options[0]), 0), 2)]
+        case .seamlessLoop: ["Crossfade", "Luma Weave", "Ping-Pong"][min(max(Int(options[0]), 0), 2)]
         }
     }
 }

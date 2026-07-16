@@ -24,6 +24,7 @@ enum class EffectOperation : std::int32_t {
     OpticalFlowTimeWarp = 9,
     ChronoFeedback = 10,
     StructuralDatamosh = 11,
+    SeamlessLoop = 12,
 };
 
 struct EffectSpec {

@@ -169,6 +169,11 @@ void test_cross_tensor_and_flow_effects() {
          chronoforge::TensorAxisSource::BT, chronoforge::TensorInterpolation::Nearest});
     require(mapped.shape() == chronoforge::TensorShape{2, 2, 3, 1}, "Space-Time Map can take every output extent from B");
     require_near(mapped.at(1, 1, 2, 0), source.at(0, 0, 0, 0), "B RGB values map A's X, Y and Time coordinates");
+    const auto repaired_axes = chronoforge::dimensional_splicer(
+        source, coordinate_map,
+        {chronoforge::TensorAxisSource::AX, chronoforge::TensorAxisSource::BX,
+         chronoforge::TensorAxisSource::BT, chronoforge::TensorInterpolation::Nearest});
+    require(repaired_axes.shape() == chronoforge::TensorShape{2, 2, 3, 1}, "Space-Time Map repairs duplicate axis semantics without throwing");
 
     chronoforge::VideoTensor timeline({3, 1, 1, 1});
     timeline.at(0, 0, 0, 0) = 0.0F;
@@ -213,6 +218,21 @@ void test_cross_tensor_and_flow_effects() {
     const auto datamosh = chronoforge::structural_datamosh(
         edge, {chronoforge::FreezeAxis::Horizontal, chronoforge::FreezeTrigger::Edge, 0.2F, 2, 0});
     require_near(datamosh.at(0, 0, 2, 0), 0.0F, "Structural datamosh holds an edge along the selected axis");
+
+    const auto loop_source = numbered({8, 1, 1, 1});
+    const auto crossfade_loop = chronoforge::seamless_loop(
+        loop_source, {3, 0.12F, chronoforge::SeamlessLoopMode::Crossfade});
+    require(crossfade_loop.shape() == chronoforge::TensorShape{5, 1, 1, 1}, "Crossfade loop removes the overlapped tail frames");
+    require_near(crossfade_loop.at(0, 0, 0, 0), loop_source.at(5, 0, 0, 0), "Loop boundary continues into the source tail without a cut");
+    require_near(crossfade_loop.at(2, 0, 0, 0), loop_source.at(2, 0, 0, 0), "Crossfade finishes on the original beginning");
+    const auto woven_loop = chronoforge::seamless_loop(
+        loop_source, {3, 0.15F, chronoforge::SeamlessLoopMode::LumaWeave});
+    require(woven_loop.shape() == crossfade_loop.shape(), "Luma Weave uses the same loop duration as Crossfade");
+    require_near(woven_loop.at(0, 0, 0, 0), loop_source.at(5, 0, 0, 0), "Luma Weave preserves the loop-side boundary frame");
+    const auto ping_pong = chronoforge::seamless_loop(
+        loop_source, {3, 0.12F, chronoforge::SeamlessLoopMode::PingPong});
+    require(ping_pong.shape() == chronoforge::TensorShape{14, 1, 1, 1}, "Ping-Pong loop appends the reverse pass without duplicate endpoints");
+    require_near(ping_pong.at(13, 0, 0, 0), loop_source.at(1, 0, 0, 0), "Ping-Pong ends one frame before its loop start");
 }
 
 void test_file_backed_cross_tensor() {
@@ -402,6 +422,28 @@ void test_file_backed_effect_chain() {
         fft_rotate_path, fft_rotate_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
     for (std::size_t i = 0; i < input.values().size(); ++i) {
         require_near(fft_rotate_output.data()[i], input.values()[i], "Zero-degree out-of-core spectral rotation is identity");
+    }
+
+    const auto loop_input = numbered({8, 2, 2, 1});
+    const auto loop_input_path = root / "loop-input.raw";
+    {
+        auto mapped = chronoforge::MappedTensor::create(loop_input_path, loop_input.shape());
+        std::copy(loop_input.values().begin(), loop_input.values().end(), mapped.mutable_data());
+        mapped.sync();
+    }
+    const auto loop_path = root / "loop.raw";
+    const std::vector<chronoforge::EffectSpec> loop_effects{
+        {chronoforge::EffectOperation::SeamlessLoop, {3, 0.15F, 0, 0}, {1, 0, 0, 0}},
+    };
+    const auto loop_result = chronoforge::render_file_effect_chain(
+        loop_input_path, loop_path, root / "loop-scratch", loop_input.shape(), loop_input.metadata(),
+        loop_effects, 64 * 1024 * 1024, {});
+    const auto loop_expected = chronoforge::seamless_loop(
+        loop_input, {3, 0.15F, chronoforge::SeamlessLoopMode::LumaWeave});
+    require(loop_result.shape == loop_expected.shape(), "Out-of-core Seamless Loop reports its shortened duration");
+    const auto loop_output = chronoforge::MappedTensor::open(loop_path, loop_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
+    for (std::size_t i = 0; i < loop_expected.values().size(); ++i) {
+        require_near(loop_output.data()[i], loop_expected.values()[i], "Out-of-core Seamless Loop matches proxy processing");
     }
 
     bool cancelled = false;

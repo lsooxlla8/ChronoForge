@@ -74,6 +74,7 @@ The supplied `TilePlanner` implements the per-pixel-temporal class. It will be g
 8. **Optical Flow Time Warp** estimates a dense local Lucas–Kanade flow field from adjacent frames and bends time by motion magnitude, threshold and direction.
 9. **Time Feedback** is sequential along Time: it reads prior output for recursive echoes and future input for look-ahead echoes, with colour blends plus a coordinate-displacement mode.
 10. **Axis Datamosh** carries samples along Time, X or Y after deterministic edge, luma or random triggers.
+11. **Seamless Loop** overlaps the tail with the beginning, optionally staggers the transition per pixel by luma, or emits a forward/reverse ping-pong tensor. Crossfade modes shorten `T` by the overlap; Ping-Pong emits `2T-2` frames.
 
 Spatial and Temporal Prefilter are project-level output settings rather than editable nodes. The renderer injects one deterministic hidden low-pass stage after the visible stack, so preview, direct export and queued renders share the same cache signature and result.
 

@@ -29,6 +29,7 @@ No formulas required. If you have used an effect stack, displacement map or rend
 | **Optical Flow Time Warp** | Moving objects bend time more than the static background. |
 | **Time Feedback** | Recursive past and future echoes with colour and displacement blend modes. |
 | **Axis Datamosh** | Freeze and drag image data along time, horizontal or vertical lines. |
+| **Seamless Loop** | Close a non-looping clip with a crossfade, a detail-driven luma weave or a guaranteed ping-pong pass. |
 
 ### Two videos
 

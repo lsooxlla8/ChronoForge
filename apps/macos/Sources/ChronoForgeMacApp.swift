@@ -148,6 +148,7 @@ private struct WorkspaceView: View {
             titleVisibility: .visible
         ) {
             Button("Clear Effect Stack", role: .destructive) { project.clearEffectStack() }
+                .keyboardShortcut(.defaultAction)
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes every effect. The imported video and render queue are not affected.")
@@ -524,13 +525,13 @@ private struct EffectInspector: View {
                 .foregroundStyle(.secondary)
         case .dimensionalSplicer:
             driverPicker()
-            let axes = ["A · X position", "A · Y position", "A · Time position", "B Red → X", "B Green → Y", "B Blue → Time"]
-            optionPicker("Output X", value: option(0), options: axes)
-            optionPicker("Output Y", value: option(1), options: axes)
-            optionPicker("Output Time", value: option(2), options: axes)
+            spaceTimeAxisPicker("Output X", index: 0)
+            spaceTimeAxisPicker("Output Y", index: 1)
+            spaceTimeAxisPicker("Output Time", index: 2)
             optionPicker("Interpolation", value: option(3), options: ["Nearest", "Linear (3D)", "Cubic (3D)"])
-            Text("A supplies the picture. B is an RGB coordinate map: red chooses where to read X in A, green chooses Y and blue chooses Time. X, Y and Time must each appear exactly once.")
+            Text("A supplies the picture. B is an RGB coordinate map: red chooses X, green chooses Y and blue chooses Time. Choosing an axis already used elsewhere swaps the two assignments automatically.")
                 .font(.caption).foregroundStyle(.secondary)
+                .onAppear(perform: normalizeSpaceTimeAxes)
         case .tensorDisplacement:
             driverPicker()
             valueSlider("Time shift", index: 0, range: -240...240, format: "%.2f frames")
@@ -565,6 +566,24 @@ private struct EffectInspector: View {
             if node.options[1] == 2 {
                 valueSlider("Random probability", index: 2, range: 0...1, format: "%.5f")
             }
+        case .seamlessLoop:
+            optionPicker("Loop method", value: option(0), options: ["Crossfade", "Luma Weave", "Ping-Pong"])
+            if node.options[0] != 2 {
+                valueSlider("Transition", index: 0, range: 2...600, format: "%.0f frames")
+                if node.options[0] == 1 {
+                    valueSlider("Weave softness", index: 1, range: 0.01...0.5, format: "%.4f")
+                    Text("Luma Weave lets different image details cross the seam at different moments, hiding the full-frame dissolve of a normal crossfade.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("Overlaps the end with the beginning and shortens the result by the transition length.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            } else {
+                Text("Plays forward and then backward. This always closes cleanly, but the direction reverses at both ends.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Label("Keep Seamless Loop last in the stack so later effects do not reopen the seam.", systemImage: "arrow.down.to.line")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -599,7 +618,9 @@ private struct EffectInspector: View {
                 ExactValueField(value: binding, range: range)
                     .help(String(format: format, binding.wrappedValue))
             }
-            Slider(value: binding, in: range)
+            Slider(value: binding, in: range, onEditingChanged: { editing in
+                if editing { NSApp.keyWindow?.makeFirstResponder(nil) }
+            })
                 .contextMenu {
                     Button("Reset to Default") { binding.wrappedValue = defaultValue }
                 }
@@ -613,6 +634,52 @@ private struct EffectInspector: View {
     private func optionPicker(_ title: String, value: Binding<Int32>, options: [String]) -> some View {
         Picker(title, selection: value) {
             ForEach(options.indices, id: \.self) { index in Text(options[index]).tag(Int32(index)) }
+        }
+        .simultaneousGesture(TapGesture().onEnded { NSApp.keyWindow?.makeFirstResponder(nil) })
+    }
+
+    private func spaceTimeAxisPicker(_ title: String, index: Int) -> some View {
+        let axes = ["A · X position", "A · Y position", "A · Time position", "B Red → X", "B Green → Y", "B Blue → Time"]
+        return Picker(title, selection: spaceTimeAxisBinding(index)) {
+            ForEach(axes.indices, id: \.self) { candidate in
+                Text(axes[candidate])
+                    .tag(Int32(candidate))
+            }
+        }
+        .simultaneousGesture(TapGesture().onEnded { NSApp.keyWindow?.makeFirstResponder(nil) })
+    }
+
+    private func spaceTimeAxisBinding(_ index: Int) -> Binding<Int32> {
+        Binding(
+            get: { node.options[index] },
+            set: { selection in
+                let previous = node.options[index]
+                let semantic = Int(selection) % 3
+                if let occupied = (0..<3).first(where: {
+                    $0 != index && Int(node.options[$0]) % 3 == semantic
+                }) {
+                    node.options[occupied] = previous
+                }
+                node.options[index] = selection
+                normalizeSpaceTimeAxes()
+            }
+        )
+    }
+
+    private func normalizeSpaceTimeAxes() {
+        var used = Set<Int>()
+        for index in 0..<3 {
+            let current = min(max(Int(node.options[index]), 0), 5)
+            let semantic = current % 3
+            if used.contains(semantic) {
+                let sourceBase = current >= 3 ? 3 : 0
+                let replacement = (0..<3).first(where: { !used.contains($0) }) ?? index
+                node.options[index] = Int32(sourceBase + replacement)
+                used.insert(replacement)
+            } else {
+                node.options[index] = Int32(current)
+                used.insert(semantic)
+            }
         }
     }
 
@@ -649,7 +716,8 @@ private struct ExactValueField: View {
             .textFieldStyle(.roundedBorder)
             .frame(width: 92)
             .focused($isFocused)
-            .onSubmit(commit)
+            .onSubmit(finishEditing)
+            .onExitCommand(perform: cancelEditing)
             .onChange(of: isFocused) { _, focused in
                 if !focused { commit() }
             }
@@ -667,6 +735,18 @@ private struct ExactValueField: View {
         }
         value = min(max(parsed, range.lowerBound), range.upperBound)
         text = Self.display(value)
+    }
+
+    private func finishEditing() {
+        commit()
+        isFocused = false
+        DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) }
+    }
+
+    private func cancelEditing() {
+        text = Self.display(value)
+        isFocused = false
+        DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) }
     }
 
     private static func display(_ value: Float) -> String {

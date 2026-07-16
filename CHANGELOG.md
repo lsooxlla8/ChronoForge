@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.0 — seamless loops and interaction fixes
+
+- Added Seamless Loop with Crossfade, detail-driven Luma Weave and guaranteed Ping-Pong modes in both proxy and out-of-core full rendering.
+- Made Return confirm Clear Effect Stack.
+- Prevented invalid Space-Time Map axis combinations in the UI and automatically repairs duplicates found in older projects instead of throwing an error.
+- Fixed numeric parameter fields retaining keyboard focus after Return, Escape, picker changes or slider interaction.
+
 ## 0.8.0 — clear names, real mapping and dark mode
 
 - Reworked Space-Time Map so B's red, green and blue values genuinely map A's X, Y and Time coordinates instead of only borrowing B's dimensions.

@@ -33,6 +33,7 @@ typedef enum CFEffectKind {
     CF_EFFECT_OPTICAL_FLOW_TIME_WARP = 9,
     CF_EFFECT_CHRONO_FEEDBACK = 10,
     CF_EFFECT_STRUCTURAL_DATAMOSH = 11,
+    CF_EFFECT_SEAMLESS_LOOP = 12,
 } CFEffectKind;
 
 // Generic ABI-stable parameter packet. Its interpretation is defined by kind:
@@ -43,6 +44,7 @@ typedef enum CFEffectKind {
 // tensor 3D rotation:     values = XY, XT, YT degrees; options[0] = fill mode
 // spectral transform:     values[0] = angle; options = axis/plane, normalize, Native/Fit Source Size, Swap/Rotate
 // selective prefilter:    options = spatial strength, temporal strength (Off/Light/Strong)
+// seamless loop:          values = transition frames, weave softness; options[0] = Crossfade/Luma Weave/Ping-Pong
 typedef struct CFEffectDescriptor {
     int32_t kind;
     float values[4];
