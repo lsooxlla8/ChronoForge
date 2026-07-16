@@ -318,9 +318,35 @@ void report(const FileRenderProgress& progress, double fraction, std::string_vie
                 return {input.h, input.t, input.w, input.c};
             }
             return {input.h, input.w, input.t, input.c};
+        case EffectOperation::SeamlessLoop: {
+            require_option(effect.options[0], 2, "seamless loop mode");
+            if (effect.options[0] == static_cast<std::int32_t>(SeamlessLoopMode::PingPong)) {
+                return {input.t <= 1 ? 1 : input.t * 2 - 2, input.h, input.w, input.c};
+            }
+            if (input.t <= 1) return input;
+            const auto requested = static_cast<std::size_t>(std::max(1.0F, std::round(effect.values[0])));
+            const auto transition = std::min(requested, std::max<std::size_t>(1, input.t / 2));
+            return {input.t - transition, input.h, input.w, input.c};
+        }
         default:
             return input;
     }
+}
+
+[[nodiscard]] std::array<std::int32_t, 3> normalized_space_time_axes(
+    std::array<std::int32_t, 3> selections) {
+    std::array<bool, 3> used{};
+    for (auto& selection : selections) {
+        selection = std::clamp(selection, 0, 5);
+        auto semantic = static_cast<std::size_t>(selection % 3);
+        if (used[semantic]) {
+            const auto replacement = std::find(used.begin(), used.end(), false);
+            semantic = static_cast<std::size_t>(std::distance(used.begin(), replacement));
+            selection = (selection >= 3 ? 3 : 0) + static_cast<std::int32_t>(semantic);
+        }
+        used[semantic] = true;
+    }
+    return selections;
 }
 
 void transpose(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
@@ -1160,6 +1186,64 @@ void feedback(const MappedTensor& input, MappedTensor& output, const EffectSpec&
     }
 }
 
+void seamless_loop(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
+    require_option(effect.options[0], 2, "seamless loop mode");
+    const auto mode = static_cast<SeamlessLoopMode>(effect.options[0]);
+    const auto& source_shape = input.shape();
+    const auto& result_shape = output.shape();
+    auto* destination = output.mutable_data();
+    if (mode == SeamlessLoopMode::PingPong) {
+        parallel_for(result_shape.t, progress, [&](std::size_t t) {
+            const auto source_t = t < source_shape.t ? t : (2 * source_shape.t - 2 - t);
+            for (std::size_t y = 0; y < source_shape.h; ++y) {
+                for (std::size_t x = 0; x < source_shape.w; ++x) {
+                    for (std::size_t c = 0; c < source_shape.c; ++c) {
+                        destination[linear(t, y, x, c, result_shape)] = read(input, source_t, y, x, c);
+                    }
+                }
+            }
+        });
+        return;
+    }
+    const auto transition = source_shape.t - result_shape.t;
+    const auto softness = std::clamp(effect.values[1], 0.01F, 0.5F);
+    const auto smoothstep = [](float edge0, float edge1, float value) {
+        const auto normalized = std::clamp((value - edge0) / std::max(0.0001F, edge1 - edge0), 0.0F, 1.0F);
+        return normalized * normalized * (3.0F - 2.0F * normalized);
+    };
+    parallel_for(result_shape.t, progress, [&](std::size_t t) {
+        for (std::size_t y = 0; y < source_shape.h; ++y) {
+            for (std::size_t x = 0; x < source_shape.w; ++x) {
+                if (t >= transition) {
+                    for (std::size_t c = 0; c < source_shape.c; ++c) {
+                        destination[linear(t, y, x, c, result_shape)] = read(input, t, y, x, c);
+                    }
+                    continue;
+                }
+                const auto tail_t = t + result_shape.t;
+                const auto fraction = transition <= 1 ? 0.5F : static_cast<float>(t) / static_cast<float>(transition - 1);
+                auto mix = smoothstep(0.0F, 1.0F, fraction);
+                if (mode == SeamlessLoopMode::LumaWeave && transition > 1) {
+                    if (t == 0) {
+                        mix = 0.0F;
+                    } else if (t + 1 == transition) {
+                        mix = 1.0F;
+                    } else {
+                        const auto threshold = std::clamp(
+                            0.5F * (luma(input, t, y, x) + luma(input, tail_t, y, x)), 0.0F, 1.0F);
+                        mix = smoothstep(threshold - softness, threshold + softness, fraction);
+                    }
+                }
+                for (std::size_t c = 0; c < source_shape.c; ++c) {
+                    const auto tail = read(input, tail_t, y, x, c);
+                    destination[linear(t, y, x, c, result_shape)] =
+                        tail + (read(input, t, y, x, c) - tail) * mix;
+                }
+            }
+        }
+    });
+}
+
 void datamosh(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
     require_option(effect.options[0], 2, "freeze axis");
     require_option(effect.options[1], 2, "freeze trigger");
@@ -1249,6 +1333,9 @@ void apply(
         case EffectOperation::StructuralDatamosh:
             datamosh(input, output, effect, progress);
             return;
+        case EffectOperation::SeamlessLoop:
+            seamless_loop(input, output, effect, progress);
+            return;
         case EffectOperation::DimensionalSplicer:
         case EffectOperation::TensorDisplacement:
             throw std::invalid_argument("This effect requires a driver tensor");
@@ -1282,6 +1369,8 @@ void apply(
             return "Time Feedback";
         case EffectOperation::StructuralDatamosh:
             return "Axis Datamosh";
+        case EffectOperation::SeamlessLoop:
+            return "Seamless Loop";
     }
     return "Unknown";
 }
@@ -1375,20 +1464,14 @@ FileRenderResult render_file_cross_tensor_effect(
         require_option(effect.options[1], 5, "output Y axis source");
         require_option(effect.options[2], 5, "output Time axis source");
         require_option(effect.options[3], 2, "splicer interpolation");
-        const std::array<std::int32_t, 3> selections{effect.options[0], effect.options[1], effect.options[2]};
-        std::array<bool, 3> used{};
-        for (const auto selection : selections) {
-            const auto semantic = static_cast<std::size_t>(selection % 3);
-            if (used[semantic]) throw std::invalid_argument("Space-Time Map must use X, Y and Time exactly once");
-            used[semantic] = true;
-        }
+        const auto selections = normalized_space_time_axes({effect.options[0], effect.options[1], effect.options[2]});
         const auto extent = [&](std::int32_t selection) {
             const auto& shape = selection < 3 ? source_shape : driver_shape;
             if (selection % 3 == 0) return shape.w;
             if (selection % 3 == 1) return shape.h;
             return shape.t;
         };
-        result_shape = {extent(effect.options[2]), extent(effect.options[1]), extent(effect.options[0]), source_shape.c};
+        result_shape = {extent(selections[2]), extent(selections[1]), extent(selections[0]), source_shape.c};
     } else if (effect.kind == EffectOperation::TensorDisplacement) {
         require_option(effect.options[0], 4, "displacement source");
         require_option(effect.options[1], 2, "tensor broadcast");
@@ -1410,7 +1493,7 @@ FileRenderResult render_file_cross_tensor_effect(
     auto* destination = output.mutable_data();
 
     if (effect.kind == EffectOperation::DimensionalSplicer) {
-        const std::array<std::int32_t, 3> selections{effect.options[0], effect.options[1], effect.options[2]};
+        const auto selections = normalized_space_time_axes({effect.options[0], effect.options[1], effect.options[2]});
         const auto scale = [](std::size_t coordinate, std::size_t output_extent, std::size_t input_extent) {
             return output_extent <= 1 || input_extent <= 1
                        ? 0.0F
@@ -1488,9 +1571,10 @@ FileRenderResult render_file_cross_tensor_effect(
     }
     output.sync();
     report(progress, 1.0, stage_name(effect.kind));
-    const auto result_metadata = effect.kind == EffectOperation::DimensionalSplicer && effect.options[2] == 5
-                                     ? driver_metadata
-                                     : metadata;
+    const auto normalized_time = effect.kind == EffectOperation::DimensionalSplicer
+                                     ? normalized_space_time_axes({effect.options[0], effect.options[1], effect.options[2]})[2]
+                                     : -1;
+    const auto result_metadata = normalized_time == 5 ? driver_metadata : metadata;
     return {result_shape, result_metadata};
 }
 

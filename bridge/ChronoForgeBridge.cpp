@@ -50,7 +50,7 @@ void enforce_budget(const VideoTensor& tensor, uint64_t budget) {
 }
 
 VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptor& descriptor, uint64_t budget) {
-    const auto kind = checked_enum<CFEffectKind>(descriptor.kind, CF_EFFECT_STRUCTURAL_DATAMOSH, "effect kind");
+    const auto kind = checked_enum<CFEffectKind>(descriptor.kind, CF_EFFECT_SEAMLESS_LOOP, "effect kind");
     switch (kind) {
         case CF_EFFECT_SPACE_TIME_TRANSPOSE:
             return chronoforge::space_time_transpose(
@@ -138,6 +138,14 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptor& des
                     static_cast<std::size_t>(std::max(0.0F, std::round(descriptor.values[1]))),
                     descriptor.values[2],
                 });
+        case CF_EFFECT_SEAMLESS_LOOP:
+            return chronoforge::seamless_loop(
+                input,
+                {
+                    static_cast<std::size_t>(std::max(1.0F, std::round(descriptor.values[0]))),
+                    descriptor.values[1],
+                    checked_enum<chronoforge::SeamlessLoopMode>(descriptor.options[0], 2, "seamless loop mode"),
+                });
         case CF_EFFECT_DIMENSIONAL_SPLICER:
         case CF_EFFECT_TENSOR_DISPLACEMENT:
             throw std::invalid_argument("This effect requires a driver video");
@@ -149,7 +157,7 @@ VideoTensor apply_cross_effect(
     const VideoTensor& source,
     const VideoTensor& driver,
     const CFEffectDescriptor& descriptor) {
-    const auto kind = checked_enum<CFEffectKind>(descriptor.kind, CF_EFFECT_STRUCTURAL_DATAMOSH, "effect kind");
+    const auto kind = checked_enum<CFEffectKind>(descriptor.kind, CF_EFFECT_SEAMLESS_LOOP, "effect kind");
     switch (kind) {
         case CF_EFFECT_DIMENSIONAL_SPLICER:
             return chronoforge::dimensional_splicer(
@@ -193,7 +201,7 @@ CFEffectDescriptor cf_effect_descriptor_make(
     return {kind, {value0, value1, value2, value3}, {option0, option1, option2, option3}};
 }
 
-const char* cf_core_version(void) { return "0.8.0"; }
+const char* cf_core_version(void) { return "0.9.0"; }
 
 int32_t cf_render_effect_chain(
     const float* input,
@@ -350,7 +358,7 @@ int32_t cf_render_file_effect_chain(
         specifications.reserve(static_cast<std::size_t>(effect_count));
         for (uint64_t index = 0; index < effect_count; ++index) {
             const auto kind = checked_enum<chronoforge::EffectOperation>(
-                effects[index].kind, static_cast<int32_t>(chronoforge::EffectOperation::StructuralDatamosh), "effect kind");
+                effects[index].kind, static_cast<int32_t>(chronoforge::EffectOperation::SeamlessLoop), "effect kind");
             specifications.push_back({
                 kind,
                 {effects[index].values[0], effects[index].values[1], effects[index].values[2], effects[index].values[3]},
@@ -424,7 +432,7 @@ int32_t cf_render_file_cross_tensor_effect(
             static_cast<std::size_t>(driver_info.width), static_cast<std::size_t>(driver_info.channels),
         };
         const auto kind = checked_enum<chronoforge::EffectOperation>(
-            effect.kind, static_cast<int32_t>(chronoforge::EffectOperation::StructuralDatamosh), "effect kind");
+            effect.kind, static_cast<int32_t>(chronoforge::EffectOperation::SeamlessLoop), "effect kind");
         const chronoforge::EffectSpec specification{
             kind,
             {effect.values[0], effect.values[1], effect.values[2], effect.values[3]},

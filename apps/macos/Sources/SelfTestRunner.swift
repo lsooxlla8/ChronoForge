@@ -71,10 +71,10 @@ enum SelfTestRunner {
         }
         try await MainActor.run {
             let store = ProjectStore()
-            guard EffectKind.addableKinds.count == 10,
+            guard EffectKind.addableKinds.count == 11,
                   EffectKind.spaceTimeTranspose.title == EffectKind.tensor3DRotation.title,
                   EffectKind.spaceTimeTranspose.title == "Space-Time Transform",
-                  EffectKind.singleInputKinds.count == 8,
+                  EffectKind.singleInputKinds.count == 9,
                   EffectKind.twoInputKinds.count == 2,
                   EffectKind.opticalFlowTimeWarp.symbol == "wind" else {
                 throw IntegrationSelfTestError.message("Effect families were not exposed as a homogeneous effect stack")
@@ -83,7 +83,8 @@ enum SelfTestRunner {
             store.addEffect(.tensor3DRotation)
             guard EffectNode.make(.spaceTimeTranspose).options[1] == 1,
                   EffectNode.make(.tensor3DRotation).options[0] == 3,
-                  EffectNode.make(.spectralFFTSwap).options[2] == 1 else {
+                  EffectNode.make(.spectralFFTSwap).options[2] == 1,
+                  EffectNode.make(.seamlessLoop).values[0] == 15 else {
                 throw IntegrationSelfTestError.message("Size-changing effects did not default to Fit Source Size")
             }
             let duplicatedID = store.selectedNodeID!
@@ -122,6 +123,14 @@ enum SelfTestRunner {
               crossProxy.width == proxy.tensor.width,
               crossProxy.height == proxy.tensor.height else {
             throw IntegrationSelfTestError.message("Cross-tensor proxy path returned invalid dimensions")
+        }
+        var loop = EffectNode.make(.seamlessLoop)
+        loop.values[0] = 2
+        let loopProxy = try await CoreRenderer.render(input: proxy.tensor, effects: [loop])
+        guard loopProxy.frames == proxy.tensor.frames - 2,
+              loopProxy.width == proxy.tensor.width,
+              loopProxy.height == proxy.tensor.height else {
+            throw IntegrationSelfTestError.message("Seamless Loop proxy path returned invalid dimensions")
         }
         let proxyFFT = try await CoreRenderer.render(input: proxy.tensor, effects: [EffectNode.make(.spectralFFTSwap)])
         guard proxyFFT.frames == proxy.tensor.frames, proxyFFT.width == proxy.tensor.width, proxyFFT.height == proxy.tensor.height else {

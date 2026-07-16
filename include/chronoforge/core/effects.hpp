@@ -21,6 +21,7 @@ enum class TensorBroadcast { Clamp, Stretch, Crop };
 enum class FeedbackBlendMode { Add, Screen, Multiply, Lighten, Difference, Displace };
 enum class FreezeAxis { Time, Horizontal, Vertical };
 enum class FreezeTrigger { Edge, Luma, Random };
+enum class SeamlessLoopMode { Crossfade, LumaWeave, PingPong };
 
 struct LumaTimeShiftParams {
     float shift_multiplier{};
@@ -103,6 +104,12 @@ struct StructuralDatamoshParams {
     float probability{0.05F};
 };
 
+struct SeamlessLoopParams {
+    std::size_t transition_frames{15};
+    float weave_softness{0.12F};
+    SeamlessLoopMode mode{SeamlessLoopMode::Crossfade};
+};
+
 VideoTensor space_time_transpose(const VideoTensor& input, SpatialAxis axis);
 VideoTensor space_time_transpose(const VideoTensor& input, const SpaceTimeTransposeParams& params);
 VideoTensor luma_time_shift(const VideoTensor& input, const LumaTimeShiftParams& params);
@@ -121,5 +128,6 @@ VideoTensor tensor_displacement(
 VideoTensor optical_flow_time_warp(const VideoTensor& input, const OpticalFlowTimeWarpParams& params);
 VideoTensor chrono_feedback(const VideoTensor& input, const ChronoFeedbackParams& params);
 VideoTensor structural_datamosh(const VideoTensor& input, const StructuralDatamoshParams& params);
+VideoTensor seamless_loop(const VideoTensor& input, const SeamlessLoopParams& params);
 
 }  // namespace chronoforge
