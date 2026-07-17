@@ -505,7 +505,7 @@ enum SelfTestRunner {
         store.startFreshSession()
     }
 
-    private static func makeMovie(at url: URL) async throws {
+    static func makeMovie(at url: URL, phase: Int = 0) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264,
@@ -528,7 +528,7 @@ enum SelfTestRunner {
             var optional: CVPixelBuffer?
             guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &optional) == kCVReturnSuccess,
                   let buffer = optional else { throw IntegrationSelfTestError.message("Cannot create source frame") }
-            fill(buffer, frame: frame)
+            fill(buffer, frame: frame + phase)
             guard adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 8)) else {
                 throw writer.error ?? IntegrationSelfTestError.message("Cannot append source frame")
             }

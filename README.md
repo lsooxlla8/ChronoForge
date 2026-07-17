@@ -89,6 +89,15 @@ ctest --test-dir build --output-on-failure
 swift run ChronoForgeMac
 ```
 
+For a reproducible UI acceptance pass without opening system file pickers, launch the
+packaged debug app with `--ui-acceptance`. ChronoForge creates two small procedural
+movies, loads them as A/B, and disables recovery reads, writes and cleanup for that run:
+
+```bash
+./scripts/package_macos.sh debug
+open -na dist/ChronoForge.app --args --ui-acceptance
+```
+
 Create the app and DMG:
 
 ```bash

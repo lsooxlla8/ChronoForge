@@ -25,7 +25,7 @@ final class SessionStore: ObservableObject {
     @Published var errorMessage: String?
     @Published var statusMessage = "Choose media to begin"
     @Published var renderProgress: Double?
-    @Published var hasInterruptedSession = SessionRecoveryStore.exists
+    @Published var hasInterruptedSession: Bool
     @Published var cacheSizeDescription = "Calculating cache…"
     @Published var showsClearCacheConfirmation = false
     @Published var showsClearEffectsConfirmation = false
@@ -50,8 +50,12 @@ final class SessionStore: ObservableObject {
     private var previewGeneration = UUID()
     private let sessionUndoManager = UndoManager()
     private var coalescedEditStart: CreativeSessionState?
+    private let isUIAcceptanceMode: Bool
+    private var didLoadUIAcceptanceFixture = false
 
     init() {
+        isUIAcceptanceMode = CommandLine.arguments.contains("--ui-acceptance")
+        hasInterruptedSession = isUIAcceptanceMode ? false : SessionRecoveryStore.exists
         autoUpdate = UserDefaults.standard.object(forKey: Self.autoUpdatePreferenceKey) as? Bool ?? true
         sessionUndoManager.levelsOfUndo = 100
         sessionUndoManager.groupsByEvent = false
@@ -59,6 +63,36 @@ final class SessionStore: ObservableObject {
             _ = try? await CacheManager.shared.trim()
             await refreshCacheSize()
         }
+    }
+
+    func loadUIAcceptanceFixtureIfNeeded() async {
+        guard isUIAcceptanceMode, !didLoadUIAcceptanceFixture else { return }
+        didLoadUIAcceptanceFixture = true
+        isImporting = true
+        errorMessage = nil
+        statusMessage = "Preparing UI acceptance fixture…"
+        do {
+            let fixtureDirectory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("ChronoForge-UI-Acceptance", isDirectory: true)
+            try FileManager.default.createDirectory(at: fixtureDirectory, withIntermediateDirectories: true)
+            let primaryURL = fixtureDirectory.appendingPathComponent("Acceptance-A.mov")
+            let driverURL = fixtureDirectory.appendingPathComponent("Acceptance-B.mov")
+            try? FileManager.default.removeItem(at: primaryURL)
+            try? FileManager.default.removeItem(at: driverURL)
+            try await SelfTestRunner.makeMovie(at: primaryURL, phase: 0)
+            try await SelfTestRunner.makeMovie(at: driverURL, phase: 5)
+            let primary = try await VideoDecoder.decodeProxy(from: primaryURL, quality: .standard)
+            let driver = try await VideoDecoder.decodeProxy(from: driverURL, quality: .standard)
+            mediaPool = [primary, driver]
+            source = primary
+            output = primary.tensor
+            currentFrame = 0
+            statusMessage = "UI acceptance fixture ready · A/B loaded"
+        } catch {
+            errorMessage = "UI acceptance fixture failed: \(error.localizedDescription)"
+            statusMessage = "UI acceptance fixture failed"
+        }
+        isImporting = false
     }
 
     var displayedTensor: VideoTensorData? { output ?? source?.tensor }
@@ -621,6 +655,7 @@ final class SessionStore: ObservableObject {
 
     private func scheduleRecoverySave() {
         recoveryTask?.cancel()
+        guard !isUIAcceptanceMode else { return }
         guard let source else { return }
         let saved = SessionRecoverySnapshot(
             source: source, mediaPool: mediaPool, effects: effects, outputNodeID: outputNodeID,

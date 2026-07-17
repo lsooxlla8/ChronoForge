@@ -104,6 +104,13 @@ The test build also provides `chronoforge-visual-regression`. It creates a copyr
 
 `chronoforge-performance-smoke` profiles all Wave A effects on the specified 10-second Standard proxy (320 × 180 at 10 fps). It applies the 1-second local/channel and 4-second temporal/memory budgets from the phase specification and exits nonzero when a target is exceeded; it is intentionally run on release hardware rather than as a machine-independent CTest.
 
+The macOS executable also has an internal `--ui-acceptance` launch mode. It generates
+two copyright-free procedural movies in the temporary directory and loads them as A/B,
+so the real SwiftUI menus, two-source inspectors, preview rendering, compare, Random
+Stack and Undo can be exercised deterministically without an `NSOpenPanel`. Recovery
+discovery, autosave and termination cleanup are disabled for this run, keeping manual
+acceptance isolated from the user's interrupted-session snapshot.
+
 ## macOS-specific plan
 
 | Phase | Deliverable |

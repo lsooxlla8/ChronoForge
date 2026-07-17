@@ -4,7 +4,9 @@ import UniformTypeIdentifiers
 
 private final class ChronoForgeAppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
-        SessionRecoveryStore.remove()
+        if !CommandLine.arguments.contains("--ui-acceptance") {
+            SessionRecoveryStore.remove()
+        }
     }
 }
 
@@ -204,6 +206,9 @@ private struct WorkspaceView: View {
         }
         .onOpenURL { url in
             project.importVideo(from: url)
+        }
+        .task {
+            await project.loadUIAcceptanceFixtureIfNeeded()
         }
     }
 
