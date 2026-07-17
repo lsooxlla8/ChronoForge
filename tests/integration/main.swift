@@ -193,6 +193,18 @@ struct ChronoForgeIntegration {
             throw IntegrationFailure.message("Signal Weave bridge path did not combine A/B deterministically")
         }
 
+        let graftValues: [Float] = [16, 1, 3, 0]
+        let graftOptions: [Int32] = [0, 0]
+        let graft = graftValues.withUnsafeBufferPointer { values in
+            graftOptions.withUnsafeBufferPointer { options in
+                cf_effect_descriptor_v2_make(20, 1, 88, values.baseAddress, 4, options.baseAddress, 2)
+            }
+        }
+        let graftOutput = try renderCross(graft)
+        guard graftOutput != tensor.values, graftOutput == (try renderCross(graft)) else {
+            throw IntegrationFailure.message("Block Graft bridge path did not graft deterministic B blocks")
+        }
+
         var outdated = effect
         outdated.descriptor_version = 1
         do {

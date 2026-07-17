@@ -681,7 +681,8 @@ private struct EffectInspector: View {
         if node.kind.definition.usesRandomSeed {
             Button("Reseed", systemImage: "arrow.triangle.2.circlepath", action: onReseed)
                 .disabled((node.kind == .horizontalSyncLoss && node.options[0] != 0) ||
-                          (node.kind == .bitplaneForge && node.options[0] != 0 && node.options[0] != 3))
+                          (node.kind == .bitplaneForge && node.options[0] != 0 && node.options[0] != 3) ||
+                          (node.kind == .blockGraft && node.options[0] != 0))
                 .help("Generate a new deterministic pattern for this effect.")
         }
         Text(node.kind.title).font(.title3.weight(.semibold))
@@ -868,6 +869,17 @@ private struct EffectInspector: View {
             valueSlider("B Time Offset", index: 3, range: -240...240, format: "%.0f frames")
             optionPicker("Size Matching", value: option(1), options: ["Clamp", "Stretch", "Crop"])
             Text("Alternating rows, fields, bands or checker cells come from A and B. Irregularity relaxes the regular weave with a seed-stable pattern.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .blockGraft:
+            driverPicker()
+            valueSlider("Block Size", index: 0, range: 2...256, format: "%.0f px")
+            valueSlider(node.options[0] == 0 ? "Density" : "Threshold", index: 1, range: 0...1, format: "%.4f")
+            valueSlider("Hold", index: 2, range: 1...240, format: "%.0f frames")
+            valueSlider("B Time Offset", index: 3, range: -240...240, format: "%.0f frames")
+            optionPicker("Trigger", value: option(0), options: ["Random", "A Luma", "B Luma", "Difference", "A Edges"])
+            optionPicker("Size Matching", value: option(1), options: ["Clamp", "Stretch", "Crop"])
+            Text("Selected blocks from B replace A as complete colour samples. Hold freezes each block decision for several frames.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

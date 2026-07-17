@@ -1145,6 +1145,82 @@ VideoTensor signal_weave(
     return output;
 }
 
+VideoTensor block_graft(
+    const VideoTensor& source,
+    const VideoTensor& driver,
+    const BlockGraftParams& params) {
+    auto output_shape = source.shape();
+    if (params.size_matching == TensorBroadcast::Crop) {
+        output_shape.t = std::min(source.shape().t, driver.shape().t);
+        output_shape.h = std::min(source.shape().h, driver.shape().h);
+        output_shape.w = std::min(source.shape().w, driver.shape().w);
+    }
+    VideoTensor output(output_shape, 0.0F, source.metadata());
+    const auto block_size = std::max<std::size_t>(2, params.block_size);
+    const auto hold = std::max<std::size_t>(1, params.hold);
+    const auto threshold = std::clamp(params.density_or_threshold, 0.0F, 1.0F);
+    const auto mix = [](std::uint64_t value) {
+        value ^= value >> 30U; value *= 0xBF58476D1CE4E5B9ULL;
+        value ^= value >> 27U; value *= 0x94D049BB133111EBULL;
+        return value ^ (value >> 31U);
+    };
+    const auto driver_coordinate = [&](std::size_t coordinate, std::size_t output_extent, std::size_t driver_extent) {
+        if (params.size_matching == TensorBroadcast::Stretch) {
+            return output_extent <= 1 || driver_extent <= 1 ? std::size_t{0} : static_cast<std::size_t>(std::round(
+                static_cast<double>(coordinate) * static_cast<double>(driver_extent - 1) /
+                static_cast<double>(output_extent - 1)));
+        }
+        return std::min(coordinate, driver_extent - 1);
+    };
+    parallel_for(output_shape.t, [&](std::size_t t) {
+        const auto epoch = t / hold;
+        const auto anchor_t = std::min(epoch * hold, output_shape.t - 1);
+        const auto current_driver_t = resolve_time(
+            static_cast<std::ptrdiff_t>(driver_coordinate(t, output_shape.t, driver.shape().t)) + params.b_time_offset,
+            driver.shape().t, EdgeBehavior::Clamp);
+        const auto anchor_driver_t = resolve_time(
+            static_cast<std::ptrdiff_t>(driver_coordinate(anchor_t, output_shape.t, driver.shape().t)) + params.b_time_offset,
+            driver.shape().t, EdgeBehavior::Clamp);
+        for (std::size_t y = 0; y < output_shape.h; ++y) {
+            const auto driver_y = driver_coordinate(y, output_shape.h, driver.shape().h);
+            for (std::size_t x = 0; x < output_shape.w; ++x) {
+                const auto driver_x = driver_coordinate(x, output_shape.w, driver.shape().w);
+                const auto block_x = (x / block_size) * block_size;
+                const auto block_y = (y / block_size) * block_size;
+                const auto driver_block_x = driver_coordinate(block_x, output_shape.w, driver.shape().w);
+                const auto driver_block_y = driver_coordinate(block_y, output_shape.h, driver.shape().h);
+                bool graft{};
+                if (params.trigger == BlockGraftTrigger::Random) {
+                    auto hash = params.random_seed ^ ((epoch + 1) * 0xD6E8FEB86659FD93ULL);
+                    hash ^= (block_y / block_size + 1) * 0xA24BAED4963EE407ULL;
+                    hash ^= (block_x / block_size + 1) * 0x9FB21C651E98DF25ULL;
+                    graft = static_cast<float>(mix(hash) & 0xFFFFFFU) / static_cast<float>(0x1000000U) < threshold;
+                } else {
+                    const auto a_luma = luma(source, anchor_t, block_y, block_x);
+                    const auto b_luma = luma(driver, anchor_driver_t, driver_block_y, driver_block_x);
+                    if (params.trigger == BlockGraftTrigger::ALuma) graft = a_luma >= threshold;
+                    else if (params.trigger == BlockGraftTrigger::BLuma) graft = b_luma >= threshold;
+                    else if (params.trigger == BlockGraftTrigger::Difference) graft = std::abs(a_luma - b_luma) >= threshold;
+                    else {
+                        const auto right = std::min(block_x + 1, source.shape().w - 1);
+                        const auto down = std::min(block_y + 1, source.shape().h - 1);
+                        const auto edge = std::max(
+                            std::abs(a_luma - luma(source, anchor_t, block_y, right)),
+                            std::abs(a_luma - luma(source, anchor_t, down, block_x)));
+                        graft = edge >= threshold;
+                    }
+                }
+                for (std::size_t c = 0; c < output_shape.c; ++c) {
+                    output.at(t, y, x, c) = graft
+                        ? driver.at(current_driver_t, driver_y, driver_x, std::min(c, driver.shape().c - 1))
+                        : source.at(t, y, x, c);
+                }
+            }
+        }
+    });
+    return output;
+}
+
 VideoTensor optical_flow_time_warp(const VideoTensor& input, const OpticalFlowTimeWarpParams& params) {
     const auto& shape = input.shape();
     VideoTensor output(shape, 0.0F, input.metadata());

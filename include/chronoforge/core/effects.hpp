@@ -32,6 +32,7 @@ enum class BlockCorruptionMapping { Swap, Repeat, Offset, Cascade };
 enum class BitplaneOperation { Shuffle, Rotate, Invert, Xor };
 enum class BitplaneChannel { Luma, RgbTogether, Red, Green, Blue, Alpha };
 enum class SignalWeavePattern { Lines, InterlacedFields, Bands, Checker };
+enum class BlockGraftTrigger { Random, ALuma, BLuma, Difference, AEdges };
 
 struct LumaTimeShiftParams {
     float shift_multiplier{};
@@ -186,6 +187,16 @@ struct SignalWeaveParams {
     std::uint64_t random_seed{};
 };
 
+struct BlockGraftParams {
+    std::size_t block_size{16};
+    float density_or_threshold{0.35F};
+    std::size_t hold{1};
+    int b_time_offset{};
+    BlockGraftTrigger trigger{BlockGraftTrigger::Random};
+    TensorBroadcast size_matching{TensorBroadcast::Clamp};
+    std::uint64_t random_seed{};
+};
+
 VideoTensor space_time_transpose(const VideoTensor& input, SpatialAxis axis);
 VideoTensor space_time_transpose(const VideoTensor& input, const SpaceTimeTransposeParams& params);
 VideoTensor luma_time_shift(const VideoTensor& input, const LumaTimeShiftParams& params);
@@ -212,5 +223,6 @@ VideoTensor stride_error(const VideoTensor& input, const StrideErrorParams& para
 VideoTensor block_address_corruption(const VideoTensor& input, const BlockAddressCorruptionParams& params);
 VideoTensor bitplane_forge(const VideoTensor& input, const BitplaneForgeParams& params);
 VideoTensor signal_weave(const VideoTensor& source, const VideoTensor& driver, const SignalWeaveParams& params);
+VideoTensor block_graft(const VideoTensor& source, const VideoTensor& driver, const BlockGraftParams& params);
 
 }  // namespace chronoforge

@@ -60,6 +60,7 @@ enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
     case blockAddressCorruption = 17
     case bitplaneForge = 18
     case signalWeave = 19
+    case blockGraft = 20
 
     var id: Int32 { rawValue }
 
@@ -167,6 +168,7 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
         case .blockAddressCorruption: ["Swap", "Repeat", "Offset", "Cascade"][min(max(Int(options[0]), 0), 3)]
         case .bitplaneForge: ["Shuffle", "Rotate", "Invert", "XOR"][min(max(Int(options[0]), 0), 3)]
         case .signalWeave: ["Lines", "Interlaced Fields", "Bands", "Checker"][min(max(Int(options[0]), 0), 3)]
+        case .blockGraft: ["Random", "A Luma", "B Luma", "Difference", "A Edges"][min(max(Int(options[0]), 0), 4)]
         }
     }
 }

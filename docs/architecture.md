@@ -95,6 +95,7 @@ The supplied `TilePlanner` implements the per-pixel-temporal class. It will be g
 16. **Block Address Corruption** hashes the seed, hold epoch and destination block into a stable mapping and optional time displacement. Partial edge blocks and temporal addresses always resolve through Clamp, Wrap or Mirror, and complete colour vectors move together to preserve premultiplied alpha.
 17. **Bitplane Forge** quantizes selected straight colour, luma or alpha to 2–16 working bits, applies a bounded plane mask through Shuffle, Rotate, Invert or seeded per-pixel XOR, then converts back to float. Colour is re-premultiplied against the current or forged alpha before leaving either render path.
 18. **Signal Weave** alternates complete samples from A and B using moving line, field, band or checker patterns. Seeded irregularity probabilistically relaxes the regular weave; Clamp and Stretch keep A's shape while Crop uses the shared A/B extent in RAM and mapped execution.
+19. **Block Graft** evaluates one trigger per spatial block and hold epoch, then replaces the selected complete A samples with time-offset B samples. Random, source/driver luma, difference and source-edge triggers share identical Clamp/Stretch/Crop coordinate rules in both render paths.
 
 Spatial and Temporal Prefilter are project-level output settings rather than editable nodes. The renderer injects one deterministic hidden low-pass stage after the visible stack, so preview, direct export and queued renders share the same cache signature and result.
 

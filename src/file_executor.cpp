@@ -1746,6 +1746,7 @@ void apply(
         case EffectOperation::DimensionalSplicer:
         case EffectOperation::TensorDisplacement:
         case EffectOperation::SignalWeave:
+        case EffectOperation::BlockGraft:
             throw std::invalid_argument("This effect requires a driver tensor");
     }
     throw std::invalid_argument("Invalid effect operation");
@@ -1793,6 +1794,8 @@ void apply(
             return "Bitplane Forge";
         case EffectOperation::SignalWeave:
             return "Signal Weave";
+        case EffectOperation::BlockGraft:
+            return "Block Graft";
     }
     return "Unknown";
 }
@@ -1923,6 +1926,14 @@ FileRenderResult render_file_cross_tensor_effect(
             result_shape.h = std::min(source_shape.h, driver_shape.h);
             result_shape.w = std::min(source_shape.w, driver_shape.w);
         }
+    } else if (effect.kind == EffectOperation::BlockGraft) {
+        require_option(effect.options[0], 4, "block graft trigger");
+        require_option(effect.options[1], 2, "block graft size matching");
+        if (effect.options[1] == static_cast<std::int32_t>(TensorBroadcast::Crop)) {
+            result_shape.t = std::min(source_shape.t, driver_shape.t);
+            result_shape.h = std::min(source_shape.h, driver_shape.h);
+            result_shape.w = std::min(source_shape.w, driver_shape.w);
+        }
     } else {
         throw std::invalid_argument("The selected effect does not accept a driver tensor");
     }
@@ -2020,7 +2031,7 @@ FileRenderResult render_file_cross_tensor_effect(
                 }
             }
         });
-    } else {
+    } else if (effect.kind == EffectOperation::SignalWeave) {
         const auto pattern = static_cast<SignalWeavePattern>(effect.options[0]);
         const auto size_matching = static_cast<TensorBroadcast>(effect.options[1]);
         const auto band_size = static_cast<std::size_t>(std::max(1.0F, std::round(effect.values[0])));
@@ -2062,6 +2073,72 @@ FileRenderResult render_file_cross_tensor_effect(
                     for (std::size_t c = 0; c < result_shape.c; ++c) {
                         destination[linear(t, y, x, c, result_shape)] = use_driver
                             ? read(driver, driver_t, driver_y, driver_x, std::min(c, driver_shape.c - 1))
+                            : read(source, t, y, x, c);
+                    }
+                }
+            }
+        });
+    } else {
+        const auto trigger = static_cast<BlockGraftTrigger>(effect.options[0]);
+        const auto size_matching = static_cast<TensorBroadcast>(effect.options[1]);
+        const auto block_size = static_cast<std::size_t>(std::max(2.0F, std::round(effect.values[0])));
+        const auto threshold = std::clamp(effect.values[1], 0.0F, 1.0F);
+        const auto hold = static_cast<std::size_t>(std::max(1.0F, std::round(effect.values[2])));
+        const auto time_offset = static_cast<int>(std::clamp(std::round(effect.values[3]), -240.0F, 240.0F));
+        const auto mix = [](std::uint64_t value) {
+            value ^= value >> 30U; value *= 0xBF58476D1CE4E5B9ULL;
+            value ^= value >> 27U; value *= 0x94D049BB133111EBULL;
+            return value ^ (value >> 31U);
+        };
+        const auto driver_coordinate = [&](std::size_t coordinate, std::size_t output_extent, std::size_t driver_extent) {
+            if (size_matching == TensorBroadcast::Stretch) {
+                return output_extent <= 1 || driver_extent <= 1 ? std::size_t{0} : static_cast<std::size_t>(std::round(
+                    static_cast<double>(coordinate) * static_cast<double>(driver_extent - 1) /
+                    static_cast<double>(output_extent - 1)));
+            }
+            return std::min(coordinate, driver_extent - 1);
+        };
+        parallel_for(result_shape.t, [&](double fraction) { report(progress, fraction, "Block Graft"); }, [&](std::size_t t) {
+            const auto epoch = t / hold;
+            const auto anchor_t = std::min(epoch * hold, result_shape.t - 1);
+            const auto current_driver_t = resolve_time(
+                static_cast<std::ptrdiff_t>(driver_coordinate(t, result_shape.t, driver_shape.t)) + time_offset,
+                driver_shape.t, EdgeBehavior::Clamp);
+            const auto anchor_driver_t = resolve_time(
+                static_cast<std::ptrdiff_t>(driver_coordinate(anchor_t, result_shape.t, driver_shape.t)) + time_offset,
+                driver_shape.t, EdgeBehavior::Clamp);
+            for (std::size_t y = 0; y < result_shape.h; ++y) {
+                const auto driver_y = driver_coordinate(y, result_shape.h, driver_shape.h);
+                for (std::size_t x = 0; x < result_shape.w; ++x) {
+                    const auto driver_x = driver_coordinate(x, result_shape.w, driver_shape.w);
+                    const auto block_x = (x / block_size) * block_size;
+                    const auto block_y = (y / block_size) * block_size;
+                    const auto driver_block_x = driver_coordinate(block_x, result_shape.w, driver_shape.w);
+                    const auto driver_block_y = driver_coordinate(block_y, result_shape.h, driver_shape.h);
+                    bool graft{};
+                    if (trigger == BlockGraftTrigger::Random) {
+                        auto hash = effect.random_seed ^ ((epoch + 1) * 0xD6E8FEB86659FD93ULL);
+                        hash ^= (block_y / block_size + 1) * 0xA24BAED4963EE407ULL;
+                        hash ^= (block_x / block_size + 1) * 0x9FB21C651E98DF25ULL;
+                        graft = static_cast<float>(mix(hash) & 0xFFFFFFU) / static_cast<float>(0x1000000U) < threshold;
+                    } else {
+                        const auto a_luma = luma(source, anchor_t, block_y, block_x);
+                        const auto b_luma = luma(driver, anchor_driver_t, driver_block_y, driver_block_x);
+                        if (trigger == BlockGraftTrigger::ALuma) graft = a_luma >= threshold;
+                        else if (trigger == BlockGraftTrigger::BLuma) graft = b_luma >= threshold;
+                        else if (trigger == BlockGraftTrigger::Difference) graft = std::abs(a_luma - b_luma) >= threshold;
+                        else {
+                            const auto right = std::min(block_x + 1, source_shape.w - 1);
+                            const auto down = std::min(block_y + 1, source_shape.h - 1);
+                            const auto edge_value = std::max(
+                                std::abs(a_luma - luma(source, anchor_t, block_y, right)),
+                                std::abs(a_luma - luma(source, anchor_t, down, block_x)));
+                            graft = edge_value >= threshold;
+                        }
+                    }
+                    for (std::size_t c = 0; c < result_shape.c; ++c) {
+                        destination[linear(t, y, x, c, result_shape)] = graft
+                            ? read(driver, current_driver_t, driver_y, driver_x, std::min(c, driver_shape.c - 1))
                             : read(source, t, y, x, c);
                     }
                 }

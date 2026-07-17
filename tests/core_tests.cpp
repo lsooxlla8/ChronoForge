@@ -336,6 +336,11 @@ void test_cross_tensor_and_flow_effects() {
         {chronoforge::SignalWeavePattern::Checker, 1, 0, 1, 0,
          chronoforge::TensorBroadcast::Clamp, 11});
     require(irregular_a.values() != irregular_b.values(), "Signal Weave irregularity responds to Reseed");
+    const auto grafted = chronoforge::block_graft(
+        weave_a, weave_b,
+        {2, 0.5F, 2, 0, chronoforge::BlockGraftTrigger::Difference,
+         chronoforge::TensorBroadcast::Clamp, 0});
+    require(grafted.values() == weave_b.values(), "Block Graft replaces complete B blocks when Difference crosses threshold");
 
     chronoforge::VideoTensor still({3, 3, 3, 1}, 0.4F);
     const auto flow = chronoforge::optical_flow_time_warp(still, {});
@@ -429,6 +434,20 @@ void test_file_backed_cross_tensor() {
     const auto weave_output = chronoforge::MappedTensor::open(weave_path, weave_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
     for (std::size_t index = 0; index < weave_expected.values().size(); ++index) {
         require_near(weave_output.data()[index], weave_expected.values()[index], "Out-of-core Signal Weave matches RAM reference");
+    }
+    const auto graft_path = root / "graft.raw";
+    const chronoforge::EffectSpec graft_effect{
+        chronoforge::EffectOperation::BlockGraft, {2, 0.4F, 2, -1}, {3, 1}, 1.0F, 71};
+    const auto graft_result = chronoforge::render_file_cross_tensor_effect(
+        source_path, driver_path, graft_path, source.shape(), driver.shape(),
+        source.metadata(), driver.metadata(), graft_effect, {});
+    const auto graft_expected = chronoforge::block_graft(
+        source, driver,
+        {2, 0.4F, 2, -1, chronoforge::BlockGraftTrigger::Difference,
+         chronoforge::TensorBroadcast::Stretch, 71});
+    const auto graft_output = chronoforge::MappedTensor::open(graft_path, graft_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
+    for (std::size_t index = 0; index < graft_expected.values().size(); ++index) {
+        require_near(graft_output.data()[index], graft_expected.values()[index], "Out-of-core Block Graft matches RAM reference");
     }
     std::filesystem::remove_all(root);
 }
