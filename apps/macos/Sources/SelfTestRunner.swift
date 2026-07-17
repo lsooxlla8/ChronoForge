@@ -23,7 +23,7 @@ enum SelfTestRunner {
         guard await cacheManager.size() <= 1024 else {
             throw IntegrationSelfTestError.message("Automatic cache trimming did not enforce its limit")
         }
-        let projectURL = root.appendingPathComponent("test.chronoforge")
+        let snapshotURL = root.appendingPathComponent("recovery.json")
         let projectSource = DecodedProxy(
             tensor: VideoTensorData(values: [0, 0, 0, 1], frames: 1, height: 1, width: 1, channels: 4, framesPerSecond: 8, duration: 0.125),
             displayName: source.lastPathComponent,
@@ -35,42 +35,29 @@ enum SelfTestRunner {
         let firstNode = EffectNode.make(.lumaTimeShift)
         let branchA = EffectNode.make(.radialChronoFunnel, inputNodeID: firstNode.id)
         let branchB = EffectNode.make(.temporalPixelSort, inputNodeID: firstNode.id)
-        let savedProject = SavedChronoForgeProject(
+        let savedSnapshot = SessionRecoverySnapshot(
             source: projectSource,
             effects: [firstNode, branchA, branchB],
             outputNodeID: branchB.id,
-            quality: .full,
             proxyQuality: .high,
             spatialPrefilter: .light,
             temporalPrefilter: .strong,
             audioMode: .preserveOriginal
         )
-        try ProjectPersistence.save(savedProject, to: projectURL)
-        let restoredProject = try ProjectPersistence.load(from: projectURL)
-        guard restoredProject.effects == savedProject.effects,
-              restoredProject.quality == RenderQuality.full.rawValue,
-              restoredProject.proxyQuality == ProxyQuality.high.rawValue,
-              restoredProject.spatialPrefilter == PrefilterStrength.light.rawValue,
-              restoredProject.temporalPrefilter == PrefilterStrength.strong.rawValue,
-              restoredProject.audioMode == AudioMode.preserveOriginal.rawValue,
-              restoredProject.outputNodeID == branchB.id,
-              restoredProject.effects.last?.inputNodeID == firstNode.id,
-              try restoredProject.sourceURL() == source else {
-            throw IntegrationSelfTestError.message("Project persistence round-trip failed")
-        }
-        let legacyURL = root.appendingPathComponent("legacy-v3.chronoforge")
-        var legacyObject = try JSONSerialization.jsonObject(with: Data(contentsOf: projectURL)) as! [String: Any]
-        legacyObject["version"] = 3
-        legacyObject.removeValue(forKey: "media")
-        legacyObject.removeValue(forKey: "primaryMediaID")
-        try JSONSerialization.data(withJSONObject: legacyObject).write(to: legacyURL)
-        let legacyProject = try ProjectPersistence.load(from: legacyURL)
-        guard legacyProject.mediaReferences().count == 1,
-              try legacyProject.mediaReferences()[0].url() == source else {
-            throw IntegrationSelfTestError.message("Version 3 single-media projects did not migrate to the media pool")
+        try SessionRecoveryStore.save(savedSnapshot, to: snapshotURL)
+        let restoredSnapshot = try SessionRecoveryStore.load(from: snapshotURL)
+        guard restoredSnapshot.effects == savedSnapshot.effects,
+              restoredSnapshot.proxyQuality == ProxyQuality.high.rawValue,
+              restoredSnapshot.spatialPrefilter == PrefilterStrength.light.rawValue,
+              restoredSnapshot.temporalPrefilter == PrefilterStrength.strong.rawValue,
+              restoredSnapshot.audioMode == AudioMode.preserveOriginal.rawValue,
+              restoredSnapshot.outputNodeID == branchB.id,
+              restoredSnapshot.effects.last?.inputNodeID == firstNode.id,
+              try restoredSnapshot.sourceURL() == source else {
+            throw IntegrationSelfTestError.message("Session recovery snapshot round-trip failed")
         }
         try await MainActor.run {
-            let store = ProjectStore()
+            let store = SessionStore()
             guard EffectKind.addableKinds.count == 11,
                   EffectKind.spaceTimeTranspose.title == EffectKind.tensor3DRotation.title,
                   EffectKind.spaceTimeTranspose.title == "Space-Time Transform",
@@ -104,6 +91,43 @@ enum SelfTestRunner {
             guard store.effects.isEmpty, store.outputNodeID == nil else {
                 throw IntegrationSelfTestError.message("Clear Effect Stack did not clear graph state")
             }
+            store.undo()
+            guard store.effects.count == 2, store.outputNodeID == store.effects.last?.id else {
+                throw IntegrationSelfTestError.message("Undo did not restore a structural creative-state change")
+            }
+            store.redo()
+            guard store.effects.isEmpty else {
+                throw IntegrationSelfTestError.message("Redo did not reapply a structural creative-state change")
+            }
+            store.addEffect(.lumaTimeShift)
+            let editedID = store.selectedNodeID!
+            store.beginContinuousEffectEdit()
+            var edited = store.effect(withID: editedID)!
+            edited.amount = 0.7
+            store.updateEffect(edited)
+            edited.amount = 0.4
+            store.updateEffect(edited)
+            store.endContinuousEffectEdit()
+            store.undo()
+            guard store.effect(withID: editedID)?.amount == 1 else {
+                throw IntegrationSelfTestError.message("A continuous slider gesture was not grouped into one Undo operation")
+            }
+            store.redo()
+            guard store.effect(withID: editedID)?.amount == 0.4 else {
+                throw IntegrationSelfTestError.message("Redo did not restore the grouped slider result")
+            }
+            store.source = projectSource
+            store.mediaPool = [projectSource]
+            store.output = projectSource.tensor
+            store.removeMedia(projectSource.id)
+            guard store.source == nil, store.mediaPool.isEmpty else {
+                throw IntegrationSelfTestError.message("Media removal did not clear the active source")
+            }
+            store.undo()
+            guard store.source?.id == projectSource.id, store.mediaPool.map(\.id) == [projectSource.id] else {
+                throw IntegrationSelfTestError.message("Undo did not restore a decoded proxy that remained in memory")
+            }
+            store.startFreshSession()
         }
         let proxy = try await VideoDecoder.decodeProxy(from: source)
         guard proxy.tensor.width == 48, proxy.tensor.height == 64, proxy.sourceFrameCount == 8, proxy.sourceFrameCountIsExact,

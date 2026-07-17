@@ -3,7 +3,7 @@ import Foundation
 import SwiftUI
 
 @MainActor
-final class ProjectStore: ObservableObject {
+final class SessionStore: ObservableObject {
     @Published var source: DecodedProxy?
     @Published var mediaPool: [DecodedProxy] = []
     @Published var output: VideoTensorData?
@@ -22,9 +22,7 @@ final class ProjectStore: ObservableObject {
     @Published var errorMessage: String?
     @Published var statusMessage = "Choose a video to begin"
     @Published var renderProgress: Double?
-    @Published var projectURL: URL?
-    @Published var isDirty = false
-    @Published var hasRecovery = RecoveryStore.exists
+    @Published var hasInterruptedSession = SessionRecoveryStore.exists
     @Published var cacheSizeDescription = "Calculating cache…"
     @Published var showsClearCacheConfirmation = false
     @Published var showsClearEffectsConfirmation = false
@@ -32,13 +30,27 @@ final class ProjectStore: ObservableObject {
     @Published var renderQueue: [RenderQueueItem] = []
     @Published var isQueueRunning = false
     @Published var isPreviewStale = false
+    @Published var autoUpdate: Bool {
+        didSet { UserDefaults.standard.set(autoUpdate, forKey: Self.autoUpdatePreferenceKey) }
+    }
+    @Published private(set) var canUndo = false
+    @Published private(set) var canRedo = false
     var mediaReplacementID: UUID?
 
+    private static let autoUpdatePreferenceKey = "ChronoForge.autoUpdatePreview"
     private var task: Task<Void, Never>?
+    private var previewTask: Task<Void, Never>?
+    private var autoPreviewTask: Task<Void, Never>?
     private var playbackTask: Task<Void, Never>?
     private var recoveryTask: Task<Void, Never>?
+    private var previewGeneration = UUID()
+    private let sessionUndoManager = UndoManager()
+    private var coalescedEditStart: CreativeSessionState?
 
     init() {
+        autoUpdate = UserDefaults.standard.object(forKey: Self.autoUpdatePreferenceKey) as? Bool ?? true
+        sessionUndoManager.levelsOfUndo = 100
+        sessionUndoManager.groupsByEvent = false
         Task {
             _ = try? await CacheManager.shared.trim()
             await refreshCacheSize()
@@ -54,17 +66,22 @@ final class ProjectStore: ObservableObject {
 
     func updateEffect(_ node: EffectNode) {
         guard let index = effects.firstIndex(where: { $0.id == node.id }) else { return }
-        effects[index] = node
-        markEdited()
+        if coalescedEditStart != nil {
+            effects[index] = node
+            if source != nil { isPreviewStale = true }
+        } else {
+            performCreativeEdit(named: "Change Effect") { effects[index] = node }
+        }
     }
 
     func toggleEffectEnabled(_ id: UUID) {
         guard let index = effects.firstIndex(where: { $0.id == id }) else { return }
-        effects[index].enabled.toggle()
-        markEdited()
+        performCreativeEdit(named: effects[index].enabled ? "Bypass Effect" : "Enable Effect") {
+            effects[index].enabled.toggle()
+        }
     }
 
-    func importVideo(from url: URL, markDirty: Bool = true) {
+    func importVideo(from url: URL) {
         stopPlayback()
         cancelWork()
         isImporting = true
@@ -101,11 +118,7 @@ final class ProjectStore: ObservableObject {
                 statusMessage = source?.id == decoded.id
                     ? "Proxy ready · \(decoded.tensor.frames) frames"
                     : "Media added · \(decoded.tensor.frames) proxy frames"
-                if markDirty {
-                    markEdited(invalidatePreview: !effects.isEmpty)
-                } else {
-                    isDirty = false
-                }
+                markEdited(invalidatePreview: !effects.isEmpty)
             } catch is CancellationError {
                 statusMessage = "Import cancelled"
             } catch {
@@ -127,10 +140,11 @@ final class ProjectStore: ObservableObject {
 
     func setPrimaryMedia(_ id: UUID) {
         guard let media = mediaPool.first(where: { $0.id == id }), source?.id != id else { return }
-        source = media
-        output = media.tensor
-        currentFrame = 0
-        markEdited()
+        performCreativeEdit(named: "Change Primary Media") {
+            source = media
+            output = media.tensor
+            currentFrame = 0
+        }
     }
 
     func addEffect(_ kind: EffectKind) {
@@ -138,55 +152,64 @@ final class ProjectStore: ObservableObject {
         if kind.requiresDriver {
             node.driverMediaID = mediaPool.first(where: { $0.id != source?.id })?.id ?? source?.id
         }
-        effects.append(node)
-        selectedNodeID = node.id
-        outputNodeID = node.id
-        markEdited()
+        performCreativeEdit(named: "Add Effect") {
+            effects.append(node)
+            selectedNodeID = node.id
+            outputNodeID = node.id
+        }
     }
 
     func duplicateEffect(_ id: UUID) {
         guard let index = effects.firstIndex(where: { $0.id == id }) else { return }
-        var copy = effects[index]
-        copy.id = UUID()
-        effects.insert(copy, at: index + 1)
-        reconnectEffectStack()
-        selectedNodeID = copy.id
-        markEdited()
+        performCreativeEdit(named: "Duplicate Effect") {
+            var copy = effects[index]
+            copy.id = UUID()
+            effects.insert(copy, at: index + 1)
+            reconnectEffectStack()
+            selectedNodeID = copy.id
+        }
     }
 
     func deleteEffect(_ id: UUID) {
         guard let index = effects.firstIndex(where: { $0.id == id }) else { return }
-        effects.remove(at: index)
-        reconnectEffectStack()
-        selectedNodeID = effects.indices.contains(index) ? effects[index].id : effects.last?.id
-        markEdited()
+        performCreativeEdit(named: "Delete Effect") {
+            effects.remove(at: index)
+            reconnectEffectStack()
+            selectedNodeID = effects.indices.contains(index) ? effects[index].id : effects.last?.id
+        }
     }
 
     func clearEffectStack() {
-        effects.removeAll()
-        selectedNodeID = nil
-        outputNodeID = nil
-        markEdited()
+        performCreativeEdit(named: "Clear Effect Stack") {
+            effects.removeAll()
+            selectedNodeID = nil
+            outputNodeID = nil
+        }
     }
 
     func removeSelectedEffect() {
         guard let index = selectedNodeIndex else { return }
-        selectedNodeID = nil
-        let removed = effects.remove(at: index)
-        for candidate in effects.indices where effects[candidate].inputNodeID == removed.id {
-            effects[candidate].inputNodeID = removed.inputNodeID
+        performCreativeEdit(named: "Delete Effect") {
+            selectedNodeID = nil
+            let removed = effects.remove(at: index)
+            for candidate in effects.indices where effects[candidate].inputNodeID == removed.id {
+                effects[candidate].inputNodeID = removed.inputNodeID
+            }
+            if outputNodeID == removed.id { outputNodeID = removed.inputNodeID }
+            selectedNodeID = effects.indices.contains(index) ? effects[index].id : effects.last?.id
         }
-        if outputNodeID == removed.id { outputNodeID = removed.inputNodeID }
-        selectedNodeID = effects.indices.contains(index) ? effects[index].id : effects.last?.id
-        markEdited()
     }
 
     func removeMedia(_ id: UUID? = nil) {
         stopPlayback()
-        cancelWork()
+        autoPreviewTask?.cancel()
+        previewTask?.cancel()
         let targetID = id ?? source?.id
-        guard let targetID else { return }
-        mediaPool.removeAll { $0.id == targetID }
+        guard let targetID,
+              let removedIndex = mediaPool.firstIndex(where: { $0.id == targetID }) else { return }
+        let removedMedia = mediaPool[removedIndex]
+        let creativeBefore = creativeState
+        mediaPool.remove(at: removedIndex)
         for index in effects.indices where effects[index].driverMediaID == targetID {
             effects[index].driverMediaID = nil
         }
@@ -196,17 +219,36 @@ final class ProjectStore: ObservableObject {
         }
         isPreviewStale = false
         currentFrame = 0
-        isDirty = true
-        recoveryTask?.cancel()
-        RecoveryStore.remove()
-        hasRecovery = false
+        if source == nil {
+            recoveryTask?.cancel()
+            SessionRecoveryStore.remove()
+            hasInterruptedSession = false
+        } else {
+            markEdited(invalidatePreview: false)
+        }
+        registerUndoAction(named: "Remove Media") { target in
+            target.restoreRemovedMedia(removedMedia, at: removedIndex, creativeState: creativeBefore)
+        }
         statusMessage = source == nil ? "No media selected" : "Media removed"
     }
 
+    private func restoreRemovedMedia(
+        _ media: DecodedProxy,
+        at index: Int,
+        creativeState restoredState: CreativeSessionState
+    ) {
+        let insertionIndex = min(max(index, 0), mediaPool.count)
+        mediaPool.insert(media, at: insertionIndex)
+        registerUndoAction(named: "Remove Media") { target in target.removeMedia(media.id) }
+        applyCreativeState(restoredState)
+        statusMessage = "Media removal undone"
+    }
+
     func moveEffect(from offsets: IndexSet, to destination: Int) {
-        effects.move(fromOffsets: offsets, toOffset: destination)
-        reconnectEffectStack()
-        markEdited()
+        performCreativeEdit(named: "Reorder Effects") {
+            effects.move(fromOffsets: offsets, toOffset: destination)
+            reconnectEffectStack()
+        }
     }
 
     private func reconnectEffectStack() {
@@ -251,17 +293,15 @@ final class ProjectStore: ObservableObject {
 
     func setSpatialPrefilter(_ strength: PrefilterStrength) {
         guard strength != spatialPrefilter else { return }
-        spatialPrefilter = strength
-        if source != nil { markEdited() }
+        performCreativeEdit(named: "Change Spatial Prefilter") { spatialPrefilter = strength }
     }
 
     func setTemporalPrefilter(_ strength: PrefilterStrength) {
         guard strength != temporalPrefilter else { return }
-        temporalPrefilter = strength
-        if source != nil { markEdited() }
+        performCreativeEdit(named: "Change Temporal Prefilter") { temporalPrefilter = strength }
     }
 
-    func newProject() {
+    func startFreshSession() {
         stopPlayback()
         cancelWork()
         source = nil
@@ -273,77 +313,166 @@ final class ProjectStore: ObservableObject {
         selectedNodeID = nil
         outputNodeID = nil
         currentFrame = 0
-        projectURL = nil
-        proxyQuality = .standard
         spatialPrefilter = .off
         temporalPrefilter = .off
         audioMode = .none
-        isDirty = false
+        sessionUndoManager.removeAllActions()
+        refreshUndoState()
         recoveryTask?.cancel()
-        RecoveryStore.remove()
-        hasRecovery = false
+        SessionRecoveryStore.remove()
+        hasInterruptedSession = false
         statusMessage = "Choose a video to begin"
     }
 
     func markEdited(invalidatePreview: Bool = true) {
-        isDirty = true
         if invalidatePreview, source != nil {
             isPreviewStale = true
+            scheduleAutoPreview()
         }
         scheduleRecoverySave()
+    }
+
+    private var creativeState: CreativeSessionState {
+        CreativeSessionState(
+            primaryMediaID: source?.id,
+            effects: effects,
+            outputNodeID: outputNodeID,
+            selectedNodeID: selectedNodeID,
+            spatialPrefilter: spatialPrefilter,
+            temporalPrefilter: temporalPrefilter
+        )
+    }
+
+    private func performCreativeEdit(named actionName: String, _ edit: () -> Void) {
+        let before = creativeState
+        edit()
+        guard creativeState != before else { return }
+        registerUndo(restoring: before, actionName: actionName)
+        markEdited()
+    }
+
+    private func registerUndo(restoring state: CreativeSessionState, actionName: String) {
+        registerUndoAction(named: actionName) { target in
+            let inverse = target.creativeState
+            target.registerUndo(restoring: inverse, actionName: actionName)
+            target.applyCreativeState(state)
+        }
+    }
+
+    private func registerUndoAction(named actionName: String, _ action: @escaping (SessionStore) -> Void) {
+        let ownsGroup = sessionUndoManager.groupingLevel == 0
+        if ownsGroup { sessionUndoManager.beginUndoGrouping() }
+        sessionUndoManager.registerUndo(withTarget: self, handler: action)
+        sessionUndoManager.setActionName(actionName)
+        if ownsGroup { sessionUndoManager.endUndoGrouping() }
+        refreshUndoState()
+    }
+
+    private func applyCreativeState(_ state: CreativeSessionState) {
+        let primaryChanged = source?.id != state.primaryMediaID
+        source = state.primaryMediaID.flatMap { id in mediaPool.first(where: { $0.id == id }) }
+        effects = state.effects
+        outputNodeID = state.outputNodeID
+        selectedNodeID = state.selectedNodeID.flatMap { id in effects.contains(where: { $0.id == id }) ? id : nil }
+        spatialPrefilter = state.spatialPrefilter
+        temporalPrefilter = state.temporalPrefilter
+        if primaryChanged {
+            output = source?.tensor
+            currentFrame = 0
+        }
+        markEdited()
+        DispatchQueue.main.async { [weak self] in self?.refreshUndoState() }
+    }
+
+    func beginContinuousEffectEdit() {
+        if coalescedEditStart == nil { coalescedEditStart = creativeState }
+    }
+
+    func endContinuousEffectEdit() {
+        guard let before = coalescedEditStart else { return }
+        coalescedEditStart = nil
+        guard creativeState != before else { return }
+        registerUndo(restoring: before, actionName: "Change Effect")
+        markEdited()
+    }
+
+    func undo() {
+        endContinuousEffectEdit()
+        sessionUndoManager.undo()
+        refreshUndoState()
+    }
+
+    func redo() {
+        endContinuousEffectEdit()
+        sessionUndoManager.redo()
+        refreshUndoState()
+    }
+
+    private func refreshUndoState() {
+        canUndo = sessionUndoManager.canUndo
+        canRedo = sessionUndoManager.canRedo
+    }
+
+    func setAutoUpdate(_ enabled: Bool) {
+        autoUpdate = enabled
+        if enabled, isPreviewStale { scheduleAutoPreview() }
+        if !enabled { autoPreviewTask?.cancel() }
+    }
+
+    private func scheduleAutoPreview() {
+        autoPreviewTask?.cancel()
+        guard autoUpdate, source != nil else { return }
+        previewTask?.cancel()
+        let hasGlobalCost = effects.contains { $0.enabled && $0.kind.definition.costClass == .global }
+        let delay = hasGlobalCost ? 800 : 450
+        autoPreviewTask = Task {
+            try? await Task.sleep(for: .milliseconds(delay))
+            guard !Task.isCancelled else { return }
+            renderPreview()
+        }
     }
 
     private func scheduleRecoverySave() {
         recoveryTask?.cancel()
         guard let source else { return }
-        let saved = SavedChronoForgeProject(
+        let saved = SessionRecoverySnapshot(
             source: source, mediaPool: mediaPool, effects: effects, outputNodeID: outputNodeID,
             proxyQuality: proxyQuality, spatialPrefilter: spatialPrefilter,
             temporalPrefilter: temporalPrefilter, audioMode: audioMode)
         recoveryTask = Task {
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
-            try? RecoveryStore.save(saved)
+            try? SessionRecoveryStore.save(saved)
             guard !Task.isCancelled else { return }
-            hasRecovery = true
+            hasInterruptedSession = true
         }
     }
 
     func restoreRecovery() {
-        guard RecoveryStore.exists else { return }
-        openProject(from: RecoveryStore.url)
-    }
-
-    func chooseProjectToOpen() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.chronoForgeProject]
-        panel.allowsMultipleSelection = false
-        panel.begin { [weak self] response in
-            guard response == .OK, let url = panel.url else { return }
-            self?.openProject(from: url)
-        }
-    }
-
-    func openProject(from url: URL) {
         do {
-            let saved = try ProjectPersistence.load(from: url)
+            let saved = try SessionRecoveryStore.load()
             effects = saved.effects
             reconnectEffectStack()
-            proxyQuality = saved.proxyQuality.flatMap(ProxyQuality.init(rawValue:)) ?? .standard
+            proxyQuality = saved.proxyQuality.flatMap(ProxyQuality.init(rawValue:)) ?? proxyQuality
             spatialPrefilter = saved.spatialPrefilter.flatMap(PrefilterStrength.init(rawValue:)) ?? .off
             temporalPrefilter = saved.temporalPrefilter.flatMap(PrefilterStrength.init(rawValue:)) ?? .off
             audioMode = saved.audioMode.flatMap(AudioMode.init(rawValue:)) ?? .none
-            projectURL = url
-            isDirty = false
+            sessionUndoManager.removeAllActions()
+            refreshUndoState()
             loadSavedMedia(saved)
-            statusMessage = "Opening \(url.lastPathComponent)…"
+            statusMessage = "Recovering interrupted session…"
         } catch {
             errorMessage = error.localizedDescription
+            startFreshSession()
         }
     }
 
+    func discardRecovery() {
+        SessionRecoveryStore.remove()
+        hasInterruptedSession = false
+    }
 
-    private func loadSavedMedia(_ saved: SavedChronoForgeProject) {
+    private func loadSavedMedia(_ saved: SessionRecoverySnapshot) {
         stopPlayback()
         cancelWork()
         isImporting = true
@@ -366,47 +495,11 @@ final class ProjectStore: ObservableObject {
                 output = source?.tensor
                 currentFrame = 0
                 isPreviewStale = !effects.isEmpty
-                isDirty = false
-                statusMessage = "Project ready · \(decodedMedia.count) media"
+                statusMessage = "Recovered · \(decodedMedia.count) media"
             } catch {
                 errorMessage = error.localizedDescription
-                statusMessage = "Project media could not be opened"
+                statusMessage = "Interrupted session could not be recovered"
             }
-        }
-    }
-
-    func saveProject(saveAs: Bool = false) {
-        guard let source else {
-            errorMessage = "Import a video before saving the project."
-            return
-        }
-        if let projectURL, !saveAs {
-            writeProject(source: source, to: projectURL)
-            return
-        }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.chronoForgeProject]
-        panel.canCreateDirectories = true
-        panel.nameFieldStringValue = "Untitled.chronoforge"
-        panel.begin { [weak self] response in
-            guard response == .OK, let url = panel.url else { return }
-            self?.writeProject(source: source, to: url)
-        }
-    }
-
-    private func writeProject(source: DecodedProxy, to url: URL) {
-        do {
-            try ProjectPersistence.save(SavedChronoForgeProject(
-                source: source, mediaPool: mediaPool, effects: effects, outputNodeID: outputNodeID,
-                proxyQuality: proxyQuality, spatialPrefilter: spatialPrefilter,
-                temporalPrefilter: temporalPrefilter, audioMode: audioMode), to: url)
-            projectURL = url
-            isDirty = false
-            RecoveryStore.remove()
-            hasRecovery = false
-            statusMessage = "Saved \(url.lastPathComponent)"
-        } catch {
-            errorMessage = error.localizedDescription
         }
     }
 
@@ -415,7 +508,10 @@ final class ProjectStore: ObservableObject {
             errorMessage = "Import a video before rendering."
             return
         }
-        cancelWork()
+        autoPreviewTask?.cancel()
+        previewTask?.cancel()
+        let generation = UUID()
+        previewGeneration = generation
         isRendering = true
         errorMessage = nil
         statusMessage = "Updating proxy preview…"
@@ -431,10 +527,13 @@ final class ProjectStore: ObservableObject {
             effect.driverMediaID.flatMap { id in mediaPool.first(where: { $0.id == id })?.sourceURL }
         }
         let cacheKey = ProxyCache.key(source: source!.sourceURL, input: input, effects: graph, drivers: driverURLs)
-        task = Task {
-            defer { isRendering = false }
+        previewTask = Task {
+            defer {
+                if previewGeneration == generation { isRendering = false }
+            }
             do {
                 if let cached = await ProxyCache.shared.load(key: cacheKey) {
+                    try Task.checkCancellation()
                     output = cached
                     isPreviewStale = false
                     currentFrame = min(currentFrame, max(0, cached.frames - 1))
@@ -452,10 +551,12 @@ final class ProjectStore: ObservableObject {
                 _ = try? await CacheManager.shared.trim()
                 await refreshCacheSize()
             } catch is CancellationError {
-                statusMessage = "Render cancelled"
+                if previewGeneration == generation { statusMessage = "Render cancelled" }
             } catch {
-                errorMessage = error.localizedDescription
-                statusMessage = "Render failed"
+                if previewGeneration == generation {
+                    errorMessage = error.localizedDescription
+                    statusMessage = "Render failed"
+                }
             }
             _ = try? await CacheManager.shared.trim()
             await refreshCacheSize()
@@ -627,8 +728,13 @@ final class ProjectStore: ObservableObject {
     }
 
     func cancelWork() {
+        autoPreviewTask?.cancel()
+        autoPreviewTask = nil
+        previewTask?.cancel()
+        previewTask = nil
         task?.cancel()
         task = nil
+        if isRendering { isRendering = false }
     }
 
     func togglePlayback() {
@@ -692,11 +798,15 @@ final class ProjectStore: ObservableObject {
 
     func setInput(_ inputID: UUID?, for nodeID: UUID) {
         guard let index = effects.firstIndex(where: { $0.id == nodeID }), inputID != nodeID else { return }
+        let before = creativeState
         let previous = effects[index].inputNodeID
         effects[index].inputNodeID = inputID
         do {
             _ = try chainEnding(at: nodeID)
-            markEdited()
+            if creativeState != before {
+                registerUndo(restoring: before, actionName: "Change Effect Input")
+                markEdited()
+            }
         } catch {
             effects[index].inputNodeID = previous
             errorMessage = error.localizedDescription

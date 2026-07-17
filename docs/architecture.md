@@ -2,7 +2,7 @@
 
 ## Scope
 
-The macOS build is a complete CPU reference application: it imports and previews multiple media sources, persists editable projects, evaluates a routed effect stack, renders through SSD-backed tensors, and exports H.264 MP4. It does not claim real-time 4K processing; proxy quality is the interactive path and full quality is an offline render.
+The macOS build is a complete CPU reference application: it imports and previews multiple media sources, evaluates a routed effect stack in an ephemeral session, renders through SSD-backed tensors, and exports H.264 MP4. It does not claim real-time 4K processing; proxy quality is the interactive path and full quality is an offline render.
 
 ## Data contract
 
@@ -42,6 +42,10 @@ Product metadata is centralized in the Swift `EffectRegistry`. Each `EffectDefin
 The internal C boundary uses `CFEffectDescriptorV2`: a versioned packet with eight value slots, eight option slots, logical counts, `Amount` and a 64-bit random seed. The boundary validates the version, counts and zeroed padding before dispatch. `Amount = 0` is a bit-exact identity; partial Amount is accepted only when the node preserves tensor shape. Proxy rendering blends in linear premultiplied tensor space, while full rendering blends directly into the mapped output after the effect pass and does not allocate a third full-size tensor.
 
 The editor presents one ordered effect stack and automatically reconnects every A input after insertion, duplication, deletion or drag reordering. Cross-tensor effects also store an independent media-pool B identifier. The core retains explicit validated edges and cycle rejection. Proxy and full caches include fingerprints for A and every referenced B source.
+
+`SessionStore` separates lightweight `CreativeSessionState` from decoded media, render tasks, playback and queue state. `UndoManager` keeps at most 100 creative operations; slider drags are coalesced into one operation. Auto Update waits 450 ms after a committed edit, or 800 ms for global-cost effects, and owns cancellation only for its debounce and proxy render. A full export retains an independent immutable stack snapshot.
+
+There is no user project format in the 1.0 workflow. A hidden `SessionRecoverySnapshot` is written while a session is active, removed by normal application termination, and offered once after a crash or force quit. The internal recovery JSON is not registered with Launch Services and is not a long-term document contract.
 
 ## Out-of-core strategy
 
@@ -89,7 +93,7 @@ Spatial and Temporal Prefilter are project-level output settings rather than edi
 | --- | --- |
 | 0 — complete | C++20 tensor rules, CPU references, cache format and deterministic tests. |
 | 1 — complete | C bridge, native AVFoundation proxy decode, editable SwiftUI graph, preview cache and H.264 MP4 export. |
-| 2 — complete | File-backed full-resolution decoder/executor, thread pools, cancellation, project persistence and recovery. |
+| 2 — complete | File-backed full-resolution decoder/executor, thread pools, cancellation and crash recovery. |
 | 3 — optional optimization | Metal kernels for local/per-pixel effects and a tile atlas for preview. |
 | 4 — optional optimization | Metal FFT/global transform acceleration. Disk reservation, diagnostics and recovery already ship in the CPU path. |
 | 5 | Windows frontend / shared GPU abstraction only after parity tests pass. |

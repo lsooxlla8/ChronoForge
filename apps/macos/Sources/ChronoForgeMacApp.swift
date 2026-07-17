@@ -2,16 +2,35 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+private final class ChronoForgeAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillTerminate(_ notification: Notification) {
+        SessionRecoveryStore.remove()
+    }
+}
+
 @main
 struct ChronoForgeMacApp: App {
-    @StateObject private var project = ProjectStore()
+    @NSApplicationDelegateAdaptor(ChronoForgeAppDelegate.self) private var appDelegate
+    @StateObject private var project = SessionStore()
     private static var globalShortcutMonitor: Any?
 
     init() {
         if Self.globalShortcutMonitor == nil {
-            Self.globalShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            Self.globalShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
                 let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
                 guard !event.isARepeat else { return event }
+
+                if event.charactersIgnoringModifiers == "\\",
+                   modifiers.intersection([.command, .option, .control, .shift]).isEmpty {
+                    NotificationCenter.default.post(
+                        name: .compareSourceChanged,
+                        object: nil,
+                        userInfo: ["pressed": event.type == .keyDown]
+                    )
+                    return nil
+                }
+
+                guard event.type == .keyDown else { return event }
 
                 if event.keyCode == 49,
                    modifiers.intersection([.command, .option, .control, .shift]).isEmpty {
@@ -54,18 +73,17 @@ struct ChronoForgeMacApp: App {
         }
         .defaultSize(width: 1480, height: 920)
         .commands {
+            CommandGroup(replacing: .undoRedo) {
+                Button("Undo") { project.undo() }
+                    .keyboardShortcut("z", modifiers: .command)
+                    .disabled(!project.canUndo)
+                Button("Redo") { project.redo() }
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+                    .disabled(!project.canRedo)
+            }
             CommandGroup(replacing: .newItem) {
-                Button("New Project") { project.newProject() }
-                    .keyboardShortcut("n", modifiers: .command)
-                Button("Open Project…") { project.chooseProjectToOpen() }
-                    .keyboardShortcut("o", modifiers: .command)
                 Button("Import Video…") { project.addMedia() }
                     .keyboardShortcut("i", modifiers: .command)
-                Divider()
-                Button("Save Project") { project.saveProject() }
-                    .keyboardShortcut("s", modifiers: .command)
-                Button("Save Project As…") { project.saveProject(saveAs: true) }
-                    .keyboardShortcut("s", modifiers: [.command, .shift])
                 Divider()
                 Button("Update Preview") { project.renderPreview() }
                     .keyboardShortcut("r", modifiers: .command)
@@ -92,8 +110,9 @@ struct ChronoForgeMacApp: App {
 }
 
 private struct WorkspaceView: View {
-    @EnvironmentObject private var project: ProjectStore
+    @EnvironmentObject private var project: SessionStore
     @AppStorage("ChronoForge.darkAppearance") private var darkAppearance = false
+    @State private var isComparingSource = false
     var body: some View {
         NavigationSplitView {
             sidebar
@@ -111,6 +130,9 @@ private struct WorkspaceView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .togglePreviewPlayback)) { _ in
             project.togglePlayback()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .compareSourceChanged)) { notification in
+            isComparingSource = notification.userInfo?["pressed"] as? Bool ?? false
         }
         .preferredColorScheme(darkAppearance ? .dark : .light)
         .fileImporter(
@@ -140,7 +162,20 @@ private struct WorkspaceView: View {
             Button("Clear Render Cache", role: .destructive) { project.clearRenderCache() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Source videos and saved projects will not be affected. Cached previews and full renders will be rebuilt when needed.")
+            Text("Source videos and the current session will not be affected. Cached previews and full renders will be rebuilt when needed.")
+        }
+        .confirmationDialog(
+            "Recover interrupted session?",
+            isPresented: Binding(
+                get: { project.hasInterruptedSession && project.source == nil && !project.isImporting },
+                set: { _ in }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Recover Interrupted Session") { project.restoreRecovery() }
+            Button("Start Fresh", role: .destructive) { project.startFreshSession() }
+        } message: {
+            Text("ChronoForge found a hidden recovery snapshot from a session that did not close normally.")
         }
         .confirmationDialog(
             "Clear the entire effect stack?",
@@ -154,11 +189,7 @@ private struct WorkspaceView: View {
             Text("This removes every effect. The imported video and render queue are not affected.")
         }
         .onOpenURL { url in
-            if url.pathExtension.lowercased() == "chronoforge" {
-                project.openProject(from: url)
-            } else {
-                project.importVideo(from: url)
-            }
+            project.importVideo(from: url)
         }
     }
 
@@ -191,11 +222,6 @@ private struct WorkspaceView: View {
                 } else {
                     Button("Import video…", systemImage: "plus.rectangle.on.folder") {
                         project.addMedia()
-                    }
-                    if project.hasRecovery {
-                        Button("Recover last autosave", systemImage: "clock.arrow.circlepath") {
-                            project.restoreRecovery()
-                        }
                     }
                 }
             }
@@ -283,9 +309,8 @@ private struct WorkspaceView: View {
     private var toolbar: some View {
         VStack(spacing: 8) {
             HStack(spacing: 12) {
-                Label(project.projectURL?.deletingPathExtension().lastPathComponent ?? "ChronoForge", systemImage: "cube.transparent")
+                Label("ChronoForge", systemImage: "cube.transparent")
                     .font(.headline)
-                if project.isDirty { Text("Edited").font(.caption2).foregroundStyle(.orange) }
                 Text(project.statusMessage)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -303,6 +328,21 @@ private struct WorkspaceView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
                     .help("Recalculate the small proxy shown in the viewer. This does not create a video file.")
+                Toggle("Auto Update", isOn: Binding(
+                    get: { project.autoUpdate },
+                    set: { project.setAutoUpdate($0) }
+                ))
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .help("Update the proxy after a short pause when an effect or image setting changes.")
+                Button("Hold Source", systemImage: "rectangle.on.rectangle") {}
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { _ in isComparingSource = true }
+                            .onEnded { _ in isComparingSource = false }
+                    )
+                    .disabled(project.source == nil || project.output == nil)
+                    .help("Hold to compare Source A with the latest result. Keyboard: hold \\")
                 Button("Add to Queue", systemImage: "text.badge.plus") { project.addCurrentRenderToQueue() }
                     .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
                 Button("Export MP4…", systemImage: "square.and.arrow.up") { project.chooseExportLocation() }
@@ -363,8 +403,8 @@ private struct WorkspaceView: View {
     private var preview: some View {
         ZStack {
             Color.black.opacity(0.94)
-            if let tensor = project.displayedTensor,
-               let image = TensorImage.make(from: tensor, frame: project.currentFrame) {
+            if let presentation = previewPresentation,
+               let image = TensorImage.make(from: presentation.tensor, frame: presentation.frame) {
                 Image(decorative: image, scale: 1)
                     .resizable()
                     .interpolation(.high)
@@ -382,7 +422,10 @@ private struct WorkspaceView: View {
             }
             VStack {
                 HStack {
-                    Label("Proxy Preview · \(project.proxyQuality.title)", systemImage: "eye")
+                    Label(
+                        isComparingSource ? "Source A" : "Proxy Preview · \(project.proxyQuality.title)",
+                        systemImage: isComparingSource ? "film" : "eye"
+                    )
                         .font(.caption.weight(.semibold))
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
@@ -405,6 +448,16 @@ private struct WorkspaceView: View {
         .frame(minHeight: 300)
     }
 
+    private var previewPresentation: (tensor: VideoTensorData, frame: Int)? {
+        guard let result = project.displayedTensor else { return nil }
+        guard isComparingSource, let source = project.source?.tensor else {
+            return (result, project.currentFrame)
+        }
+        let position = Double(project.currentFrame) / Double(max(1, result.frames - 1))
+        let sourceFrame = Int((position * Double(max(0, source.frames - 1))).rounded())
+        return (source, sourceFrame)
+    }
+
     @ViewBuilder
     private var inspector: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -416,7 +469,13 @@ private struct WorkspaceView: View {
                 EffectInspector(node: Binding(
                     get: { project.effect(withID: nodeID) ?? selectedNode },
                     set: { project.updateEffect($0) }
-                ), mediaPool: project.mediaPool)
+                ), mediaPool: project.mediaPool) { editing in
+                    if editing {
+                        project.beginContinuousEffectEdit()
+                    } else {
+                        project.endContinuousEffectEdit()
+                    }
+                }
             } else {
                 ContentUnavailableView("Select an effect", systemImage: "slider.horizontal.3")
             }
@@ -461,11 +520,13 @@ private struct WorkspaceView: View {
 
 private extension Notification.Name {
     static let togglePreviewPlayback = Notification.Name("ChronoForge.togglePreviewPlayback")
+    static let compareSourceChanged = Notification.Name("ChronoForge.compareSourceChanged")
 }
 
 private struct EffectInspector: View {
     @Binding var node: EffectNode
     let mediaPool: [DecodedProxy]
+    let onContinuousEditChanged: (Bool) -> Void
 
     var body: some View {
         Toggle("Enabled", isOn: $node.enabled)
@@ -623,7 +684,7 @@ private struct EffectInspector: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
-            Slider(value: $node.amount, in: 0...1)
+            Slider(value: $node.amount, in: 0...1, onEditingChanged: onContinuousEditChanged)
                 .disabled(!node.supportsAmount)
                 .contextMenu {
                     Button("Reset to 100%") { node.amount = 1 }
@@ -650,6 +711,7 @@ private struct EffectInspector: View {
                     .help(String(format: format, binding.wrappedValue))
             }
             Slider(value: binding, in: range, onEditingChanged: { editing in
+                onContinuousEditChanged(editing)
                 if editing { NSApp.keyWindow?.makeFirstResponder(nil) }
             })
                 .contextMenu {

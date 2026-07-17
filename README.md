@@ -4,6 +4,8 @@
 
 ChronoForge is a native macOS video-effects app for VJs, glitch artists and motion designers. Import one or two clips, stack strange time-based effects, watch a fast proxy preview, then export the result at full resolution.
 
+The 1.0 workflow is deliberately session-based: every normal launch starts empty, and a clean quit discards media, effect settings and the render queue. ChronoForge keeps only a hidden crash-recovery snapshot while the app is running; finished videos remain the thing you save.
+
 No formulas required. If you have used an effect stack, displacement map or render queue before, you already know the workflow.
 
 ## What can it do?
@@ -46,7 +48,7 @@ No formulas required. If you have used an effect stack, displacement map or rend
 4. For a two-video effect, add another clip to Media and choose it as **Driver video (B)**.
 5. Click **Export MP4** for one full-quality render, or **Add to Queue** for a batch. Press **Shift–Command–R** to start the queue.
 
-Useful shortcuts: **Space** plays or pauses the preview, and **Shift–S** hides or shows the sidebar.
+Useful shortcuts: **Space** plays or pauses the preview, **Command–Z** / **Shift–Command–Z** undo and redo creative changes, **\\** temporarily shows Source A, and **Shift–S** hides or shows the sidebar.
 
 ## Why it is different
 

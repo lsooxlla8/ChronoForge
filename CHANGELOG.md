@@ -6,6 +6,10 @@
 - Introduced the versioned eight-slot effect descriptor with validated logical parameter counts, Amount and deterministic seed fields.
 - Added per-effect Amount controls with bit-exact zero, linear wet/dry blending in proxy and mapped full renders, and explicit rejection for shape-changing modes.
 - Added core and AVFoundation integration coverage for Amount identity, mapped blending and deterministic repeated renders.
+- Added 100-level session Undo/Redo with coalesced slider gestures and lightweight creative-state snapshots.
+- Added persistent Auto Update with cost-aware debounce and a proxy-only cancellation domain that cannot cancel full export.
+- Added held Source A comparison with normalized timeline mapping and a keyboard hold shortcut.
+- Removed project commands, `.chronoforge` registration, project title/Edited UI and normal-session persistence; only crash recovery remains.
 
 ## 0.9.0 — seamless loops and interaction fixes
 

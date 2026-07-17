@@ -1,21 +1,15 @@
 import Foundation
-import UniformTypeIdentifiers
 
-extension UTType {
-    static let chronoForgeProject = UTType(exportedAs: "com.lsooxlla8.chronoforge.project", conformingTo: .data)
-}
-
-struct SavedChronoForgeProject: Codable, Sendable {
-    static let currentVersion = 4
+struct SessionRecoverySnapshot: Codable, Sendable {
+    static let currentVersion = 1
 
     var version: Int
     var sourceBookmark: Data?
     var sourcePath: String
-    var media: [SavedMediaReference]?
+    var media: [RecoveryMediaReference]?
     var primaryMediaID: UUID?
     var effects: [EffectNode]
     var outputNodeID: UUID?
-    var quality: String
     var proxyQuality: String?
     var spatialPrefilter: Int32?
     var temporalPrefilter: Int32?
@@ -27,7 +21,6 @@ struct SavedChronoForgeProject: Codable, Sendable {
         mediaPool: [DecodedProxy]? = nil,
         effects: [EffectNode],
         outputNodeID: UUID? = nil,
-        quality: RenderQuality = .full,
         proxyQuality: ProxyQuality = .standard,
         spatialPrefilter: PrefilterStrength = .off,
         temporalPrefilter: PrefilterStrength = .off,
@@ -37,11 +30,10 @@ struct SavedChronoForgeProject: Codable, Sendable {
         sourceBookmark = source.securityScopedBookmark
         sourcePath = source.sourceURL.path
         let allMedia = mediaPool ?? [source]
-        media = allMedia.map(SavedMediaReference.init)
+        media = allMedia.map(RecoveryMediaReference.init)
         primaryMediaID = source.id
         self.effects = effects
         self.outputNodeID = outputNodeID
-        self.quality = quality.rawValue
         self.proxyQuality = proxyQuality.rawValue
         self.spatialPrefilter = spatialPrefilter.rawValue
         self.temporalPrefilter = temporalPrefilter.rawValue
@@ -69,13 +61,13 @@ struct SavedChronoForgeProject: Codable, Sendable {
     }
 
 
-    func mediaReferences() -> [SavedMediaReference] {
+    func mediaReferences() -> [RecoveryMediaReference] {
         if let media, !media.isEmpty { return media }
-        return [SavedMediaReference(id: primaryMediaID ?? UUID(), bookmark: sourceBookmark, path: sourcePath)]
+        return [RecoveryMediaReference(id: primaryMediaID ?? UUID(), bookmark: sourceBookmark, path: sourcePath)]
     }
 }
 
-struct SavedMediaReference: Codable, Sendable {
+struct RecoveryMediaReference: Codable, Sendable {
     var id: UUID
     var bookmark: Data?
     var path: String
@@ -110,36 +102,48 @@ struct SavedMediaReference: Codable, Sendable {
     }
 }
 
-enum ProjectPersistence {
-    static func save(_ project: SavedChronoForgeProject, to url: URL) throws {
+private enum SessionRecoveryCodec {
+    static func save(_ project: SessionRecoverySnapshot, to url: URL) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(project).write(to: url, options: .atomic)
     }
 
-    static func load(from url: URL) throws -> SavedChronoForgeProject {
+    static func load(from url: URL) throws -> SessionRecoverySnapshot {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let project = try decoder.decode(SavedChronoForgeProject.self, from: Data(contentsOf: url))
-        guard project.version <= SavedChronoForgeProject.currentVersion else {
+        let project = try decoder.decode(SessionRecoverySnapshot.self, from: Data(contentsOf: url))
+        guard project.version <= SessionRecoverySnapshot.currentVersion else {
             throw CocoaError(.fileReadUnsupportedScheme)
         }
         return project
     }
 }
 
-enum RecoveryStore {
+enum SessionRecoveryStore {
     static var url: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("ChronoForge/Recovery.chronoforge")
+            .appendingPathComponent("ChronoForge/InterruptedSession.json")
     }
 
     static var exists: Bool { FileManager.default.fileExists(atPath: url.path) }
 
-    static func save(_ project: SavedChronoForgeProject) throws {
+    static func save(_ project: SessionRecoverySnapshot) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try ProjectPersistence.save(project, to: url)
+        try SessionRecoveryCodec.save(project, to: url)
+    }
+
+    static func save(_ project: SessionRecoverySnapshot, to testURL: URL) throws {
+        try SessionRecoveryCodec.save(project, to: testURL)
+    }
+
+    static func load() throws -> SessionRecoverySnapshot {
+        try SessionRecoveryCodec.load(from: url)
+    }
+
+    static func load(from testURL: URL) throws -> SessionRecoverySnapshot {
+        try SessionRecoveryCodec.load(from: testURL)
     }
 
     static func remove() {
