@@ -11,7 +11,7 @@ namespace chronoforge {
 namespace {
 
 constexpr std::uint32_t kMagic = 0x43465247;  // CFRG
-constexpr std::uint32_t kVersion = 1;
+constexpr std::uint32_t kVersion = 2;
 
 struct ChunkHeader {
     std::uint32_t magic{kMagic};

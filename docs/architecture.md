@@ -100,6 +100,8 @@ The supplied `TilePlanner` implements the per-pixel-temporal class. It will be g
 
 Spatial and Temporal Prefilter are project-level output settings rather than editable nodes. The renderer injects one deterministic hidden low-pass stage after the visible stack, so preview, direct export and queued renders share the same cache signature and result.
 
+The test build also provides `chronoforge-visual-regression`. It creates a copyright-free procedural A/B corpus and a Wave A contact sheet with source, standard and alternate/seeded columns under `build/visual-regression`; CTest verifies that this visual QA artifact remains generatable.
+
 ## macOS-specific plan
 
 | Phase | Deliverable |

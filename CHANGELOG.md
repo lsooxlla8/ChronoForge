@@ -26,6 +26,9 @@
 - Added Signal Weave for deterministic two-source Lines/Fields/Bands/Checker patterns, phase drift, irregularity, B time offsets and Clamp/Stretch/Crop matching in proxy and full renders.
 - Added Block Graft with held B-block replacement, Random/A Luma/B Luma/Difference/A Edges triggers, time offset, size matching and deterministic proxy/full parity.
 - Added Channel Transplant with compact per-component A/B routing in RGB or YCbCr, independent B time/spatial offsets, A-alpha preservation and proxy/full parity.
+- Bumped cache compatibility for Amount, seed and Wave A nodes, and expanded Random Stack acceptance coverage to 10,000 seeded graphs plus driver-free generation.
+- Expanded sequence and session acceptance coverage for concrete mismatch filenames, cancellation-safe completed PNG frames and immutable render-queue snapshots across later Undo.
+- Added a procedural, copyright-free visual regression corpus and generated Wave A contact sheet covering standard and alternate/seeded results for every new effect.
 
 ## 0.9.0 — seamless loops and interaction fixes
 

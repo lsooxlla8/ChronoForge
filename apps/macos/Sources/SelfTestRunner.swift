@@ -76,6 +76,17 @@ enum SelfTestRunner {
               inspection.missingFrameNumbers == [2] else {
             throw IntegrationSelfTestError.message("PNG sequence discovery did not preserve natural order or report numbering gaps")
         }
+        let incompatibleFrame = pngDirectory.appendingPathComponent("shot_0004.png")
+        try makePNG(at: incompatibleFrame, width: 3, height: 2, rgba: [0, 0, 255, 255])
+        do {
+            _ = try FrameSequenceDiscovery.inspect(directoryURL: pngDirectory)
+            throw IntegrationSelfTestError.message("PNG sequence accepted an incompatible frame size")
+        } catch ImageSequenceError.incompatibleDimensions(let name, _, _, let actualWidth, let actualHeight) {
+            guard name == incompatibleFrame.lastPathComponent, actualWidth == 3, actualHeight == 2 else {
+                throw IntegrationSelfTestError.message("PNG dimension mismatch did not identify the concrete frame")
+            }
+        }
+        try FileManager.default.removeItem(at: incompatibleFrame)
         let pngSequence = FrameSequenceSource(
             directoryURL: pngDirectory,
             frameNames: inspection.frameNames,
@@ -126,6 +137,19 @@ enum SelfTestRunner {
             throw IntegrationSelfTestError.message("PNG sequence export silently reused a non-empty folder")
         } catch PNGSequenceExporterError.destinationNotEmpty {
             // Expected: user files must never be overwritten implicitly.
+        }
+        let cancelledExportDirectory = root.appendingPathComponent("png-export-cancelled", isDirectory: true)
+        do {
+            try await PNGSequenceExporter.export(pngFull, to: cancelledExportDirectory) { fraction, _ in
+                if fraction > 0 { withUnsafeCurrentTask { $0?.cancel() } }
+            }
+            throw IntegrationSelfTestError.message("PNG sequence cancellation did not stop export")
+        } catch is CancellationError {
+            let survivingFrames = try FileManager.default.contentsOfDirectory(
+                at: cancelledExportDirectory, includingPropertiesForKeys: nil)
+            guard survivingFrames.map(\.lastPathComponent) == ["ChronoForge_000001.png"] else {
+                throw IntegrationSelfTestError.message("PNG cancellation removed completed frames or wrote additional frames")
+            }
         }
         let firstNode = EffectNode.make(.lumaTimeShift)
         let branchA = EffectNode.make(.radialChronoFunnel, inputNodeID: firstNode.id)
@@ -185,10 +209,12 @@ enum SelfTestRunner {
         }
         var lengthCounts = [0, 0, 0, 0]
         var rgbTimeSlipSamples = 0
-        for seed in 0..<600 {
+        var sampledKinds = Set<EffectKind>()
+        for seed in 0..<10_000 {
             let stack = try RandomStackGenerator.generate(
                 mediaPool: [projectSource, driverSource], primaryMediaID: projectSource.id, seed: UInt64(seed))
             lengthCounts[stack.count] += 1
+            sampledKinds.formUnion(stack.map(\.kind))
             for node in stack where node.kind == .rgbTimeSlip {
                 rgbTimeSlipSamples += 1
                 let offsets = Array(node.values.prefix(3))
@@ -204,11 +230,19 @@ enum SelfTestRunner {
                 throw IntegrationSelfTestError.message("Random Stack generated an incompatible combination")
             }
         }
-        guard (160...260).contains(lengthCounts[1]),
-              (220...320).contains(lengthCounts[2]),
-              (80...160).contains(lengthCounts[3]),
-              rgbTimeSlipSamples > 20 else {
+        guard (3_300...3_700).contains(lengthCounts[1]),
+              (4_300...4_700).contains(lengthCounts[2]),
+              (1_800...2_200).contains(lengthCounts[3]),
+              rgbTimeSlipSamples > 400,
+              sampledKinds == Set(EffectKind.addableKinds) else {
             throw IntegrationSelfTestError.message("Random Stack length weights drifted outside their expected ranges")
+        }
+        for seed in 0..<1_000 {
+            let stack = try RandomStackGenerator.generate(
+                mediaPool: [projectSource], primaryMediaID: projectSource.id, seed: UInt64(seed))
+            guard stack.allSatisfy({ !$0.kind.requiresDriver }) else {
+                throw IntegrationSelfTestError.message("Random Stack selected a two-input effect without driver B")
+            }
         }
         let compareInput = VideoTensorData(
             values: [
@@ -331,6 +365,21 @@ enum SelfTestRunner {
             store.undo()
             guard store.effects == beforeRandom else {
                 throw IntegrationSelfTestError.message("Random Stack was not reversible as one Undo operation")
+            }
+            let queuedEffects = store.effects
+            store.renderQueue.append(RenderQueueItem(
+                source: projectSource,
+                effects: queuedEffects,
+                mediaPool: store.mediaPool,
+                audioMode: .none,
+                destinationURL: root.appendingPathComponent("snapshot.mp4")
+            ))
+            var postQueueEdit = store.effects[0]
+            postQueueEdit.amount = 0.2
+            store.updateEffect(postQueueEdit)
+            store.undo()
+            guard store.renderQueue.first?.effects == queuedEffects else {
+                throw IntegrationSelfTestError.message("Render queue snapshot changed after a later creative edit and Undo")
             }
             store.removeMedia(projectSource.id)
             guard store.source?.id == driverSource.id, store.mediaPool.map(\.id) == [driverSource.id] else {

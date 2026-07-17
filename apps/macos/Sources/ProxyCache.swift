@@ -76,7 +76,7 @@ actor ProxyCache {
             width: input.width,
             effects: effects,
             drivers: driverSignatures,
-            engineVersion: "1.0.0-dev-media-source"
+            engineVersion: "1.2.0-dev-wave-a"
         )
         let data = (try? JSONEncoder().encode(signature)) ?? Data()
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
