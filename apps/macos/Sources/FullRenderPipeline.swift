@@ -6,6 +6,8 @@ enum FullRenderPipeline {
         effects: [EffectNode],
         mediaPool: [DecodedProxy] = [],
         audioMode: AudioMode,
+        outputFormat: RenderOutputFormat = .mp4,
+        outputFramesPerSecond: Double? = nil,
         to destination: URL,
         progress: @escaping @Sendable (Double, String) -> Void
     ) async throws {
@@ -83,17 +85,34 @@ enum FullRenderPipeline {
             try? FileManager.default.removeItem(at: scratch)
         }
 
-        let encodedDestination = audioMode == .preserveOriginal
-            ? graphDirectory.appendingPathComponent("video-only-\(UUID().uuidString).mp4")
-            : destination
-        try await FullVideoExporter.export(rendered, to: encodedDestination) { fraction, stage in
-            progress(0.80 + fraction * 0.20, stage)
-        }
-        if audioMode == .preserveOriginal {
-            progress(0.99, "Muxing original audio")
-            try await MediaMuxer.addOriginalAudio(videoURL: encodedDestination, sourceURL: source.sourceURL, destinationURL: destination)
+        let exportTensor = reinterpreting(rendered, at: outputFramesPerSecond)
+        switch outputFormat {
+        case .mp4:
+            let encodedDestination = audioMode == .preserveOriginal
+                ? graphDirectory.appendingPathComponent("video-only-\(UUID().uuidString).mp4")
+                : destination
+            try await FullVideoExporter.export(exportTensor, to: encodedDestination) { fraction, stage in
+                progress(0.80 + fraction * 0.20, stage)
+            }
+            if audioMode == .preserveOriginal {
+                progress(0.99, "Muxing original audio")
+                try await MediaMuxer.addOriginalAudio(videoURL: encodedDestination, sourceURL: source.sourceURL, destinationURL: destination)
+            }
+        case .pngSequence:
+            try await PNGSequenceExporter.export(exportTensor, to: destination) { fraction, stage in
+                progress(0.80 + fraction * 0.20, stage)
+            }
         }
         progress(1, "Full-quality export complete")
+    }
+
+    static func reinterpreting(_ tensor: DiskTensorData, at framesPerSecond: Double?) -> DiskTensorData {
+        guard let framesPerSecond, framesPerSecond > 0 else { return tensor }
+        var result = tensor
+        result.framesPerSecond = framesPerSecond
+        result.duration = Double(result.frames) / framesPerSecond
+        result.timestamps = nil
+        return result
     }
 
     private static func loadMetadata(_ url: URL) -> DiskTensorData? {

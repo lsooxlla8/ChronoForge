@@ -16,12 +16,14 @@ final class SessionStore: ObservableObject {
     @Published var spatialPrefilter = PrefilterStrength.off
     @Published var temporalPrefilter = PrefilterStrength.off
     @Published var audioMode = AudioMode.none
+    @Published var playbackFPSPreset = PlaybackFPSPreset.result
+    @Published var customPlaybackFPS = 24.0
     @Published var showsImporter = false
     @Published var isImporting = false
     @Published var isRendering = false
     @Published var isExporting = false
     @Published var errorMessage: String?
-    @Published var statusMessage = "Choose a video to begin"
+    @Published var statusMessage = "Choose media to begin"
     @Published var renderProgress: Double?
     @Published var hasInterruptedSession = SessionRecoveryStore.exists
     @Published var cacheSizeDescription = "Calculating cache…"
@@ -60,6 +62,16 @@ final class SessionStore: ObservableObject {
 
     var displayedTensor: VideoTensorData? { output ?? source?.tensor }
     var selectedNodeIndex: Int? { effects.firstIndex { $0.id == selectedNodeID } }
+    var outputFramesPerSecond: Double? {
+        playbackFPSPreset == .custom ? max(0.001, customPlaybackFPS) : playbackFPSPreset.framesPerSecond
+    }
+    var canPreserveOriginalAudio: Bool {
+        source?.mediaSource.isMovie == true && playbackFPSPreset == .result
+    }
+    var outputDuration: Double? {
+        guard let tensor = displayedTensor else { return nil }
+        return Double(tensor.frames) / (outputFramesPerSecond ?? tensor.framesPerSecond)
+    }
     var selectedEffectCaptureForSelection: SelectedEffectCapture? {
         guard let selectedNodeID, selectedEffectCapture?.nodeID == selectedNodeID else { return nil }
         return selectedEffectCapture
@@ -149,9 +161,115 @@ final class SessionStore: ObservableObject {
         showsImporter = true
     }
 
+    func addImageSequence() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose Sequence"
+        panel.message = "Choose a folder containing a numbered PNG sequence."
+        panel.begin { [weak self] response in
+            guard response == .OK, let directoryURL = panel.url else { return }
+            self?.importImageSequence(from: directoryURL)
+        }
+    }
+
     func replaceMedia(_ id: UUID) {
         mediaReplacementID = id
         showsImporter = true
+    }
+
+    private func importImageSequence(from directoryURL: URL) {
+        stopPlayback()
+        cancelWork()
+        isImporting = true
+        errorMessage = nil
+        statusMessage = "Inspecting PNG sequence…"
+        let accessGranted = directoryURL.startAccessingSecurityScopedResource()
+        task = Task {
+            defer {
+                if accessGranted { directoryURL.stopAccessingSecurityScopedResource() }
+                isImporting = false
+            }
+            do {
+                let inspection = try await Task.detached(priority: .userInitiated) {
+                    try FrameSequenceDiscovery.inspect(directoryURL: directoryURL)
+                }.value
+                try Task.checkCancellation()
+                guard let framesPerSecond = chooseSequenceFramesPerSecond(for: inspection) else {
+                    statusMessage = "Image sequence import cancelled"
+                    return
+                }
+                let bookmark = try? directoryURL.bookmarkData(
+                    options: [.withSecurityScope],
+                    includingResourceValuesForKeys: nil,
+                    relativeTo: nil
+                )
+                let sequence = FrameSequenceSource(
+                    directoryURL: directoryURL,
+                    frameNames: inspection.frameNames,
+                    framesPerSecond: framesPerSecond,
+                    securityScopedBookmark: bookmark
+                )
+                let decoded = try await MediaSourceDecoder.decodeProxy(
+                    from: .frameSequence(sequence),
+                    quality: proxyQuality
+                )
+                try Task.checkCancellation()
+                mediaPool.append(decoded)
+                if source == nil {
+                    source = decoded
+                    output = decoded.tensor
+                    currentFrame = 0
+                }
+                isPreviewStale = !effects.isEmpty
+                statusMessage = source?.id == decoded.id
+                    ? "PNG sequence ready · \(inspection.frameCount) frames at \(framesPerSecond.formatted(.number.precision(.fractionLength(0...3)))) fps"
+                    : "PNG sequence added · \(inspection.frameCount) frames"
+                markEdited(invalidatePreview: !effects.isEmpty)
+            } catch is CancellationError {
+                statusMessage = "Image sequence import cancelled"
+            } catch {
+                errorMessage = error.localizedDescription
+                statusMessage = "Image sequence import failed"
+            }
+        }
+    }
+
+    private func chooseSequenceFramesPerSecond(for inspection: FrameSequenceInspection) -> Double? {
+        let alert = NSAlert()
+        alert.messageText = "Import PNG Sequence"
+        var details = "\(inspection.frameCount) frames · \(inspection.width) × \(inspection.height)"
+        if !inspection.missingFrameNumbers.isEmpty {
+            let preview = inspection.missingFrameNumbers.prefix(8).map(String.init).joined(separator: ", ")
+            let suffix = inspection.missingFrameNumbers.count > 8 ? ", …" : ""
+            details += "\nMissing frame numbers: \(preview)\(suffix). Existing files will be imported consecutively."
+        }
+        alert.informativeText = details
+        alert.addButton(withTitle: "Import")
+        alert.addButton(withTitle: "Cancel")
+
+        let accessory = NSStackView()
+        accessory.orientation = .horizontal
+        accessory.alignment = .centerY
+        accessory.spacing = 8
+        let label = NSTextField(labelWithString: "Playback FPS")
+        let combo = NSComboBox()
+        combo.addItems(withObjectValues: ["12", "15", "23.976", "24", "25", "29.97", "30", "50", "59.94", "60"])
+        combo.stringValue = "24"
+        combo.isEditable = true
+        combo.numberOfVisibleItems = 10
+        combo.frame.size.width = 110
+        accessory.addArrangedSubview(label)
+        accessory.addArrangedSubview(combo)
+        alert.accessoryView = accessory
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        guard let fps = Double(combo.stringValue.replacingOccurrences(of: ",", with: ".")), fps > 0 else {
+            errorMessage = ImageSequenceError.invalidFramesPerSecond.localizedDescription
+            return nil
+        }
+        return fps
     }
 
     func setPrimaryMedia(_ id: UUID) {
@@ -160,7 +278,28 @@ final class SessionStore: ObservableObject {
             source = media
             output = media.tensor
             currentFrame = 0
+            if !media.mediaSource.isMovie { audioMode = .none }
         }
+    }
+
+    func setPlaybackFPSPreset(_ preset: PlaybackFPSPreset) {
+        guard playbackFPSPreset != preset else { return }
+        playbackFPSPreset = preset
+        if preset != .result { audioMode = .none }
+        markEdited(invalidatePreview: false)
+    }
+
+    func setCustomPlaybackFPS(_ value: Double) {
+        let value = max(0.001, value)
+        guard customPlaybackFPS != value else { return }
+        customPlaybackFPS = value
+        if playbackFPSPreset == .custom { audioMode = .none }
+        markEdited(invalidatePreview: false)
+    }
+
+    func setAudioMode(_ mode: AudioMode) {
+        audioMode = mode == .preserveOriginal && !canPreserveOriginalAudio ? .none : mode
+        markEdited(invalidatePreview: false)
     }
 
     func addEffect(_ kind: EffectKind) {
@@ -360,12 +499,14 @@ final class SessionStore: ObservableObject {
         spatialPrefilter = .off
         temporalPrefilter = .off
         audioMode = .none
+        playbackFPSPreset = .result
+        customPlaybackFPS = 24
         sessionUndoManager.removeAllActions()
         refreshUndoState()
         recoveryTask?.cancel()
         SessionRecoveryStore.remove()
         hasInterruptedSession = false
-        statusMessage = "Choose a video to begin"
+        statusMessage = "Choose media to begin"
     }
 
     func markEdited(invalidatePreview: Bool = true) {
@@ -483,7 +624,8 @@ final class SessionStore: ObservableObject {
         let saved = SessionRecoverySnapshot(
             source: source, mediaPool: mediaPool, effects: effects, outputNodeID: outputNodeID,
             proxyQuality: proxyQuality, spatialPrefilter: spatialPrefilter,
-            temporalPrefilter: temporalPrefilter, audioMode: audioMode)
+            temporalPrefilter: temporalPrefilter, audioMode: audioMode,
+            playbackFPSPreset: playbackFPSPreset, customPlaybackFPS: customPlaybackFPS)
         recoveryTask = Task {
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
@@ -502,6 +644,8 @@ final class SessionStore: ObservableObject {
             spatialPrefilter = saved.spatialPrefilter.flatMap(PrefilterStrength.init(rawValue:)) ?? .off
             temporalPrefilter = saved.temporalPrefilter.flatMap(PrefilterStrength.init(rawValue:)) ?? .off
             audioMode = saved.audioMode.flatMap(AudioMode.init(rawValue:)) ?? .none
+            playbackFPSPreset = saved.playbackFPSPreset.flatMap(PlaybackFPSPreset.init(rawValue:)) ?? .result
+            customPlaybackFPS = max(0.001, saved.customPlaybackFPS ?? 24)
             sessionUndoManager.removeAllActions()
             refreshUndoState()
             loadSavedMedia(saved)
@@ -537,6 +681,7 @@ final class SessionStore: ObservableObject {
                 }
                 mediaPool = decodedMedia
                 source = decodedMedia.first(where: { $0.id == primaryID }) ?? decodedMedia.first
+                if !canPreserveOriginalAudio { audioMode = .none }
                 output = source?.tensor
                 currentFrame = 0
                 isPreviewStale = !effects.isEmpty
@@ -635,19 +780,40 @@ final class SessionStore: ObservableObject {
         panel.nameFieldStringValue = "ChronoForge-Full-Render.mp4"
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
-            self?.exportVideo(to: url)
+            self?.exportCurrent(to: url, format: .mp4)
+        }
+    }
+
+    func choosePNGSequenceExportLocation() {
+        guard source != nil else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Export Here"
+        panel.message = "Choose a new or empty folder. Frames will be named ChronoForge_000001.png and so on."
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            self?.exportCurrent(to: url, format: .pngSequence)
         }
     }
 
     func exportVideo(to url: URL) {
+        exportCurrent(to: url, format: .mp4)
+    }
+
+    private func exportCurrent(to url: URL, format: RenderOutputFormat) {
         guard let source else { return }
         cancelWork()
         isExporting = true
         renderProgress = 0
         errorMessage = nil
-        statusMessage = "Exporting MP4…"
+        statusMessage = "Exporting \(format.title)…"
+        let destinationAccess = url.startAccessingSecurityScopedResource()
         task = Task {
             defer {
+                if destinationAccess { url.stopAccessingSecurityScopedResource() }
                 isExporting = false
                 renderProgress = nil
             }
@@ -656,7 +822,9 @@ final class SessionStore: ObservableObject {
                 try await performExport(
                     source: source,
                     effects: renderEffects,
-                    audioMode: audioMode,
+                    audioMode: canPreserveOriginalAudio ? audioMode : .none,
+                    outputFormat: format,
+                    outputFramesPerSecond: outputFramesPerSecond,
                     destination: url
                 ) { fraction, stage in
                     Task { @MainActor in
@@ -664,7 +832,7 @@ final class SessionStore: ObservableObject {
                         self.statusMessage = stage
                     }
                 }
-                statusMessage = "Export complete · \(url.lastPathComponent)"
+                statusMessage = "\(format.title) export complete · \(url.lastPathComponent)"
                 _ = try? await CacheManager.shared.trim()
                 await refreshCacheSize()
                 NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -701,7 +869,8 @@ final class SessionStore: ObservableObject {
                 source: source,
                 effects: renderEffects,
                 mediaPool: self.mediaPool,
-                audioMode: self.audioMode,
+                audioMode: self.canPreserveOriginalAudio ? self.audioMode : .none,
+                outputFramesPerSecond: self.outputFramesPerSecond,
                 destinationURL: destination
             ))
             self.statusMessage = "Added to render queue · \(destination.lastPathComponent)"
@@ -740,6 +909,7 @@ final class SessionStore: ObservableObject {
                         effects: item.effects,
                         mediaPool: item.mediaPool,
                         audioMode: item.audioMode,
+                        outputFramesPerSecond: item.outputFramesPerSecond,
                         destination: item.destinationURL
                     ) { fraction, stage in
                         Task { @MainActor in
@@ -775,6 +945,8 @@ final class SessionStore: ObservableObject {
         effects: [EffectNode],
         mediaPool: [DecodedProxy]? = nil,
         audioMode: AudioMode,
+        outputFormat: RenderOutputFormat = .mp4,
+        outputFramesPerSecond: Double? = nil,
         destination: URL,
         progress: @escaping @Sendable (Double, String) -> Void
     ) async throws {
@@ -786,6 +958,8 @@ final class SessionStore: ObservableObject {
             effects: effects,
             mediaPool: allMedia,
             audioMode: audioMode,
+            outputFormat: outputFormat,
+            outputFramesPerSecond: outputFramesPerSecond,
             to: destination,
             progress: progress
         )

@@ -191,6 +191,7 @@ struct RenderQueueItem: Identifiable, Sendable {
     let effects: [EffectNode]
     let mediaPool: [DecodedProxy]
     let audioMode: AudioMode
+    let outputFramesPerSecond: Double?
     let destinationURL: URL
     var status: RenderQueueStatus
 
@@ -199,6 +200,7 @@ struct RenderQueueItem: Identifiable, Sendable {
         effects: [EffectNode],
         mediaPool: [DecodedProxy],
         audioMode: AudioMode,
+        outputFramesPerSecond: Double? = nil,
         destinationURL: URL
     ) {
         id = UUID()
@@ -206,8 +208,21 @@ struct RenderQueueItem: Identifiable, Sendable {
         self.effects = effects
         self.mediaPool = mediaPool
         self.audioMode = audioMode
+        self.outputFramesPerSecond = outputFramesPerSecond
         self.destinationURL = destinationURL
         status = .waiting
+    }
+}
+
+enum RenderOutputFormat: String, Sendable {
+    case mp4
+    case pngSequence
+
+    var title: String {
+        switch self {
+        case .mp4: "MP4 Video"
+        case .pngSequence: "PNG Sequence"
+        }
     }
 }
 
@@ -249,4 +264,60 @@ enum AudioMode: String, CaseIterable, Identifiable, Codable, Sendable {
 
     var id: String { rawValue }
     var title: String { self == .none ? "No audio" : "Preserve original" }
+}
+
+enum PlaybackFPSPreset: String, CaseIterable, Identifiable, Codable, Sendable {
+    case result
+    case fps12
+    case fps15
+    case fps23976
+    case fps24
+    case fps25
+    case fps2997
+    case fps30
+    case fps50
+    case fps5994
+    case fps60
+    case custom
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .result: "Result"
+        case .fps12: "12"
+        case .fps15: "15"
+        case .fps23976: "23.976"
+        case .fps24: "24"
+        case .fps25: "25"
+        case .fps2997: "29.97"
+        case .fps30: "30"
+        case .fps50: "50"
+        case .fps5994: "59.94"
+        case .fps60: "60"
+        case .custom: "Custom"
+        }
+    }
+    var framesPerSecond: Double? {
+        switch self {
+        case .result, .custom: nil
+        case .fps12: 12
+        case .fps15: 15
+        case .fps23976: 23.976
+        case .fps24: 24
+        case .fps25: 25
+        case .fps2997: 29.97
+        case .fps30: 30
+        case .fps50: 50
+        case .fps5994: 59.94
+        case .fps60: 60
+        }
+    }
+}
+
+enum ViewerBackground: String, CaseIterable, Identifiable {
+    case black
+    case checkerboard
+
+    var id: String { rawValue }
+    var title: String { self == .black ? "Black" : "Checkerboard" }
 }

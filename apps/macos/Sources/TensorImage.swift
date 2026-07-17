@@ -27,7 +27,7 @@ enum TensorImage {
             bitsPerPixel: 32,
             bytesPerRow: tensor.width * 4,
             space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),
             provider: provider,
             decode: nil,
             shouldInterpolate: true,

@@ -1,7 +1,7 @@
 import Foundation
 
 struct SessionRecoverySnapshot: Codable, Sendable {
-    static let currentVersion = 2
+    static let currentVersion = 3
 
     var version: Int
     var source: MediaSource?
@@ -15,6 +15,8 @@ struct SessionRecoverySnapshot: Codable, Sendable {
     var spatialPrefilter: Int32?
     var temporalPrefilter: Int32?
     var audioMode: String?
+    var playbackFPSPreset: String?
+    var customPlaybackFPS: Double?
     var savedAt: Date
 
     init(
@@ -25,7 +27,9 @@ struct SessionRecoverySnapshot: Codable, Sendable {
         proxyQuality: ProxyQuality = .standard,
         spatialPrefilter: PrefilterStrength = .off,
         temporalPrefilter: PrefilterStrength = .off,
-        audioMode: AudioMode = .none
+        audioMode: AudioMode = .none,
+        playbackFPSPreset: PlaybackFPSPreset = .result,
+        customPlaybackFPS: Double = 24
     ) {
         version = Self.currentVersion
         self.source = source.mediaSource
@@ -40,6 +44,8 @@ struct SessionRecoverySnapshot: Codable, Sendable {
         self.spatialPrefilter = spatialPrefilter.rawValue
         self.temporalPrefilter = temporalPrefilter.rawValue
         self.audioMode = audioMode.rawValue
+        self.playbackFPSPreset = playbackFPSPreset.rawValue
+        self.customPlaybackFPS = customPlaybackFPS
         savedAt = Date()
     }
 

@@ -108,17 +108,6 @@ enum MediaSource: Codable, Equatable, Sendable {
     }
 }
 
-enum MediaSourceError: LocalizedError {
-    case imageSequenceDecodePending
-
-    var errorDescription: String? {
-        switch self {
-        case .imageSequenceDecodePending:
-            "PNG sequence decoding is not available in this build yet."
-        }
-    }
-}
-
 enum MediaSourceDecoder {
     static func decodeProxy(from source: MediaSource, quality: ProxyQuality = .standard) async throws -> DecodedProxy {
         switch source {
@@ -126,8 +115,8 @@ enum MediaSourceDecoder {
             var decoded = try await VideoDecoder.decodeProxy(from: movie.url, quality: quality)
             decoded.mediaSource = source
             return decoded
-        case .frameSequence:
-            throw MediaSourceError.imageSequenceDecodePending
+        case .frameSequence(let sequence):
+            return try await ImageSequenceDecoder.decodeProxy(from: sequence, quality: quality)
         }
     }
 
@@ -143,8 +132,12 @@ enum MediaSourceDecoder {
                 destinationURL: destinationURL,
                 progress: progress
             )
-        case .frameSequence:
-            throw MediaSourceError.imageSequenceDecodePending
+        case .frameSequence(let sequence):
+            return try await ImageSequenceDecoder.decodeFull(
+                from: sequence,
+                destinationURL: destinationURL,
+                progress: progress
+            )
         }
     }
 }

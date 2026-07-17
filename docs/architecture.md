@@ -10,7 +10,7 @@ The macOS build is a complete CPU reference application: it imports and previews
 
 Input Decode performs these operations before a tensor enters the graph:
 
-1. Decode compressed media to a known pixel format through AVFoundation on macOS.
+1. Decode compressed media through AVFoundation or ordered PNG frames through ImageIO to a known pixel format on macOS.
 2. Convert transfer function to linear light and preserve source colour-space metadata.
 3. Convert to `RGB` or premultiplied `RGBA` float32.
 4. Persist a source fingerprint from the canonical path, file metadata, media dimensions and timeline.
@@ -23,7 +23,7 @@ Input Decode performs these operations before a tensor enters the graph:
 
 ```mermaid
 flowchart LR
-    source["Input / AVFoundation decode"] --> proxy["Proxy sampler"]
+    source["Movie / PNG sequence decode"] --> proxy["Proxy sampler"]
     proxy --> graph["Validated DAG"]
     graph --> scheduler["Tile & dependency scheduler"]
     scheduler --> cache["SSD content-addressed cache"]
@@ -113,7 +113,7 @@ Spatial and Temporal Prefilter are project-level output settings rather than edi
 
 ## Shipping implementation notes
 
-The macOS codec backend is AVFoundation so the application bundle is self-contained and uses hardware H.264 decode/encode without a Homebrew dependency. The portable core and C ABI do not depend on AVFoundation. The Windows port will attach FFmpeg at the same decoded-tensor/file-tensor boundary.
+The macOS codec backend uses AVFoundation for movies and ImageIO for PNG sequences, so the application bundle remains self-contained without a Homebrew dependency. Sequence full decode and export hold only one image frame plus the mapped tensor at a time. The portable core and C ABI depend on neither framework. The Windows port will attach FFmpeg and native image codecs at the same decoded-tensor/file-tensor boundary.
 
 Full renders use headerless linear-RGBA float files plus JSON metadata. They are mapped with `mmap`; local nodes read one mapped input and write one mapped output, then remove the prior scratch result. Pixel Sort (Time) retains only one pixel's complete time vector per worker. Space is checked before decode and before every node, with a 512 MiB filesystem reserve.
 

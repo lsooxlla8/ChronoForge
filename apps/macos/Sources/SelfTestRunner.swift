@@ -1,6 +1,8 @@
 import AVFoundation
 import CoreVideo
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 enum SelfTestRunner {
     static func run() async throws {
@@ -61,6 +63,70 @@ enum SelfTestRunner {
               sequenceKey24 != sequenceChangedKey else {
             throw IntegrationSelfTestError.message("MediaSource sequence metadata did not round-trip or invalidate its cache fingerprint")
         }
+        let pngDirectory = root.appendingPathComponent("png-fixture", isDirectory: true)
+        try FileManager.default.createDirectory(at: pngDirectory, withIntermediateDirectories: true)
+        let redFrame = pngDirectory.appendingPathComponent("shot_0001.png")
+        let greenFrame = pngDirectory.appendingPathComponent("shot_0003.png")
+        try makePNG(at: redFrame, width: 2, height: 2, rgba: [255, 0, 0, 255])
+        try makePNG(at: greenFrame, width: 2, height: 2, rgba: [0, 128, 0, 128])
+        let inspection = try FrameSequenceDiscovery.inspect(directoryURL: pngDirectory)
+        guard inspection.frameNames == [redFrame.lastPathComponent, greenFrame.lastPathComponent],
+              inspection.width == 2,
+              inspection.height == 2,
+              inspection.missingFrameNumbers == [2] else {
+            throw IntegrationSelfTestError.message("PNG sequence discovery did not preserve natural order or report numbering gaps")
+        }
+        let pngSequence = FrameSequenceSource(
+            directoryURL: pngDirectory,
+            frameNames: inspection.frameNames,
+            framesPerSecond: 8
+        )
+        let pngProxy = try await ImageSequenceDecoder.decodeProxy(from: pngSequence, quality: .standard)
+        guard pngProxy.tensor.frames == 2,
+              pngProxy.tensor.width == 2,
+              pngProxy.tensor.height == 2,
+              abs(pngProxy.tensor.values[0] - 1) < 0.000_1,
+              abs(pngProxy.tensor.values[3] - 1) < 0.000_1,
+              abs(pngProxy.tensor.values[16 + 1] - Float(128.0 / 255.0)) < 0.01,
+              abs(pngProxy.tensor.values[16 + 3] - Float(128.0 / 255.0)) < 0.01 else {
+            throw IntegrationSelfTestError.message("PNG proxy decode did not preserve RGB and premultiplied alpha")
+        }
+        let pngRaw = root.appendingPathComponent("png-sequence.raw")
+        let pngFull = try await ImageSequenceDecoder.decodeFull(
+            from: pngSequence,
+            destinationURL: pngRaw
+        ) { _, _ in }
+        let pngMapped = try Data(contentsOf: pngRaw, options: .mappedIfSafe)
+        let pngFullValues = pngMapped.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+        guard pngFull.isValidOnDisk(),
+              pngFull.frames == 2,
+              pngFull.framesPerSecond == 8,
+              pngFullValues.count == pngProxy.tensor.values.count,
+              zip(pngFullValues, pngProxy.tensor.values).allSatisfy({ abs($0 - $1) < 0.000_1 }) else {
+            throw IntegrationSelfTestError.message("PNG full decode did not match proxy colour and alpha semantics")
+        }
+        let pngExportDirectory = root.appendingPathComponent("png-export", isDirectory: true)
+        try await PNGSequenceExporter.export(pngFull, to: pngExportDirectory) { _, _ in }
+        let exportedInspection = try FrameSequenceDiscovery.inspect(directoryURL: pngExportDirectory)
+        guard exportedInspection.frameNames == ["ChronoForge_000001.png", "ChronoForge_000002.png"] else {
+            throw IntegrationSelfTestError.message("PNG sequence export did not use stable six-digit frame names")
+        }
+        let exportedSource = FrameSequenceSource(
+            directoryURL: pngExportDirectory,
+            frameNames: exportedInspection.frameNames,
+            framesPerSecond: 8
+        )
+        let exportedRoundTrip = try await ImageSequenceDecoder.decodeProxy(from: exportedSource, quality: .standard)
+        guard exportedRoundTrip.tensor.values.count == pngProxy.tensor.values.count,
+              zip(exportedRoundTrip.tensor.values, pngProxy.tensor.values).allSatisfy({ abs($0 - $1) < 0.01 }) else {
+            throw IntegrationSelfTestError.message("PNG sequence export did not preserve premultiplied RGBA through an 8-bit round-trip")
+        }
+        do {
+            try await PNGSequenceExporter.export(pngFull, to: pngExportDirectory) { _, _ in }
+            throw IntegrationSelfTestError.message("PNG sequence export silently reused a non-empty folder")
+        } catch PNGSequenceExporterError.destinationNotEmpty {
+            // Expected: user files must never be overwritten implicitly.
+        }
         let firstNode = EffectNode.make(.lumaTimeShift)
         let branchA = EffectNode.make(.radialChronoFunnel, inputNodeID: firstNode.id)
         let branchB = EffectNode.make(.temporalPixelSort, inputNodeID: firstNode.id)
@@ -71,7 +137,9 @@ enum SelfTestRunner {
             proxyQuality: .high,
             spatialPrefilter: .light,
             temporalPrefilter: .strong,
-            audioMode: .preserveOriginal
+            audioMode: .preserveOriginal,
+            playbackFPSPreset: .custom,
+            customPlaybackFPS: 18
         )
         try SessionRecoveryStore.save(savedSnapshot, to: snapshotURL)
         let restoredSnapshot = try SessionRecoveryStore.load(from: snapshotURL)
@@ -81,6 +149,8 @@ enum SelfTestRunner {
               restoredSnapshot.spatialPrefilter == PrefilterStrength.light.rawValue,
               restoredSnapshot.temporalPrefilter == PrefilterStrength.strong.rawValue,
               restoredSnapshot.audioMode == AudioMode.preserveOriginal.rawValue,
+              restoredSnapshot.playbackFPSPreset == PlaybackFPSPreset.custom.rawValue,
+              restoredSnapshot.customPlaybackFPS == 18,
               restoredSnapshot.outputNodeID == branchB.id,
               restoredSnapshot.effects.last?.inputNodeID == firstNode.id,
               try restoredSnapshot.sourceURL() == source else {
@@ -89,6 +159,8 @@ enum SelfTestRunner {
         var legacyObject = try JSONSerialization.jsonObject(with: Data(contentsOf: snapshotURL)) as! [String: Any]
         legacyObject["version"] = 1
         legacyObject.removeValue(forKey: "source")
+        legacyObject.removeValue(forKey: "playbackFPSPreset")
+        legacyObject.removeValue(forKey: "customPlaybackFPS")
         if var legacyMedia = legacyObject["media"] as? [[String: Any]] {
             for index in legacyMedia.indices { legacyMedia[index].removeValue(forKey: "source") }
             legacyObject["media"] = legacyMedia
@@ -158,6 +230,26 @@ enum SelfTestRunner {
             throw IntegrationSelfTestError.message("Selected Effect compare did not capture the node's immediate input and output")
         }
         try await MainActor.run {
+            let outputSettings = SessionStore()
+            outputSettings.source = projectSource
+            outputSettings.output = projectSource.tensor
+            outputSettings.setAudioMode(.preserveOriginal)
+            guard outputSettings.audioMode == .preserveOriginal else {
+                throw IntegrationSelfTestError.message("Original movie audio could not be enabled at Result FPS")
+            }
+            outputSettings.setPlaybackFPSPreset(.fps24)
+            outputSettings.setAudioMode(.preserveOriginal)
+            guard outputSettings.audioMode == .none,
+                  outputSettings.outputFramesPerSecond == 24,
+                  outputSettings.outputDuration == Double(projectSource.tensor.frames) / 24 else {
+                throw IntegrationSelfTestError.message("Playback FPS did not reinterpret duration or restrict unsynchronised audio")
+            }
+            outputSettings.source = pngProxy
+            outputSettings.setPlaybackFPSPreset(.result)
+            outputSettings.setAudioMode(.preserveOriginal)
+            guard outputSettings.audioMode == .none else {
+                throw IntegrationSelfTestError.message("Image sequence incorrectly allowed Preserve Original Audio")
+            }
             let store = SessionStore()
             guard EffectKind.addableKinds.count == 11,
                   EffectKind.spaceTimeTranspose.title == EffectKind.tensor3DRotation.title,
@@ -299,6 +391,14 @@ enum SelfTestRunner {
             scratchDirectory: root.appendingPathComponent("scratch")
         ) { _, _ in }
         guard rendered.isValidOnDisk() else { throw IntegrationSelfTestError.message("File renderer output is invalid") }
+        let reinterpreted = FullRenderPipeline.reinterpreting(rendered, at: 12)
+        guard reinterpreted.fileURL == rendered.fileURL,
+              reinterpreted.frames == rendered.frames,
+              reinterpreted.framesPerSecond == 12,
+              reinterpreted.duration == Double(rendered.frames) / 12,
+              reinterpreted.timestamps == nil else {
+            throw IntegrationSelfTestError.message("Playback FPS changed pixels or frame count instead of metadata only")
+        }
         let crossOutput = root.appendingPathComponent("cross-output.raw")
         let crossRendered = try await FileCoreRenderer.render(
             input: decoded,
@@ -350,6 +450,42 @@ enum SelfTestRunner {
         input.markAsFinished()
         await writer.finishWriting()
         guard writer.status == .completed else { throw writer.error ?? IntegrationSelfTestError.message("Source writer did not finish") }
+    }
+
+    private static func makePNG(
+        at url: URL,
+        width: Int,
+        height: Int,
+        rgba: [UInt8]
+    ) throws {
+        let pixels = Array(repeating: rgba, count: width * height).flatMap { $0 }
+        guard let provider = CGDataProvider(data: Data(pixels) as CFData),
+              let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let image = CGImage(
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bitsPerPixel: 32,
+                bytesPerRow: width * 4,
+                space: colorSpace,
+                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),
+                provider: provider,
+                decode: nil,
+                shouldInterpolate: false,
+                intent: .defaultIntent
+              ),
+              let destination = CGImageDestinationCreateWithURL(
+                url as CFURL,
+                UTType.png.identifier as CFString,
+                1,
+                nil
+              ) else {
+            throw IntegrationSelfTestError.message("Cannot create PNG self-test fixture")
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw IntegrationSelfTestError.message("Cannot write PNG self-test fixture")
+        }
     }
 
     private static func fill(_ buffer: CVPixelBuffer, frame: Int) {

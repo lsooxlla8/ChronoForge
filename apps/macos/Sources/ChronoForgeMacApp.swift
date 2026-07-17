@@ -84,6 +84,7 @@ struct ChronoForgeMacApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("Import Video…") { project.addMedia() }
                     .keyboardShortcut("i", modifiers: .command)
+                Button("Import Image Sequence…") { project.addImageSequence() }
                 Divider()
                 Button("Update Preview") { project.renderPreview() }
                     .keyboardShortcut("r", modifiers: .command)
@@ -112,6 +113,7 @@ struct ChronoForgeMacApp: App {
 private struct WorkspaceView: View {
     @EnvironmentObject private var project: SessionStore
     @AppStorage("ChronoForge.darkAppearance") private var darkAppearance = false
+    @AppStorage("ChronoForge.viewerBackground") private var viewerBackgroundRaw = ViewerBackground.black.rawValue
     @State private var isComparingSource = false
     @State private var isComparingSelectedEffect = false
     @State private var isShowingSelectedEffectInput = false
@@ -212,7 +214,12 @@ private struct WorkspaceView: View {
                     ForEach(project.mediaPool, id: \.id) { media in
                         VStack(alignment: .leading, spacing: 2) {
                             HStack {
-                                Label(media.displayName, systemImage: project.source?.id == media.id ? "film.fill" : "film")
+                                Label(
+                                    media.displayName,
+                                    systemImage: media.mediaSource.isMovie
+                                        ? (project.source?.id == media.id ? "film.fill" : "film")
+                                        : (project.source?.id == media.id ? "photo.stack.fill" : "photo.stack")
+                                )
                                 if project.source?.id == media.id {
                                     Text("A").font(.caption2.bold()).padding(.horizontal, 5).background(.quaternary, in: Capsule())
                                 }
@@ -225,15 +232,18 @@ private struct WorkspaceView: View {
                             if project.source?.id != media.id {
                                 Button("Use as Primary (A)") { project.setPrimaryMedia(media.id) }
                             }
-                            Button("Replace Video…") { project.replaceMedia(media.id) }
-                            Button("Remove Video", role: .destructive) { project.removeMedia(media.id) }
+                            Button("Replace Media with Video…") { project.replaceMedia(media.id) }
+                            Button("Remove Media", role: .destructive) { project.removeMedia(media.id) }
                         }
                     }
                     Button("Add video…", systemImage: "plus.rectangle.on.folder") { project.addMedia() }
                         .font(.caption)
+                    Button("Add PNG sequence…", systemImage: "photo.stack") { project.addImageSequence() }
+                        .font(.caption)
                 } else {
-                    Button("Import video…", systemImage: "plus.rectangle.on.folder") {
-                        project.addMedia()
+                    Menu("Import media…", systemImage: "plus.rectangle.on.folder") {
+                        Button("Video…") { project.addMedia() }
+                        Button("PNG Sequence…") { project.addImageSequence() }
                     }
                 }
             }
@@ -362,9 +372,21 @@ private struct WorkspaceView: View {
                     .help("Hold to compare Source A with the latest result. Keyboard: hold \\")
                 Button("Add to Queue", systemImage: "text.badge.plus") { project.addCurrentRenderToQueue() }
                     .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
-                Button("Export MP4…", systemImage: "square.and.arrow.up") { project.chooseExportLocation() }
+                Menu("Export…", systemImage: "square.and.arrow.up") {
+                    Button("MP4 Video…", systemImage: "film") { project.chooseExportLocation() }
+                    Button("PNG Sequence…", systemImage: "photo.stack") { project.choosePNGSequenceExportLocation() }
+                }
                     .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
-                    .help("Render the current effect stack from the original media at full quality and write an MP4 file.")
+                    .help("Render the current effect stack from the original media at full quality.")
+                Picker("Viewer background", selection: Binding(
+                    get: { ViewerBackground(rawValue: viewerBackgroundRaw) ?? .black },
+                    set: { viewerBackgroundRaw = $0.rawValue }
+                )) {
+                    ForEach(ViewerBackground.allCases) { background in Text(background.title).tag(background) }
+                }
+                .labelsHidden()
+                .frame(width: 125)
+                .help("Choose black or checkerboard behind transparent pixels.")
                 Divider().frame(height: 22)
                 HStack(spacing: 6) {
                     Image(systemName: darkAppearance ? "moon.fill" : "sun.max.fill")
@@ -403,14 +425,38 @@ private struct WorkspaceView: View {
                 .help("Blends adjacent output frames to reduce temporal aliasing and flicker. It can soften deliberately abrupt motion.")
                 Picker("Audio", selection: Binding(
                     get: { project.audioMode },
-                    set: {
-                        project.audioMode = $0
-                        if project.source != nil { project.markEdited(invalidatePreview: false) }
-                    }
+                    set: { project.setAudioMode($0) }
                 )) {
-                    ForEach(AudioMode.allCases) { mode in Text(mode.title).tag(mode) }
+                    ForEach(AudioMode.allCases) { mode in
+                        Text(mode.title)
+                            .tag(mode)
+                            .disabled(mode == .preserveOriginal && !project.canPreserveOriginalAudio)
+                    }
                 }
                 .frame(width: 170)
+                .help(project.canPreserveOriginalAudio
+                    ? "Preserve the original movie audio without re-timing it."
+                    : "Original audio is unavailable for image sequences or reinterpreted playback FPS.")
+                Picker("Playback FPS", selection: Binding(
+                    get: { project.playbackFPSPreset },
+                    set: { project.setPlaybackFPSPreset($0) }
+                )) {
+                    ForEach(PlaybackFPSPreset.allCases) { preset in Text(preset.title).tag(preset) }
+                }
+                .frame(width: 155)
+                if project.playbackFPSPreset == .custom {
+                    TextField("FPS", value: Binding(
+                        get: { project.customPlaybackFPS },
+                        set: { project.setCustomPlaybackFPS($0) }
+                    ), format: .number.precision(.fractionLength(0...3)))
+                    .frame(width: 65)
+                    .textFieldStyle(.roundedBorder)
+                }
+                if let duration = project.outputDuration {
+                    Text("\(duration, format: .number.precision(.fractionLength(2))) s output")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
             }
         }
@@ -419,7 +465,11 @@ private struct WorkspaceView: View {
 
     private var preview: some View {
         ZStack {
-            Color.black.opacity(0.94)
+            if (ViewerBackground(rawValue: viewerBackgroundRaw) ?? .black) == .checkerboard {
+                CheckerboardView()
+            } else {
+                Color.black.opacity(0.94)
+            }
             if let presentation = previewPresentation,
                let image = TensorImage.make(from: presentation.tensor, frame: presentation.frame) {
                 Image(decorative: image, scale: 1)
@@ -429,11 +479,14 @@ private struct WorkspaceView: View {
                     .padding(16)
             } else {
                 ContentUnavailableView {
-                    Label("No video", systemImage: "film.stack")
+                    Label("No media", systemImage: "film.stack")
                 } description: {
-                    Text("Import a movie to create a proxy tensor.")
+                    Text("Import a movie or PNG sequence to create a proxy tensor.")
                 } actions: {
-                    Button("Import Video…") { project.addMedia() }
+                    Menu("Import Media…") {
+                        Button("Video…") { project.addMedia() }
+                        Button("PNG Sequence…") { project.addImageSequence() }
+                    }
                 }
                 .foregroundStyle(.white.opacity(0.8))
             }
@@ -589,6 +642,25 @@ private struct WorkspaceView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+}
+
+private struct CheckerboardView: View {
+    var body: some View {
+        Canvas { context, size in
+            let square: CGFloat = 14
+            let columns = Int(ceil(size.width / square))
+            let rows = Int(ceil(size.height / square))
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(white: 0.28)))
+            for row in 0..<rows {
+                for column in 0..<columns where (row + column).isMultiple(of: 2) {
+                    context.fill(
+                        Path(CGRect(x: CGFloat(column) * square, y: CGFloat(row) * square, width: square, height: square)),
+                        with: .color(Color(white: 0.42))
+                    )
+                }
+            }
+        }
     }
 }
 

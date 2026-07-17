@@ -71,12 +71,12 @@ enum FullVideoExporter {
             for x in 0..<tensor.width {
                 let source = frameOffset + (y * tensor.width + x) * tensor.channels
                 let pixel = row.advanced(by: x * 4)
-                let alpha = tensor.channels >= 4 ? clamp(values[source + 3]) : 1
-                let divisor = alpha > 0.000_01 ? alpha : 1
-                pixel[0] = byte(linearToSRGB(values[source + 2] / divisor))
-                pixel[1] = byte(linearToSRGB(values[source + 1] / divisor))
-                pixel[2] = byte(linearToSRGB(values[source] / divisor))
-                pixel[3] = byte(alpha)
+                // H.264 has no alpha channel. Tensor RGB is premultiplied, so writing it
+                // directly produces an explicit composite over black.
+                pixel[0] = byte(linearToSRGB(values[source + 2]))
+                pixel[1] = byte(linearToSRGB(values[source + 1]))
+                pixel[2] = byte(linearToSRGB(values[source]))
+                pixel[3] = 255
             }
         }
     }

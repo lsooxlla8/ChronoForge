@@ -34,6 +34,26 @@ struct DecodedProxy: Sendable {
         self.sourceFrameCount = sourceFrameCount
         self.sourceFrameCountIsExact = sourceFrameCountIsExact
     }
+
+    init(
+        id: UUID = UUID(),
+        tensor: VideoTensorData,
+        displayName: String,
+        mediaSource: MediaSource,
+        sourceSize: CGSize,
+        sourceDuration: Double,
+        sourceFrameCount: Int = 0,
+        sourceFrameCountIsExact: Bool = false
+    ) {
+        self.id = id
+        self.tensor = tensor
+        self.displayName = displayName
+        self.mediaSource = mediaSource
+        self.sourceSize = sourceSize
+        self.sourceDuration = sourceDuration
+        self.sourceFrameCount = sourceFrameCount
+        self.sourceFrameCountIsExact = sourceFrameCountIsExact
+    }
 }
 
 enum VideoDecoderError: LocalizedError {

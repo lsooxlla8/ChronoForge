@@ -2,7 +2,7 @@
 
 **Break video across space and time.**
 
-ChronoForge is a native macOS video-effects app for VJs, glitch artists and motion designers. Import one or two clips, stack strange time-based effects, watch a fast proxy preview, then export the result at full resolution.
+ChronoForge is a native macOS video-effects app for VJs, glitch artists and motion designers. Import movies or PNG image sequences, stack strange time-based effects, watch a fast proxy preview, then export the result at full resolution.
 
 The 1.0 workflow is deliberately session-based: every normal launch starts empty, and a clean quit discards media, effect settings and the render queue. ChronoForge keeps only a hidden crash-recovery snapshot while the app is running; finished videos remain the thing you save.
 
@@ -42,12 +42,12 @@ No formulas required. If you have used an effect stack, displacement map or rend
 
 ## Five-minute workflow
 
-1. Click **Import Video**. This becomes the primary clip, **A**.
+1. Import a video or numbered PNG sequence. This becomes the primary source, **A**. Sequence import reports dimensions, numbering gaps and lets you choose FPS.
 2. Add effects from the sidebar. They run from top to bottom.
 3. Adjust **Amount** to blend any shape-compatible effect with its input, or press **Random Stack** to replace the chain with 1–3 compatible effects. One Undo restores the previous stack.
 4. Click **Update Preview**, or leave **Auto Update** enabled. Preview is always a smaller proxy so experimentation stays responsive.
 5. For a two-video effect, add another clip to Media and choose it as **Driver video (B)**.
-6. Click **Export MP4** for one full-quality render, or **Add to Queue** for a batch. Press **Shift–Command–R** to start the queue.
+6. Use **Export** for an H.264 MP4 or alpha-preserving PNG sequence. Choose Playback FPS to reinterpret the finished frames without resampling them. **Add to Queue** remains available for MP4 batches; press **Shift–Command–R** to start the queue.
 
 Useful shortcuts: **Space** plays or pauses the preview, **Command–Z** / **Shift–Command–Z** undo and redo creative changes, **\\** temporarily shows Source A, and **Shift–S** hides or shows the sidebar.
 
@@ -55,7 +55,7 @@ Useful shortcuts: **Space** plays or pauses the preview, **Command–Z** / **Shi
 
 Most video tools treat time as a playhead. ChronoForge treats time like another direction you can swap, rotate, sort, map and displace. The result is closer to a playable glitch instrument than a conventional editor.
 
-Large videos are processed through temporary SSD files instead of being loaded into RAM all at once. Preview always uses proxy media; export always goes back to the original files. The render cache trims itself automatically.
+Large movies and image sequences are processed through temporary SSD files instead of being loaded into RAM all at once. Preview always uses proxy media; export always goes back to the original files. The render cache trims itself automatically.
 
 The 1.0 development line groups effects by Time, Space, Signal, Memory, Data, Multi-Source and Output families. Its implementation plan is tracked in [docs/next-development-phase.md](docs/next-development-phase.md).
 
