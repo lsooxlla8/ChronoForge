@@ -25,6 +25,7 @@
 - Added Bitplane Forge with 2–16-bit working precision, selectable plane masks, Shuffle/Rotate/Invert/XOR operations, luma/RGB/channel/alpha targeting and premultiplied-alpha-safe RAM/mapped parity.
 - Added Signal Weave for deterministic two-source Lines/Fields/Bands/Checker patterns, phase drift, irregularity, B time offsets and Clamp/Stretch/Crop matching in proxy and full renders.
 - Added Block Graft with held B-block replacement, Random/A Luma/B Luma/Difference/A Edges triggers, time offset, size matching and deterministic proxy/full parity.
+- Added Channel Transplant with compact per-component A/B routing in RGB or YCbCr, independent B time/spatial offsets, A-alpha preservation and proxy/full parity.
 
 ## 0.9.0 — seamless loops and interaction fixes
 

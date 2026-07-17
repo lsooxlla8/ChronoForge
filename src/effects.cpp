@@ -1221,6 +1221,77 @@ VideoTensor block_graft(
     return output;
 }
 
+VideoTensor channel_transplant(
+    const VideoTensor& source,
+    const VideoTensor& driver,
+    const ChannelTransplantParams& params) {
+    auto output_shape = source.shape();
+    if (params.size_matching == TensorBroadcast::Crop) {
+        output_shape.t = std::min(source.shape().t, driver.shape().t);
+        output_shape.h = std::min(source.shape().h, driver.shape().h);
+        output_shape.w = std::min(source.shape().w, driver.shape().w);
+    }
+    VideoTensor output(output_shape, 0.0F, source.metadata());
+    const auto driver_coordinate = [&](std::size_t coordinate, std::size_t output_extent, std::size_t driver_extent) {
+        if (params.size_matching == TensorBroadcast::Stretch) {
+            return output_extent <= 1 || driver_extent <= 1 ? std::size_t{0} : static_cast<std::size_t>(std::round(
+                static_cast<double>(coordinate) * static_cast<double>(driver_extent - 1) /
+                static_cast<double>(output_extent - 1)));
+        }
+        return std::min(coordinate, driver_extent - 1);
+    };
+    const auto straight_rgb = [](const VideoTensor& tensor, std::size_t t, std::size_t y, std::size_t x) {
+        std::array<float, 3> rgb{};
+        const auto alpha = tensor.shape().c >= 4 ? std::clamp(tensor.at(t, y, x, 3), 0.0F, 1.0F) : 1.0F;
+        for (std::size_t c = 0; c < 3; ++c) {
+            const auto channel = std::min(c, tensor.shape().c - 1);
+            rgb[c] = tensor.shape().c >= 4 ? (alpha > 0.00001F ? tensor.at(t, y, x, channel) / alpha : 0.0F)
+                                            : tensor.at(t, y, x, channel);
+        }
+        return rgb;
+    };
+    const auto components = [&](const std::array<float, 3>& rgb) {
+        if (params.colour_model == ChannelTransplantColourModel::Rgb) return rgb;
+        const auto yy = 0.2126F * rgb[0] + 0.7152F * rgb[1] + 0.0722F * rgb[2];
+        return std::array<float, 3>{yy, (rgb[2] - yy) / 1.8556F, (rgb[0] - yy) / 1.5748F};
+    };
+    parallel_for(output_shape.t, [&](std::size_t t) {
+        const auto bt = resolve_time(
+            static_cast<std::ptrdiff_t>(driver_coordinate(t, output_shape.t, driver.shape().t)) + params.b_time_offset,
+            driver.shape().t, EdgeBehavior::Clamp);
+        for (std::size_t y = 0; y < output_shape.h; ++y) {
+            const auto by = resolve_time(
+                static_cast<std::ptrdiff_t>(driver_coordinate(y, output_shape.h, driver.shape().h)) + params.b_spatial_offset_y,
+                driver.shape().h, EdgeBehavior::Clamp);
+            for (std::size_t x = 0; x < output_shape.w; ++x) {
+                const auto bx = resolve_time(
+                    static_cast<std::ptrdiff_t>(driver_coordinate(x, output_shape.w, driver.shape().w)) + params.b_spatial_offset_x,
+                    driver.shape().w, EdgeBehavior::Clamp);
+                const auto a_rgb = straight_rgb(source, t, y, x);
+                const auto b_rgb = straight_rgb(driver, bt, by, bx);
+                auto selected = components(a_rgb);
+                const auto b_components = components(b_rgb);
+                for (std::size_t component = 0; component < 3; ++component) {
+                    if (params.source_from_b[component]) selected[component] = b_components[component];
+                }
+                std::array<float, 3> rgb = selected;
+                if (params.colour_model == ChannelTransplantColourModel::YCbCr) {
+                    rgb[0] = selected[0] + 1.5748F * selected[2];
+                    rgb[2] = selected[0] + 1.8556F * selected[1];
+                    rgb[1] = (selected[0] - 0.2126F * rgb[0] - 0.0722F * rgb[2]) / 0.7152F;
+                }
+                const auto alpha = source.shape().c >= 4 ? source.at(t, y, x, 3) : 1.0F;
+                for (std::size_t c = 0; c < std::min<std::size_t>(3, output_shape.c); ++c) {
+                    output.at(t, y, x, c) = std::clamp(rgb[c], 0.0F, 1.0F) * alpha;
+                }
+                if (output_shape.c >= 4) output.at(t, y, x, 3) = alpha;
+                for (std::size_t c = 4; c < output_shape.c; ++c) output.at(t, y, x, c) = source.at(t, y, x, c);
+            }
+        }
+    });
+    return output;
+}
+
 VideoTensor optical_flow_time_warp(const VideoTensor& input, const OpticalFlowTimeWarpParams& params) {
     const auto& shape = input.shape();
     VideoTensor output(shape, 0.0F, input.metadata());

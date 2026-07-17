@@ -246,6 +246,15 @@ enum RandomStackGenerator {
                 RandomFloatDistribution.signedMagnitude(1...120, deadZone: 1).sample(using: &random),
             ]
             node.options = [weighted([0, 0, 1, 2, 3, 4], using: &random), weighted([0, 0, 1, 1, 2], using: &random)]
+        case "channel-transplant":
+            var mappings = [Int32(random.integer(in: 0...1)), Int32(random.integer(in: 0...1)), Int32(random.integer(in: 0...1))]
+            if !mappings.contains(1) { mappings[random.integer(in: 0...2)] = 1 }
+            node.values = [
+                RandomFloatDistribution.signedMagnitude(1...120, deadZone: 1).sample(using: &random),
+                RandomFloatDistribution.signedMagnitude(1...320, deadZone: 1).sample(using: &random),
+                RandomFloatDistribution.signedMagnitude(1...240, deadZone: 1).sample(using: &random),
+            ]
+            node.options = mappings + [Int32(random.integer(in: 0...1)), weighted([0, 0, 1, 1, 2], using: &random)]
         default:
             break
         }

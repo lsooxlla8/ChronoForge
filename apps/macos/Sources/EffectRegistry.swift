@@ -146,6 +146,11 @@ enum EffectRegistry {
                    shape: .preservingForOptions(index: 1, values: [0, 1]), usesRandomSeed: true,
                    values: [24, 0.35, 4, 0], options: [0, 0],
                    randomization: .init(identifier: "block-graft", amount: .triangular(0.25...1, preferred: 0.7))),
+        definition(.channelTransplant, "Channel Transplant", "arrow.left.arrow.right.square.fill", .pink, .multiSource,
+                   inputArity: .two, cost: .temporal,
+                   shape: .preservingForOptions(index: 4, values: [0, 1]),
+                   values: [0, 0, 0], options: [1, 0, 1, 0, 0],
+                   randomization: .init(identifier: "channel-transplant", amount: .triangular(0.3...1, preferred: 0.8))),
     ]
 
     private static let byKind = Dictionary(uniqueKeysWithValues: definitions.map { ($0.kind, $0) })

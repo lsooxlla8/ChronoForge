@@ -1747,6 +1747,7 @@ void apply(
         case EffectOperation::TensorDisplacement:
         case EffectOperation::SignalWeave:
         case EffectOperation::BlockGraft:
+        case EffectOperation::ChannelTransplant:
             throw std::invalid_argument("This effect requires a driver tensor");
     }
     throw std::invalid_argument("Invalid effect operation");
@@ -1796,6 +1797,8 @@ void apply(
             return "Signal Weave";
         case EffectOperation::BlockGraft:
             return "Block Graft";
+        case EffectOperation::ChannelTransplant:
+            return "Channel Transplant";
     }
     return "Unknown";
 }
@@ -1930,6 +1933,17 @@ FileRenderResult render_file_cross_tensor_effect(
         require_option(effect.options[0], 4, "block graft trigger");
         require_option(effect.options[1], 2, "block graft size matching");
         if (effect.options[1] == static_cast<std::int32_t>(TensorBroadcast::Crop)) {
+            result_shape.t = std::min(source_shape.t, driver_shape.t);
+            result_shape.h = std::min(source_shape.h, driver_shape.h);
+            result_shape.w = std::min(source_shape.w, driver_shape.w);
+        }
+    } else if (effect.kind == EffectOperation::ChannelTransplant) {
+        require_option(effect.options[0], 1, "channel transplant component source");
+        require_option(effect.options[1], 1, "channel transplant component source");
+        require_option(effect.options[2], 1, "channel transplant component source");
+        require_option(effect.options[3], 1, "channel transplant colour model");
+        require_option(effect.options[4], 2, "channel transplant size matching");
+        if (effect.options[4] == static_cast<std::int32_t>(TensorBroadcast::Crop)) {
             result_shape.t = std::min(source_shape.t, driver_shape.t);
             result_shape.h = std::min(source_shape.h, driver_shape.h);
             result_shape.w = std::min(source_shape.w, driver_shape.w);
@@ -2078,7 +2092,7 @@ FileRenderResult render_file_cross_tensor_effect(
                 }
             }
         });
-    } else {
+    } else if (effect.kind == EffectOperation::BlockGraft) {
         const auto trigger = static_cast<BlockGraftTrigger>(effect.options[0]);
         const auto size_matching = static_cast<TensorBroadcast>(effect.options[1]);
         const auto block_size = static_cast<std::size_t>(std::max(2.0F, std::round(effect.values[0])));
@@ -2141,6 +2155,68 @@ FileRenderResult render_file_cross_tensor_effect(
                             ? read(driver, current_driver_t, driver_y, driver_x, std::min(c, driver_shape.c - 1))
                             : read(source, t, y, x, c);
                     }
+                }
+            }
+        });
+    } else {
+        const std::array<bool, 3> from_b{effect.options[0] != 0, effect.options[1] != 0, effect.options[2] != 0};
+        const auto colour_model = static_cast<ChannelTransplantColourModel>(effect.options[3]);
+        const auto size_matching = static_cast<TensorBroadcast>(effect.options[4]);
+        const auto time_offset = static_cast<int>(std::clamp(std::round(effect.values[0]), -240.0F, 240.0F));
+        const auto x_offset = static_cast<int>(std::round(effect.values[1]));
+        const auto y_offset = static_cast<int>(std::round(effect.values[2]));
+        const auto driver_coordinate = [&](std::size_t coordinate, std::size_t output_extent, std::size_t driver_extent) {
+            if (size_matching == TensorBroadcast::Stretch) {
+                return output_extent <= 1 || driver_extent <= 1 ? std::size_t{0} : static_cast<std::size_t>(std::round(
+                    static_cast<double>(coordinate) * static_cast<double>(driver_extent - 1) /
+                    static_cast<double>(output_extent - 1)));
+            }
+            return std::min(coordinate, driver_extent - 1);
+        };
+        const auto straight_rgb = [](const MappedTensor& tensor, std::size_t t, std::size_t y, std::size_t x) {
+            std::array<float, 3> rgb{};
+            const auto alpha = tensor.shape().c >= 4 ? std::clamp(read(tensor, t, y, x, 3), 0.0F, 1.0F) : 1.0F;
+            for (std::size_t c = 0; c < 3; ++c) {
+                const auto channel = std::min(c, tensor.shape().c - 1);
+                rgb[c] = tensor.shape().c >= 4 ? (alpha > 0.00001F ? read(tensor, t, y, x, channel) / alpha : 0.0F)
+                                                : read(tensor, t, y, x, channel);
+            }
+            return rgb;
+        };
+        const auto components = [&](const std::array<float, 3>& rgb) {
+            if (colour_model == ChannelTransplantColourModel::Rgb) return rgb;
+            const auto yy = 0.2126F * rgb[0] + 0.7152F * rgb[1] + 0.0722F * rgb[2];
+            return std::array<float, 3>{yy, (rgb[2] - yy) / 1.8556F, (rgb[0] - yy) / 1.5748F};
+        };
+        parallel_for(result_shape.t, [&](double fraction) { report(progress, fraction, "Channel Transplant"); }, [&](std::size_t t) {
+            const auto bt = resolve_time(
+                static_cast<std::ptrdiff_t>(driver_coordinate(t, result_shape.t, driver_shape.t)) + time_offset,
+                driver_shape.t, EdgeBehavior::Clamp);
+            for (std::size_t y = 0; y < result_shape.h; ++y) {
+                const auto by = resolve_time(
+                    static_cast<std::ptrdiff_t>(driver_coordinate(y, result_shape.h, driver_shape.h)) + y_offset,
+                    driver_shape.h, EdgeBehavior::Clamp);
+                for (std::size_t x = 0; x < result_shape.w; ++x) {
+                    const auto bx = resolve_time(
+                        static_cast<std::ptrdiff_t>(driver_coordinate(x, result_shape.w, driver_shape.w)) + x_offset,
+                        driver_shape.w, EdgeBehavior::Clamp);
+                    const auto a_rgb = straight_rgb(source, t, y, x);
+                    const auto b_rgb = straight_rgb(driver, bt, by, bx);
+                    auto selected = components(a_rgb);
+                    const auto b_components = components(b_rgb);
+                    for (std::size_t component = 0; component < 3; ++component) if (from_b[component]) selected[component] = b_components[component];
+                    std::array<float, 3> rgb = selected;
+                    if (colour_model == ChannelTransplantColourModel::YCbCr) {
+                        rgb[0] = selected[0] + 1.5748F * selected[2];
+                        rgb[2] = selected[0] + 1.8556F * selected[1];
+                        rgb[1] = (selected[0] - 0.2126F * rgb[0] - 0.0722F * rgb[2]) / 0.7152F;
+                    }
+                    const auto alpha = source_shape.c >= 4 ? read(source, t, y, x, 3) : 1.0F;
+                    for (std::size_t c = 0; c < std::min<std::size_t>(3, result_shape.c); ++c) {
+                        destination[linear(t, y, x, c, result_shape)] = std::clamp(rgb[c], 0.0F, 1.0F) * alpha;
+                    }
+                    if (result_shape.c >= 4) destination[linear(t, y, x, 3, result_shape)] = alpha;
+                    for (std::size_t c = 4; c < result_shape.c; ++c) destination[linear(t, y, x, c, result_shape)] = read(source, t, y, x, c);
                 }
             }
         });

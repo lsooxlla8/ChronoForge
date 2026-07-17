@@ -205,6 +205,19 @@ struct ChronoForgeIntegration {
             throw IntegrationFailure.message("Block Graft bridge path did not graft deterministic B blocks")
         }
 
+        let transplantValues: [Float] = [1, 4, -3]
+        let transplantOptions: [Int32] = [1, 0, 1, 0, 0]
+        let transplant = transplantValues.withUnsafeBufferPointer { values in
+            transplantOptions.withUnsafeBufferPointer { options in
+                cf_effect_descriptor_v2_make(21, 1, 0, values.baseAddress, 3, options.baseAddress, 5)
+            }
+        }
+        let transplantOutput = try renderCross(transplant)
+        guard transplantOutput != tensor.values,
+              stride(from: 3, to: transplantOutput.count, by: 4).allSatisfy({ transplantOutput[$0] == tensor.values[$0] }) else {
+            throw IntegrationFailure.message("Channel Transplant bridge path did not preserve A alpha")
+        }
+
         var outdated = effect
         outdated.descriptor_version = 1
         do {

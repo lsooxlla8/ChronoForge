@@ -341,6 +341,20 @@ void test_cross_tensor_and_flow_effects() {
         {2, 0.5F, 2, 0, chronoforge::BlockGraftTrigger::Difference,
          chronoforge::TensorBroadcast::Clamp, 0});
     require(grafted.values() == weave_b.values(), "Block Graft replaces complete B blocks when Difference crosses threshold");
+    chronoforge::VideoTensor transplant_a({1, 1, 1, 4}, 0.0F);
+    transplant_a.at(0, 0, 0, 0) = 0.5F;
+    transplant_a.at(0, 0, 0, 3) = 0.5F;
+    chronoforge::VideoTensor transplant_b({1, 1, 1, 4}, 0.0F);
+    transplant_b.at(0, 0, 0, 1) = 1.0F;
+    transplant_b.at(0, 0, 0, 2) = 1.0F;
+    transplant_b.at(0, 0, 0, 3) = 1.0F;
+    const auto transplanted = chronoforge::channel_transplant(
+        transplant_a, transplant_b,
+        {{false, true, false}, 0, 0, 0, chronoforge::ChannelTransplantColourModel::Rgb,
+         chronoforge::TensorBroadcast::Clamp});
+    require_near(transplanted.at(0, 0, 0, 0), 0.5F, "Channel Transplant keeps selected A components");
+    require_near(transplanted.at(0, 0, 0, 1), 0.5F, "Channel Transplant re-premultiplies a B component to A alpha");
+    require_near(transplanted.at(0, 0, 0, 3), 0.5F, "Channel Transplant preserves A alpha");
 
     chronoforge::VideoTensor still({3, 3, 3, 1}, 0.4F);
     const auto flow = chronoforge::optical_flow_time_warp(still, {});
@@ -448,6 +462,21 @@ void test_file_backed_cross_tensor() {
     const auto graft_output = chronoforge::MappedTensor::open(graft_path, graft_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
     for (std::size_t index = 0; index < graft_expected.values().size(); ++index) {
         require_near(graft_output.data()[index], graft_expected.values()[index], "Out-of-core Block Graft matches RAM reference");
+    }
+    const auto transplant_path = root / "transplant.raw";
+    const chronoforge::EffectSpec transplant_effect{
+        chronoforge::EffectOperation::ChannelTransplant, {1, 1, 0}, {1, 0, 1, 0, 1}};
+    const auto transplant_result = chronoforge::render_file_cross_tensor_effect(
+        source_path, driver_path, transplant_path, source.shape(), driver.shape(),
+        source.metadata(), driver.metadata(), transplant_effect, {});
+    const auto transplant_expected = chronoforge::channel_transplant(
+        source, driver,
+        {{true, false, true}, 1, 1, 0, chronoforge::ChannelTransplantColourModel::Rgb,
+         chronoforge::TensorBroadcast::Stretch});
+    const auto transplant_output = chronoforge::MappedTensor::open(
+        transplant_path, transplant_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
+    for (std::size_t index = 0; index < transplant_expected.values().size(); ++index) {
+        require_near(transplant_output.data()[index], transplant_expected.values()[index], "Out-of-core Channel Transplant matches RAM reference");
     }
     std::filesystem::remove_all(root);
 }

@@ -2,6 +2,7 @@
 
 #include "chronoforge/core/video_tensor.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -33,6 +34,7 @@ enum class BitplaneOperation { Shuffle, Rotate, Invert, Xor };
 enum class BitplaneChannel { Luma, RgbTogether, Red, Green, Blue, Alpha };
 enum class SignalWeavePattern { Lines, InterlacedFields, Bands, Checker };
 enum class BlockGraftTrigger { Random, ALuma, BLuma, Difference, AEdges };
+enum class ChannelTransplantColourModel { Rgb, YCbCr };
 
 struct LumaTimeShiftParams {
     float shift_multiplier{};
@@ -197,6 +199,15 @@ struct BlockGraftParams {
     std::uint64_t random_seed{};
 };
 
+struct ChannelTransplantParams {
+    std::array<bool, 3> source_from_b{false, false, false};
+    int b_time_offset{};
+    int b_spatial_offset_x{};
+    int b_spatial_offset_y{};
+    ChannelTransplantColourModel colour_model{ChannelTransplantColourModel::Rgb};
+    TensorBroadcast size_matching{TensorBroadcast::Clamp};
+};
+
 VideoTensor space_time_transpose(const VideoTensor& input, SpatialAxis axis);
 VideoTensor space_time_transpose(const VideoTensor& input, const SpaceTimeTransposeParams& params);
 VideoTensor luma_time_shift(const VideoTensor& input, const LumaTimeShiftParams& params);
@@ -224,5 +235,6 @@ VideoTensor block_address_corruption(const VideoTensor& input, const BlockAddres
 VideoTensor bitplane_forge(const VideoTensor& input, const BitplaneForgeParams& params);
 VideoTensor signal_weave(const VideoTensor& source, const VideoTensor& driver, const SignalWeaveParams& params);
 VideoTensor block_graft(const VideoTensor& source, const VideoTensor& driver, const BlockGraftParams& params);
+VideoTensor channel_transplant(const VideoTensor& source, const VideoTensor& driver, const ChannelTransplantParams& params);
 
 }  // namespace chronoforge

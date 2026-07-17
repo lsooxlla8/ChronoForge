@@ -47,6 +47,7 @@ No formulas required. If you have used an effect stack, displacement map or rend
 | **Space-Time Displacement** | A is the target. Brightness or a channel from B pushes A through X, Y and Time. |
 | **Signal Weave** | Alternate moving lines, interlaced fields, bands or checker cells between A and B. |
 | **Block Graft** | Implant held blocks from B into A using random, luma, difference or edge triggers. |
+| **Channel Transplant** | Replace individual RGB or Y/Cb/Cr components of A with offset samples from B. |
 
 ## Five-minute workflow
 

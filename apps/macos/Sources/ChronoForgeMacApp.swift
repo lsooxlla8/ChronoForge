@@ -882,6 +882,20 @@ private struct EffectInspector: View {
             Text("Selected blocks from B replace A as complete colour samples. Hold freezes each block decision for several frames.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        case .channelTransplant:
+            driverPicker()
+            optionPicker("Colour Model", value: option(3), options: ["RGB", "YCbCr"])
+            let componentNames = node.options[3] == 0 ? ["Red", "Green", "Blue"] : ["Luma Y", "Chroma Cb", "Chroma Cr"]
+            optionPicker(componentNames[0], value: option(0), options: ["Source A", "Driver B"])
+            optionPicker(componentNames[1], value: option(1), options: ["Source A", "Driver B"])
+            optionPicker(componentNames[2], value: option(2), options: ["Source A", "Driver B"])
+            valueSlider("B Time Offset", index: 0, range: -240...240, format: "%.0f frames")
+            valueSlider("B X Offset", index: 1, range: -1000...1000, format: "%.0f px")
+            valueSlider("B Y Offset", index: 2, range: -1000...1000, format: "%.0f px")
+            optionPicker("Size Matching", value: option(4), options: ["Clamp", "Stretch", "Crop"])
+            Text("Each destination component independently stays with A or comes from a time- and space-offset sample of B. Alpha remains A's.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
