@@ -17,6 +17,7 @@
 - Added numbered PNG sequence import with natural sorting, dimension validation, gap warnings, selectable/custom FPS, premultiplied-alpha proxy decoding and one-frame-at-a-time full decoding.
 - Added streaming 8-bit RGBA PNG sequence export with six-digit names, non-empty-folder protection and alpha-preserving round-trip coverage.
 - Added Result/preset/custom Playback FPS reinterpretation, output-duration feedback, audio sync restrictions, Black/Checkerboard viewer backgrounds and explicit black compositing for H.264.
+- Added RGB Time Slip with independent R/G/B frame offsets, horizontal/vertical/radial spatial separation, current-frame premultiplied alpha, Amount, effect-aware randomization and matching RAM/mapped render paths.
 
 ## 0.9.0 — seamless loops and interaction fixes
 

@@ -88,6 +88,23 @@ void test_time_shift_and_funnel() {
     }
 }
 
+void test_rgb_time_slip() {
+    chronoforge::VideoTensor input({3, 1, 1, 4}, 0.0F);
+    input.at(0, 0, 0, 0) = 0.25F;
+    input.at(0, 0, 0, 3) = 0.25F;
+    input.at(1, 0, 0, 1) = 0.5F;
+    input.at(1, 0, 0, 3) = 0.5F;
+    input.at(2, 0, 0, 2) = 1.0F;
+    input.at(2, 0, 0, 3) = 1.0F;
+    const auto output = chronoforge::rgb_time_slip(
+        input,
+        {1.0F, 0.0F, -1.0F, 0.0F, chronoforge::SplitAxis::Horizontal, chronoforge::EdgeBehavior::Clamp});
+    require_near(output.at(1, 0, 0, 0), 0.5F, "RGB Time Slip reads red from its independent frame and re-premultiplies it");
+    require_near(output.at(1, 0, 0, 1), 0.5F, "RGB Time Slip keeps the stationary green channel");
+    require_near(output.at(1, 0, 0, 2), 0.5F, "RGB Time Slip reads blue from its independent frame and re-premultiplies it");
+    require_near(output.at(1, 0, 0, 3), 0.5F, "RGB Time Slip keeps alpha on the current frame");
+}
+
 void test_sort_and_rotation() {
     chronoforge::VideoTensor input({3, 1, 1, 1});
     input.at(0, 0, 0, 0) = 0.8F;
@@ -315,6 +332,7 @@ void test_file_backed_effect_chain() {
 
     const std::vector<chronoforge::EffectSpec> effects{
         {chronoforge::EffectOperation::LumaTimeShift, {2.0F, 0, 0, 0}, {0, 1, 0, 0}},
+        {chronoforge::EffectOperation::RgbTimeSlip, {1.0F, 0.0F, -1.0F, 1.0F}, {0, 1}},
         {chronoforge::EffectOperation::RadialChronoFunnel, {0.5F, 0.5F, 0.2F, 0}, {2, 0, 0, 0}},
         {chronoforge::EffectOperation::TemporalPixelSort, {0.1F, 0, 0, 0}, {0, 0, 0, 0}},
         {chronoforge::EffectOperation::Tensor3dRotation, {5.0F, 10.0F, 0, 0}, {3, 0, 0, 0}},
@@ -340,6 +358,8 @@ void test_file_backed_effect_chain() {
         });
 
     auto expected = chronoforge::luma_time_shift(input, {2.0F, chronoforge::ShiftSource::Luma, chronoforge::EdgeBehavior::Wrap});
+    expected = chronoforge::rgb_time_slip(
+        expected, {1.0F, 0.0F, -1.0F, 1.0F, chronoforge::SplitAxis::Horizontal, chronoforge::EdgeBehavior::Wrap});
     expected = chronoforge::radial_chrono_funnel(
         expected,
         {0.5F, 0.5F, 0.2F, chronoforge::EdgeBehavior::Mirror, 0.0F, chronoforge::RadialTopology::TimeLoom});
@@ -544,6 +564,7 @@ int main() {
     try {
         test_transpose();
         test_time_shift_and_funnel();
+        test_rgb_time_slip();
         test_sort_and_rotation();
         test_fft_swap();
         test_cross_tensor_and_flow_effects();

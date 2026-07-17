@@ -34,6 +34,7 @@ typedef enum CFEffectKind {
     CF_EFFECT_CHRONO_FEEDBACK = 10,
     CF_EFFECT_STRUCTURAL_DATAMOSH = 11,
     CF_EFFECT_SEAMLESS_LOOP = 12,
+    CF_EFFECT_RGB_TIME_SLIP = 13,
 } CFEffectKind;
 
 enum { CF_EFFECT_DESCRIPTOR_VERSION = 2, CF_EFFECT_PARAMETER_CAPACITY = 8 };
@@ -47,6 +48,7 @@ enum { CF_EFFECT_DESCRIPTOR_VERSION = 2, CF_EFFECT_PARAMETER_CAPACITY = 8 };
 // spectral transform:     values[0] = angle; options = axis/plane, normalize, Native/Fit Source Size, Swap/Rotate
 // selective prefilter:    options = spatial strength, temporal strength (Off/Light/Strong)
 // seamless loop:          values = transition frames, weave softness; options[0] = Crossfade/Luma Weave/Ping-Pong
+// RGB time slip:          values = R/G/B frame offsets, spatial split; options = split axis, edge
 typedef struct CFEffectDescriptorV2 {
     int32_t kind;
     uint32_t descriptor_version;

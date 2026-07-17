@@ -424,6 +424,56 @@ void time_shift(const MappedTensor& input, MappedTensor& output, const EffectSpe
     });
 }
 
+void rgb_time_slip(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
+    require_option(effect.options[0], 2, "RGB split axis");
+    require_option(effect.options[1], 2, "RGB time slip edge behavior");
+    const auto axis = static_cast<SplitAxis>(effect.options[0]);
+    const auto edge = static_cast<EdgeBehavior>(effect.options[1]);
+    const auto& shape = input.shape();
+    if (shape.c < 3) throw std::invalid_argument("RGB Time Slip requires at least three channels");
+    const std::array<float, 3> time_offsets{effect.values[0], effect.values[1], effect.values[2]};
+    const std::array<float, 3> split_scales{1.0F, 0.0F, -1.0F};
+    const auto center_x = 0.5F * static_cast<float>(shape.w - 1);
+    const auto center_y = 0.5F * static_cast<float>(shape.h - 1);
+    auto* destination = output.mutable_data();
+    parallel_for(shape.t, progress, [&](std::size_t t) {
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                const auto output_alpha = shape.c >= 4 ? read(input, t, y, x, 3) : 1.0F;
+                for (std::size_t c = 0; c < 3; ++c) {
+                    auto source_x = static_cast<float>(x);
+                    auto source_y = static_cast<float>(y);
+                    const auto split = effect.values[3] * split_scales[c];
+                    if (axis == SplitAxis::Horizontal) {
+                        source_x -= split;
+                    } else if (axis == SplitAxis::Vertical) {
+                        source_y -= split;
+                    } else {
+                        const auto dx = static_cast<float>(x) - center_x;
+                        const auto dy = static_cast<float>(y) - center_y;
+                        const auto length = std::sqrt(dx * dx + dy * dy);
+                        if (length > 0.00001F) {
+                            source_x -= split * dx / length;
+                            source_y -= split * dy / length;
+                        }
+                    }
+                    const auto source_t = static_cast<float>(t) - time_offsets[c];
+                    auto value = sample_mapped(input, source_t, source_y, source_x, c, edge);
+                    if (shape.c >= 4) {
+                        const auto source_alpha = sample_mapped(input, source_t, source_y, source_x, 3, edge);
+                        value = source_alpha > 0.00001F ? value / source_alpha * output_alpha : 0.0F;
+                    }
+                    destination[linear(t, y, x, c, shape)] = value;
+                }
+                if (shape.c >= 4) destination[linear(t, y, x, 3, shape)] = output_alpha;
+                for (std::size_t c = 4; c < shape.c; ++c) {
+                    destination[linear(t, y, x, c, shape)] = read(input, t, y, x, c);
+                }
+            }
+        }
+    });
+}
+
 void radial(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
     require_option(effect.options[0], 2, "edge behavior");
     require_option(effect.options[1], 2, "radial topology");
@@ -1360,6 +1410,9 @@ void apply(
         case EffectOperation::SeamlessLoop:
             seamless_loop(input, output, effect, progress);
             return;
+        case EffectOperation::RgbTimeSlip:
+            rgb_time_slip(input, output, effect, progress);
+            return;
         case EffectOperation::DimensionalSplicer:
         case EffectOperation::TensorDisplacement:
             throw std::invalid_argument("This effect requires a driver tensor");
@@ -1395,6 +1448,8 @@ void apply(
             return "Axis Datamosh";
         case EffectOperation::SeamlessLoop:
             return "Seamless Loop";
+        case EffectOperation::RgbTimeSlip:
+            return "RGB Time Slip";
     }
     return "Unknown";
 }

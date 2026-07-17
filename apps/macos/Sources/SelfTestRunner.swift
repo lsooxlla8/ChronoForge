@@ -184,10 +184,20 @@ enum SelfTestRunner {
             throw IntegrationSelfTestError.message("Random Stack was not deterministic for an injected seed")
         }
         var lengthCounts = [0, 0, 0, 0]
+        var rgbTimeSlipSamples = 0
         for seed in 0..<600 {
             let stack = try RandomStackGenerator.generate(
                 mediaPool: [projectSource, driverSource], primaryMediaID: projectSource.id, seed: UInt64(seed))
             lengthCounts[stack.count] += 1
+            for node in stack where node.kind == .rgbTimeSlip {
+                rgbTimeSlipSamples += 1
+                let offsets = Array(node.values.prefix(3))
+                guard offsets.contains(where: { abs($0) <= 2.0001 }),
+                      offsets.contains(where: { $0 < -3.9 }),
+                      offsets.contains(where: { $0 > 3.9 }) else {
+                    throw IntegrationSelfTestError.message("RGB Time Slip randomization did not anchor one channel and separate the other two")
+                }
+            }
             guard stack.filter({ $0.kind.definition.costClass == .global }).count <= 1,
                   stack.dropLast().allSatisfy({ $0.kind != .seamlessLoop }),
                   stack.allSatisfy({ $0.amount == 1 || $0.supportsAmount }) else {
@@ -196,7 +206,8 @@ enum SelfTestRunner {
         }
         guard (160...260).contains(lengthCounts[1]),
               (220...320).contains(lengthCounts[2]),
-              (80...160).contains(lengthCounts[3]) else {
+              (80...160).contains(lengthCounts[3]),
+              rgbTimeSlipSamples > 20 else {
             throw IntegrationSelfTestError.message("Random Stack length weights drifted outside their expected ranges")
         }
         let compareInput = VideoTensorData(
@@ -251,10 +262,10 @@ enum SelfTestRunner {
                 throw IntegrationSelfTestError.message("Image sequence incorrectly allowed Preserve Original Audio")
             }
             let store = SessionStore()
-            guard EffectKind.addableKinds.count == 11,
+            guard EffectKind.addableKinds.count == 12,
                   EffectKind.spaceTimeTranspose.title == EffectKind.tensor3DRotation.title,
                   EffectKind.spaceTimeTranspose.title == "Space-Time Transform",
-                  EffectKind.singleInputKinds.count == 9,
+                  EffectKind.singleInputKinds.count == 10,
                   EffectKind.twoInputKinds.count == 2,
                   EffectKind.opticalFlowTimeWarp.symbol == "wind" else {
                 throw IntegrationSelfTestError.message("Effect families were not exposed as a homogeneous effect stack")

@@ -182,6 +182,16 @@ enum RandomStackGenerator {
             node.values = [Float(random.integer(in: 2...max(2, min(60, sourceFrames / 2)))),
                            .triangular(0.03...0.3, preferred: 0.12, using: &random)]
             node.options = [weighted([0, 0, 1, 1, 2], using: &random)]
+        case "rgb-time-slip":
+            let stationary = random.integer(in: 0...2)
+            var offsets = [Float](repeating: 0, count: 3)
+            let moving = (0...2).filter { $0 != stationary }
+            offsets[stationary] = RandomFloatDistribution.uniform(-2...2).sample(using: &random)
+            offsets[moving[0]] = -RandomFloatDistribution.logarithmic(4...180).sample(using: &random)
+            offsets[moving[1]] = RandomFloatDistribution.logarithmic(4...180).sample(using: &random)
+            if random.chance(0.5) { offsets.swapAt(moving[0], moving[1]) }
+            node.values = offsets + [RandomFloatDistribution.signedMagnitude(2...120, deadZone: 2).sample(using: &random)]
+            node.options = [Int32(random.integer(in: 0...2)), Int32(random.integer(in: 0...2))]
         default:
             break
         }

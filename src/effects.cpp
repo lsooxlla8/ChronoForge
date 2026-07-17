@@ -436,6 +436,53 @@ VideoTensor luma_time_shift(const VideoTensor& input, const LumaTimeShiftParams&
     return output;
 }
 
+VideoTensor rgb_time_slip(const VideoTensor& input, const RGBTimeSlipParams& params) {
+    const auto& shape = input.shape();
+    if (shape.c < 3) {
+        throw std::invalid_argument("RGB Time Slip requires at least three channels");
+    }
+    VideoTensor output(shape, 0.0F, input.metadata());
+    const std::array<float, 3> time_offsets{params.red_offset, params.green_offset, params.blue_offset};
+    const std::array<float, 3> split_scales{1.0F, 0.0F, -1.0F};
+    const auto center_x = 0.5F * static_cast<float>(shape.w - 1);
+    const auto center_y = 0.5F * static_cast<float>(shape.h - 1);
+    parallel_for(shape.t, [&](std::size_t t) {
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                const auto output_alpha = shape.c >= 4 ? input.at(t, y, x, 3) : 1.0F;
+                for (std::size_t c = 0; c < 3; ++c) {
+                    auto source_x = static_cast<float>(x);
+                    auto source_y = static_cast<float>(y);
+                    const auto split = params.spatial_split * split_scales[c];
+                    if (params.split_axis == SplitAxis::Horizontal) {
+                        source_x -= split;
+                    } else if (params.split_axis == SplitAxis::Vertical) {
+                        source_y -= split;
+                    } else {
+                        const auto dx = static_cast<float>(x) - center_x;
+                        const auto dy = static_cast<float>(y) - center_y;
+                        const auto length = std::sqrt(dx * dx + dy * dy);
+                        if (length > 0.00001F) {
+                            source_x -= split * dx / length;
+                            source_y -= split * dy / length;
+                        }
+                    }
+                    const auto source_t = static_cast<float>(t) - time_offsets[c];
+                    auto value = sample_tensor(input, source_t, source_y, source_x, c, params.edge_behavior);
+                    if (shape.c >= 4) {
+                        const auto source_alpha = sample_tensor(input, source_t, source_y, source_x, 3, params.edge_behavior);
+                        value = source_alpha > 0.00001F ? value / source_alpha * output_alpha : 0.0F;
+                    }
+                    output.at(t, y, x, c) = value;
+                }
+                if (shape.c >= 4) output.at(t, y, x, 3) = output_alpha;
+                for (std::size_t c = 4; c < shape.c; ++c) output.at(t, y, x, c) = input.at(t, y, x, c);
+            }
+        }
+    });
+    return output;
+}
+
 VideoTensor radial_chrono_funnel(const VideoTensor& input, const RadialChronoFunnelParams& params) {
     const auto& shape = input.shape();
     VideoTensor output(shape, 0.0F, input.metadata());

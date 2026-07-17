@@ -118,6 +118,9 @@ enum EffectRegistry {
         definition(.seamlessLoop, "Seamless Loop", "repeat.circle", .teal, .outputAndUtility,
                    cost: .temporal, shape: .changing, values: [15, 0.12], options: [0],
                    randomization: .init(identifier: "seamless", amount: .fixed(1))),
+        definition(.rgbTimeSlip, "RGB Time Slip", "square.stack.3d.up", .indigo, .dataAndChannels,
+                   cost: .temporal, values: [-12, 0, 12, 8], options: [0, 0],
+                   randomization: .init(identifier: "rgb-time-slip", amount: .triangular(0.3...1, preferred: 0.75))),
     ]
 
     private static let byKind = Dictionary(uniqueKeysWithValues: definitions.map { ($0.kind, $0) })

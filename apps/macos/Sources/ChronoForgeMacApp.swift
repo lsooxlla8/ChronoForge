@@ -799,6 +799,16 @@ private struct EffectInspector: View {
             }
             Label("Keep Seamless Loop last in the stack so later effects do not reopen the seam.", systemImage: "arrow.down.to.line")
                 .font(.caption).foregroundStyle(.secondary)
+        case .rgbTimeSlip:
+            valueSlider("Red Offset", index: 0, range: -240...240, format: "%.2f frames")
+            valueSlider("Green Offset", index: 1, range: -240...240, format: "%.2f frames")
+            valueSlider("Blue Offset", index: 2, range: -240...240, format: "%.2f frames")
+            valueSlider("Spatial Split", index: 3, range: -200...200, format: "%.2f px")
+            optionPicker("Split Axis", value: option(0), options: ["Horizontal", "Vertical", "Radial"])
+            edgePicker(option(1))
+            Text("Each colour channel reads an independent moment. Alpha stays on the current frame and RGB is re-premultiplied to it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

@@ -88,6 +88,7 @@ The supplied `TilePlanner` implements the per-pixel-temporal class. It will be g
 9. **Time Feedback** is sequential along Time: it reads prior output for recursive echoes and future input for look-ahead echoes, with colour blends plus a coordinate-displacement mode.
 10. **Axis Datamosh** carries samples along Time, X or Y after deterministic edge, luma or random triggers.
 11. **Seamless Loop** overlaps the tail with the beginning, optionally staggers the transition per pixel by luma, or emits a forward/reverse ping-pong tensor. Crossfade modes shorten `T` by the overlap; Ping-Pong emits `2T-2` frames.
+12. **RGB Time Slip** samples red, green and blue at independent fractional frame offsets and optionally separates them along a horizontal, vertical or radial spatial axis. Alpha is read from the current frame; sampled straight colour is re-premultiplied against that alpha in both RAM and mapped paths.
 
 Spatial and Temporal Prefilter are project-level output settings rather than editable nodes. The renderer injects one deterministic hidden low-pass stage after the visible stack, so preview, direct export and queued renders share the same cache signature and result.
 

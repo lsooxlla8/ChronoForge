@@ -74,6 +74,19 @@ struct ChronoForgeIntegration {
             throw IntegrationFailure.message("Amount zero must be a bit-exact identity")
         }
 
+        let rgbValues: [Float] = [1, 0, -1, 2]
+        let rgbOptions: [Int32] = [0, 1]
+        let rgbTimeSlip = rgbValues.withUnsafeBufferPointer { values in
+            rgbOptions.withUnsafeBufferPointer { options in
+                cf_effect_descriptor_v2_make(13, 1, 0, values.baseAddress, 4, options.baseAddress, 2)
+            }
+        }
+        let rgbOutput = try render(rgbTimeSlip)
+        guard rgbOutput != tensor.values,
+              stride(from: 3, to: rgbOutput.count, by: 4).allSatisfy({ rgbOutput[$0] == tensor.values[$0] }) else {
+            throw IntegrationFailure.message("RGB Time Slip bridge mapping did not separate channels while preserving current-frame alpha")
+        }
+
         var outdated = effect
         outdated.descriptor_version = 1
         do {
@@ -84,7 +97,7 @@ struct ChronoForgeIntegration {
                 throw IntegrationFailure.message(message)
             }
         }
-        print("ChronoForge integration passed: descriptor V2 validation, deterministic render and Amount identity")
+        print("ChronoForge integration passed: descriptor V2 validation, deterministic render, Amount identity and RGB Time Slip mapping")
     }
 
     private static func makeMovie(at url: URL) async throws {

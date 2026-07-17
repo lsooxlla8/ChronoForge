@@ -28,6 +28,7 @@ No formulas required. If you have used an effect stack, displacement map or rend
 | **Polar Time Warp** | Braided, folded and orbiting time structures around a movable centre. |
 | **Pixel Sort (Time)** | Pixel sorting through frames, so shadows and highlights flow through time. |
 | **3D FFT Transform** | Swap or rotate spatial and temporal frequencies for spectral textures. |
+| **RGB Time Slip** | Pull red, green and blue from independent frames and split them horizontally, vertically or radially. |
 | **Optical Flow Time Warp** | Moving objects bend time more than the static background. |
 | **Time Feedback** | Recursive past and future echoes with colour and displacement blend modes. |
 | **Axis Datamosh** | Freeze and drag image data along time, horizontal or vertical lines. |
