@@ -208,6 +208,13 @@ enum RandomStackGenerator {
                 RandomFloatDistribution.logarithmic(0.5...60).sample(using: &random),
             ]
             node.options = [weighted([0, 1, 1, 2], using: &random), Int32(random.integer(in: 0...2))]
+        case "stride-error":
+            node.values = [
+                RandomFloatDistribution.signedMagnitude(0.005...0.45, deadZone: 0.005).sample(using: &random),
+                RandomFloatDistribution.signedMagnitude(0.005...0.9, deadZone: 0.005).sample(using: &random),
+                RandomFloatDistribution.signedMagnitude(0.001...0.25, deadZone: 0.001).sample(using: &random),
+            ]
+            node.options = [weighted([0, 0, 1, 2], using: &random), Int32(random.integer(in: 0...1))]
         default:
             break
         }

@@ -37,6 +37,7 @@ typedef enum CFEffectKind {
     CF_EFFECT_RGB_TIME_SLIP = 13,
     CF_EFFECT_HORIZONTAL_SYNC_LOSS = 14,
     CF_EFFECT_CHROMA_CARRIER_DRIFT = 15,
+    CF_EFFECT_STRIDE_ERROR = 16,
 } CFEffectKind;
 
 enum { CF_EFFECT_DESCRIPTOR_VERSION = 2, CF_EFFECT_PARAMETER_CAPACITY = 8 };
@@ -53,6 +54,7 @@ enum { CF_EFFECT_DESCRIPTOR_VERSION = 2, CF_EFFECT_PARAMETER_CAPACITY = 8 };
 // RGB time slip:          values = R/G/B frame offsets, spatial split; options = split axis, edge
 // horizontal sync loss:   values = shift fraction, band height, drift speed, tear density; options = driver, edge
 // chroma carrier drift:    values = X/Y/time offsets, bleed; options = mode, edge
+// stride error:            values = stride delta, base offset, temporal drift; options = channel mode, address edge
 typedef struct CFEffectDescriptorV2 {
     int32_t kind;
     uint32_t descriptor_version;

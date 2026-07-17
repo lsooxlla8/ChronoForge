@@ -28,6 +28,7 @@ enum class EffectOperation : std::int32_t {
     RgbTimeSlip = 13,
     HorizontalSyncLoss = 14,
     ChromaCarrierDrift = 15,
+    StrideError = 16,
 };
 
 struct EffectSpec {

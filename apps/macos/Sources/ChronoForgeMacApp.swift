@@ -830,6 +830,15 @@ private struct EffectInspector: View {
             Text("Luma remains on the current frame while the two chroma carriers drift and bleed independently.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        case .strideError:
+            valueSlider("Stride Delta", index: 0, range: -0.5...0.5, format: "%.4f × width")
+            valueSlider("Base Offset", index: 1, range: -1...1, format: "%.4f frame lengths")
+            valueSlider("Temporal Drift", index: 2, range: -1...1, format: "%.5f frame lengths/frame")
+            optionPicker("Channel Mode", value: option(0), options: ["RGB Together", "Separate Channels", "Alpha Included"])
+            optionPicker("Address Edge", value: option(1), options: ["Wrap", "Mirror"])
+            Text("The current frame is read with a deliberately wrong row stride. Every address is wrapped or mirrored inside that frame buffer.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

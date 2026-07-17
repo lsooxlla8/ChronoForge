@@ -127,6 +127,9 @@ enum EffectRegistry {
         definition(.chromaCarrierDrift, "Chroma Carrier Drift", "dot.radiowaves.left.and.right", .pink, .signalAndAnalog,
                    cost: .temporal, values: [24, 0, 2, 8], options: [1, 1],
                    randomization: .init(identifier: "chroma-carrier-drift", amount: .triangular(0.25...0.9, preferred: 0.65))),
+        definition(.strideError, "Stride Error", "memorychip", .orange, .memoryAndCompression,
+                   values: [0.08, 0.07, 0.013], options: [0, 0],
+                   randomization: .init(identifier: "stride-error", amount: .triangular(0.25...1, preferred: 0.7))),
     ]
 
     private static let byKind = Dictionary(uniqueKeysWithValues: definitions.map { ($0.kind, $0) })

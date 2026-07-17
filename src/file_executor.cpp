@@ -593,6 +593,62 @@ void chroma_carrier_drift(const MappedTensor& input, MappedTensor& output, const
     });
 }
 
+void stride_error(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
+    require_option(effect.options[0], 2, "stride channel mode");
+    require_option(effect.options[1], 1, "stride address edge");
+    const auto mode = static_cast<StrideChannelMode>(effect.options[0]);
+    const auto edge = static_cast<AddressEdge>(effect.options[1]);
+    const auto& shape = input.shape();
+    const auto frame_pixels = shape.h * shape.w;
+    const auto resolve_address = [&](std::int64_t address) {
+        const auto count = static_cast<std::int64_t>(frame_pixels);
+        if (edge == AddressEdge::Wrap || count == 1) {
+            address %= count;
+            if (address < 0) address += count;
+            return static_cast<std::size_t>(address);
+        }
+        const auto period = 2 * count - 2;
+        address %= period;
+        if (address < 0) address += period;
+        if (address >= count) address = period - address;
+        return static_cast<std::size_t>(address);
+    };
+    auto* destination = output.mutable_data();
+    parallel_for(shape.t, progress, [&](std::size_t t) {
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                const auto nominal = static_cast<std::int64_t>(y * shape.w + x);
+                const auto wrong_stride = static_cast<double>(shape.w) * (1.0 + std::clamp(effect.values[0], -0.5F, 0.5F));
+                const auto corrupted = static_cast<std::int64_t>(std::llround(
+                    static_cast<double>(y) * wrong_stride + static_cast<double>(x) +
+                    static_cast<double>(effect.values[1]) * static_cast<double>(frame_pixels) +
+                    static_cast<double>(t) * static_cast<double>(effect.values[2]) * static_cast<double>(frame_pixels)));
+                const auto delta = corrupted - nominal;
+                const auto address_for = [&](std::size_t channel) {
+                    const auto factor = mode == StrideChannelMode::RgbTogether ? 1 : static_cast<std::int64_t>(channel + 1);
+                    return resolve_address(nominal + delta * factor);
+                };
+                const auto alpha_address = shape.c >= 4 && mode == StrideChannelMode::AlphaIncluded ? address_for(3) : static_cast<std::size_t>(nominal);
+                const auto output_alpha = shape.c >= 4
+                    ? read(input, t, alpha_address / shape.w, alpha_address % shape.w, 3) : 1.0F;
+                for (std::size_t c = 0; c < std::min<std::size_t>(3, shape.c); ++c) {
+                    const auto address = address_for(c);
+                    auto value = read(input, t, address / shape.w, address % shape.w, c);
+                    if (shape.c >= 4) {
+                        const auto source_alpha = read(input, t, address / shape.w, address % shape.w, 3);
+                        value = source_alpha > 0.00001F ? value / source_alpha * output_alpha : 0.0F;
+                    }
+                    destination[linear(t, y, x, c, shape)] = value;
+                }
+                if (shape.c >= 4) destination[linear(t, y, x, 3, shape)] = output_alpha;
+                for (std::size_t c = 4; c < shape.c; ++c) {
+                    destination[linear(t, y, x, c, shape)] = read(input, t, y, x, c);
+                }
+            }
+        }
+    });
+}
+
 void radial(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
     require_option(effect.options[0], 2, "edge behavior");
     require_option(effect.options[1], 2, "radial topology");
@@ -1538,6 +1594,9 @@ void apply(
         case EffectOperation::ChromaCarrierDrift:
             chroma_carrier_drift(input, output, effect, progress);
             return;
+        case EffectOperation::StrideError:
+            stride_error(input, output, effect, progress);
+            return;
         case EffectOperation::DimensionalSplicer:
         case EffectOperation::TensorDisplacement:
             throw std::invalid_argument("This effect requires a driver tensor");
@@ -1579,6 +1638,8 @@ void apply(
             return "Horizontal Sync Loss";
         case EffectOperation::ChromaCarrierDrift:
             return "Chroma Carrier Drift";
+        case EffectOperation::StrideError:
+            return "Stride Error";
     }
     return "Unknown";
 }

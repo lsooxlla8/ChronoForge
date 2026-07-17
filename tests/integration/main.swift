@@ -115,6 +115,19 @@ struct ChronoForgeIntegration {
             throw IntegrationFailure.message("Chroma Carrier Drift bridge path failed to preserve current-frame alpha")
         }
 
+        let strideValues: [Float] = [0.17, 0.11, 0.031]
+        let strideOptions: [Int32] = [0, 1]
+        let strideError = strideValues.withUnsafeBufferPointer { values in
+            strideOptions.withUnsafeBufferPointer { options in
+                cf_effect_descriptor_v2_make(16, 1, 0, values.baseAddress, 3, options.baseAddress, 2)
+            }
+        }
+        let strideOutput = try render(strideError)
+        guard strideOutput != tensor.values,
+              stride(from: 3, to: strideOutput.count, by: 4).allSatisfy({ strideOutput[$0] == tensor.values[$0] }) else {
+            throw IntegrationFailure.message("Stride Error bridge path did not preserve current alpha in RGB Together mode")
+        }
+
         var outdated = effect
         outdated.descriptor_version = 1
         do {

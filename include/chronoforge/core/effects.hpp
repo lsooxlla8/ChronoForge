@@ -25,6 +25,8 @@ enum class SeamlessLoopMode { Crossfade, LumaWeave, PingPong };
 enum class SplitAxis { Horizontal, Vertical, Radial };
 enum class SyncLossDriver { DeterministicNoise, Luma, Edges };
 enum class ChromaDriftMode { Together, SplitCbCr, Alternating };
+enum class StrideChannelMode { RgbTogether, SeparateChannels, AlphaIncluded };
+enum class AddressEdge { Wrap, Mirror };
 
 struct LumaTimeShiftParams {
     float shift_multiplier{};
@@ -142,6 +144,14 @@ struct ChromaCarrierDriftParams {
     EdgeBehavior edge_behavior{EdgeBehavior::Clamp};
 };
 
+struct StrideErrorParams {
+    float stride_delta{};
+    float base_offset{};
+    float temporal_drift{};
+    StrideChannelMode channel_mode{StrideChannelMode::RgbTogether};
+    AddressEdge address_edge{AddressEdge::Wrap};
+};
+
 VideoTensor space_time_transpose(const VideoTensor& input, SpatialAxis axis);
 VideoTensor space_time_transpose(const VideoTensor& input, const SpaceTimeTransposeParams& params);
 VideoTensor luma_time_shift(const VideoTensor& input, const LumaTimeShiftParams& params);
@@ -164,5 +174,6 @@ VideoTensor seamless_loop(const VideoTensor& input, const SeamlessLoopParams& pa
 VideoTensor rgb_time_slip(const VideoTensor& input, const RGBTimeSlipParams& params);
 VideoTensor horizontal_sync_loss(const VideoTensor& input, const HorizontalSyncLossParams& params);
 VideoTensor chroma_carrier_drift(const VideoTensor& input, const ChromaCarrierDriftParams& params);
+VideoTensor stride_error(const VideoTensor& input, const StrideErrorParams& params);
 
 }  // namespace chronoforge

@@ -68,6 +68,7 @@ void enforce_budget(const VideoTensor& tensor, uint64_t budget) {
         case CF_EFFECT_RGB_TIME_SLIP: return {4, 2};
         case CF_EFFECT_HORIZONTAL_SYNC_LOSS: return {4, 2};
         case CF_EFFECT_CHROMA_CARRIER_DRIFT: return {4, 2};
+        case CF_EFFECT_STRIDE_ERROR: return {3, 2};
     }
     throw std::invalid_argument("Unsupported effect kind");
 }
@@ -79,7 +80,7 @@ CFEffectKind validate_descriptor(const CFEffectDescriptorV2& descriptor) {
     if (!std::isfinite(descriptor.amount) || descriptor.amount < 0.0F || descriptor.amount > 1.0F) {
         throw std::invalid_argument("Effect amount must be between zero and one");
     }
-    const auto kind = checked_enum<CFEffectKind>(descriptor.kind, CF_EFFECT_CHROMA_CARRIER_DRIFT, "effect kind");
+    const auto kind = checked_enum<CFEffectKind>(descriptor.kind, CF_EFFECT_STRIDE_ERROR, "effect kind");
     const auto [values, options] = expected_parameter_counts(kind);
     if (descriptor.value_count != values || descriptor.option_count != options) {
         throw std::invalid_argument("Effect descriptor parameter counts do not match its kind");
@@ -232,6 +233,14 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptorV2& d
                     descriptor.values[0], descriptor.values[1], descriptor.values[2], descriptor.values[3],
                     checked_enum<chronoforge::ChromaDriftMode>(descriptor.options[0], 2, "chroma drift mode"),
                     checked_enum<chronoforge::EdgeBehavior>(descriptor.options[1], 2, "chroma drift edge behavior"),
+                });
+        case CF_EFFECT_STRIDE_ERROR:
+            return chronoforge::stride_error(
+                input,
+                {
+                    descriptor.values[0], descriptor.values[1], descriptor.values[2],
+                    checked_enum<chronoforge::StrideChannelMode>(descriptor.options[0], 2, "stride channel mode"),
+                    checked_enum<chronoforge::AddressEdge>(descriptor.options[1], 1, "stride address edge"),
                 });
         case CF_EFFECT_DIMENSIONAL_SPLICER:
         case CF_EFFECT_TENSOR_DISPLACEMENT:

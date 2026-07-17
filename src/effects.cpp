@@ -595,6 +595,59 @@ VideoTensor chroma_carrier_drift(const VideoTensor& input, const ChromaCarrierDr
     return output;
 }
 
+VideoTensor stride_error(const VideoTensor& input, const StrideErrorParams& params) {
+    const auto& shape = input.shape();
+    const auto frame_pixels = shape.h * shape.w;
+    VideoTensor output(shape, 0.0F, input.metadata());
+    const auto resolve_address = [&](std::int64_t address) {
+        const auto count = static_cast<std::int64_t>(frame_pixels);
+        if (params.address_edge == AddressEdge::Wrap || count == 1) {
+            address %= count;
+            if (address < 0) address += count;
+            return static_cast<std::size_t>(address);
+        }
+        const auto period = 2 * count - 2;
+        address %= period;
+        if (address < 0) address += period;
+        if (address >= count) address = period - address;
+        return static_cast<std::size_t>(address);
+    };
+    parallel_for(shape.t, [&](std::size_t t) {
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                const auto nominal = static_cast<std::int64_t>(y * shape.w + x);
+                const auto wrong_stride = static_cast<double>(shape.w) * (1.0 + std::clamp(params.stride_delta, -0.5F, 0.5F));
+                const auto corrupted = static_cast<std::int64_t>(std::llround(
+                    static_cast<double>(y) * wrong_stride + static_cast<double>(x) +
+                    static_cast<double>(params.base_offset) * static_cast<double>(frame_pixels) +
+                    static_cast<double>(t) * static_cast<double>(params.temporal_drift) * static_cast<double>(frame_pixels)));
+                const auto delta = corrupted - nominal;
+                const auto address_for = [&](std::size_t channel) {
+                    const auto factor = params.channel_mode == StrideChannelMode::RgbTogether ? 1 : static_cast<std::int64_t>(channel + 1);
+                    return resolve_address(nominal + delta * factor);
+                };
+                const auto output_alpha = shape.c >= 4
+                    ? (params.channel_mode == StrideChannelMode::AlphaIncluded
+                        ? input.at(t, address_for(3) / shape.w, address_for(3) % shape.w, 3)
+                        : input.at(t, y, x, 3))
+                    : 1.0F;
+                for (std::size_t c = 0; c < std::min<std::size_t>(3, shape.c); ++c) {
+                    const auto address = address_for(c);
+                    auto value = input.at(t, address / shape.w, address % shape.w, c);
+                    if (shape.c >= 4) {
+                        const auto source_alpha = input.at(t, address / shape.w, address % shape.w, 3);
+                        value = source_alpha > 0.00001F ? value / source_alpha * output_alpha : 0.0F;
+                    }
+                    output.at(t, y, x, c) = value;
+                }
+                if (shape.c >= 4) output.at(t, y, x, 3) = output_alpha;
+                for (std::size_t c = 4; c < shape.c; ++c) output.at(t, y, x, c) = input.at(t, y, x, c);
+            }
+        }
+    });
+    return output;
+}
+
 VideoTensor radial_chrono_funnel(const VideoTensor& input, const RadialChronoFunnelParams& params) {
     const auto& shape = input.shape();
     VideoTensor output(shape, 0.0F, input.metadata());
