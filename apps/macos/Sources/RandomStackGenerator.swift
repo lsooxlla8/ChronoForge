@@ -134,7 +134,8 @@ enum RandomStackGenerator {
             node.options = [Int32(random.integer(in: 0...2)), Int32(random.integer(in: 0...2))]
         case "pixel-sort":
             node.values[0] = .triangular(0.05...0.9, preferred: 0.35, using: &random)
-            node.options = [Int32(random.integer(in: 0...2)), Int32(random.integer(in: 0...1))]
+            node.values[1] = RandomFloatDistribution.uniform(-180...180).sample(using: &random)
+            node.options = [Int32(random.integer(in: 0...2)), Int32(random.integer(in: 0...3))]
         case "spectral":
             let rotation = random.chance(0.65)
             node.values[0] = rotation
@@ -176,7 +177,7 @@ enum RandomStackGenerator {
                 RandomFloatDistribution.logarithmic(2...180).sample(using: &random),
                 RandomFloatDistribution.logarithmic(0.002...0.25).sample(using: &random),
             ]
-            node.options = [Int32(random.integer(in: 0...2)), trigger]
+            node.options = [Int32(random.integer(in: 0...2)), trigger, trigger == 1 && random.chance(0.5) ? 1 : 0]
         case "seamless":
             let sourceFrames = mediaPool.first?.tensor.frames ?? 30
             node.values = [Float(random.integer(in: 2...max(2, min(60, sourceFrames / 2)))),
@@ -195,11 +196,11 @@ enum RandomStackGenerator {
         case "horizontal-sync-loss":
             node.values = [
                 .triangular(0.05...0.85, preferred: 0.25, using: &random),
-                RandomFloatDistribution.logarithmic(1...96).sample(using: &random),
+                RandomFloatDistribution.logarithmic(0.005...0.75).sample(using: &random),
                 RandomFloatDistribution.signedMagnitude(0.05...4, deadZone: 0.05).sample(using: &random),
                 .triangular(0.08...0.9, preferred: 0.35, using: &random),
             ]
-            node.options = [weighted([0, 0, 0, 1, 2], using: &random), Int32(random.integer(in: 0...2))]
+            node.options = [weighted([0, 0, 0, 1, 2], using: &random), Int32(random.integer(in: 0...2)), Int32(random.integer(in: 0...1))]
         case "chroma-carrier-drift":
             node.values = [
                 RandomFloatDistribution.signedMagnitude(2...240, deadZone: 2).sample(using: &random),
@@ -217,7 +218,7 @@ enum RandomStackGenerator {
             node.options = [weighted([0, 0, 1, 2], using: &random), Int32(random.integer(in: 0...1))]
         case "block-address-corruption":
             node.values = [
-                RandomFloatDistribution.logarithmic(2...128).sample(using: &random),
+                RandomFloatDistribution.logarithmic(0.005...0.8).sample(using: &random),
                 .triangular(0.08...0.9, preferred: 0.35, using: &random),
                 RandomFloatDistribution.logarithmic(0.5...120).sample(using: &random),
                 RandomFloatDistribution.logarithmic(1...90).sample(using: &random),
@@ -232,7 +233,7 @@ enum RandomStackGenerator {
             node.options = [weighted([0, 1, 2, 2, 3], using: &random), Int32(random.integer(in: 0...5))]
         case "signal-weave":
             node.values = [
-                RandomFloatDistribution.logarithmic(1...128).sample(using: &random),
+                RandomFloatDistribution.logarithmic(0.005...0.8).sample(using: &random),
                 RandomFloatDistribution.signedMagnitude(0.02...8, deadZone: 0.02).sample(using: &random),
                 .triangular(0...0.7, preferred: 0.12, using: &random),
                 RandomFloatDistribution.signedMagnitude(1...120, deadZone: 1).sample(using: &random),
@@ -240,7 +241,7 @@ enum RandomStackGenerator {
             node.options = [Int32(random.integer(in: 0...3)), weighted([0, 0, 1, 1, 2], using: &random)]
         case "block-graft":
             node.values = [
-                RandomFloatDistribution.logarithmic(2...128).sample(using: &random),
+                RandomFloatDistribution.logarithmic(0.005...0.8).sample(using: &random),
                 .triangular(0.08...0.9, preferred: 0.35, using: &random),
                 RandomFloatDistribution.logarithmic(1...90).sample(using: &random),
                 RandomFloatDistribution.signedMagnitude(1...120, deadZone: 1).sample(using: &random),

@@ -11,6 +11,8 @@
 
 namespace chronoforge {
 
+enum class AmountBlendMode { Normal, Add, Screen, Multiply, Difference, Displace, XorGlitch };
+
 enum class EffectOperation : std::int32_t {
     SpaceTimeTranspose = 0,
     LumaTimeShift = 1,
@@ -42,6 +44,7 @@ struct EffectSpec {
     std::array<std::int32_t, 8> options{};
     float amount{1.0F};
     std::uint64_t random_seed{};
+    AmountBlendMode amount_blend_mode{AmountBlendMode::Normal};
 };
 
 struct FileRenderResult {

@@ -28,7 +28,6 @@ final class SessionStore: ObservableObject {
     @Published var hasInterruptedSession: Bool
     @Published var cacheSizeDescription = "Calculating cache…"
     @Published var showsClearCacheConfirmation = false
-    @Published var showsClearEffectsConfirmation = false
     @Published var isPlaying = false
     @Published var renderQueue: [RenderQueueItem] = []
     @Published var isQueueRunning = false
@@ -118,6 +117,11 @@ final class SessionStore: ObservableObject {
 
     func updateEffect(_ node: EffectNode) {
         guard let index = effects.firstIndex(where: { $0.id == node.id }) else { return }
+        var node = node
+        if !node.supportsAmount {
+            node.amount = 1
+            node.amountBlendMode = .normal
+        }
         if coalescedEditStart != nil {
             effects[index] = node
             if source != nil {
@@ -288,7 +292,7 @@ final class SessionStore: ObservableObject {
         accessory.orientation = .horizontal
         accessory.alignment = .centerY
         accessory.spacing = 8
-        let label = NSTextField(labelWithString: "Playback FPS")
+        let label = NSTextField(labelWithString: "FPS")
         let combo = NSComboBox()
         combo.addItems(withObjectValues: ["12", "15", "23.976", "24", "25", "29.97", "30", "50", "59.94", "60"])
         combo.stringValue = "24"
@@ -486,12 +490,17 @@ final class SessionStore: ObservableObject {
         let existing = mediaPool
         let primaryID = source?.id
         task = Task {
-            defer { isImporting = false }
             do {
                 var rebuilt: [DecodedProxy] = []
                 for media in existing {
                     let access = media.mediaSource.startAccessingSecurityScopedResource()
-                    var decoded = try await MediaSourceDecoder.decodeProxy(from: media.mediaSource, quality: quality)
+                    var decoded: DecodedProxy
+                    do {
+                        decoded = try await MediaSourceDecoder.decodeProxy(from: media.mediaSource, quality: quality)
+                    } catch {
+                        if access { media.mediaSource.stopAccessingSecurityScopedResource() }
+                        throw error
+                    }
                     if access { media.mediaSource.stopAccessingSecurityScopedResource() }
                     decoded.id = media.id
                     rebuilt.append(decoded)
@@ -501,9 +510,12 @@ final class SessionStore: ObservableObject {
                 output = source?.tensor
                 isPreviewStale = !effects.isEmpty
                 statusMessage = "Proxy quality updated"
+                isImporting = false
+                if !effects.isEmpty { renderPreview() }
             } catch {
                 errorMessage = error.localizedDescription
                 statusMessage = "Proxy update failed"
+                isImporting = false
             }
         }
     }
@@ -741,7 +753,7 @@ final class SessionStore: ObservableObject {
         previewGeneration = generation
         isRendering = true
         errorMessage = nil
-        statusMessage = "Updating proxy preview…"
+        statusMessage = "Updating preview…"
         let graph: [EffectNode]
         do {
             graph = try renderEffectChain()

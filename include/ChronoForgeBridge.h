@@ -51,19 +51,19 @@ enum { CF_EFFECT_DESCRIPTOR_VERSION = 2, CF_EFFECT_PARAMETER_CAPACITY = 8 };
 // transpose:              options = X(0) / Y(1), Native(0) / Fit source canvas(1)
 // luma-time shift:        values[0] = multiplier, options = source, edge
 // radial time loom:       values = centerX, centerY, intensity, twist; options = edge, topology
-// temporal pixel sort:    values[0] = threshold; options = criterion, direction
+// temporal pixel sort:    values = threshold, hue-key shift degrees; options = criterion, order
 // tensor 3D rotation:     values = XY, XT, YT degrees; options[0] = fill mode
 // spectral transform:     values[0] = angle; options = axis/plane, normalize, Native/Fit Source Size, Swap/Rotate
 // selective prefilter:    options = spatial strength, temporal strength (Off/Light/Strong)
 // seamless loop:          values = transition frames, weave softness; options[0] = Crossfade/Luma Weave/Ping-Pong
 // RGB time slip:          values = R/G/B frame offsets, spatial split; options = split axis, edge
-// horizontal sync loss:   values = shift fraction, band height, drift speed, tear density; options = driver, edge
+// sync loss:              values = shift fraction, normalized band size, drift speed, tear density; options = driver, edge, axis
 // chroma carrier drift:    values = X/Y/time offsets, bleed; options = mode, edge
 // stride error:            values = stride delta, base offset, temporal drift; options = channel mode, address edge
-// block corruption:        values = block size, corruption, time reach, hold; options = mapping, edge
+// block corruption:        values = normalized block size, corruption, time reach, hold; options = mapping, edge
 // bitplane forge:           values = working bits, plane mask, shift; options = operation, channel
-// signal weave:             values = band size, phase drift, irregularity, B time offset; options = pattern, size matching
-// block graft:              values = block size, density/threshold, hold, B time offset; options = trigger, size matching
+// signal weave:             values = normalized band size, phase drift, irregularity, B time offset; options = pattern, size matching
+// block graft:              values = normalized block size, density/threshold, hold, B time offset; options = trigger, size matching
 // channel transplant:       values = B time/X/Y offsets; options = component 1/2/3 source, colour model, size matching
 typedef struct CFEffectDescriptorV2 {
     int32_t kind;
@@ -74,11 +74,13 @@ typedef struct CFEffectDescriptorV2 {
     uint32_t option_count;
     float values[CF_EFFECT_PARAMETER_CAPACITY];
     int32_t options[CF_EFFECT_PARAMETER_CAPACITY];
+    int32_t amount_blend_mode;
 } CFEffectDescriptorV2;
 
 CFEffectDescriptorV2 cf_effect_descriptor_v2_make(
     int32_t kind,
     float amount,
+    int32_t amount_blend_mode,
     uint64_t random_seed,
     const float* values,
     uint32_t value_count,

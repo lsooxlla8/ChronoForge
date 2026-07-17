@@ -26,17 +26,17 @@ No formulas required. If you have used an effect stack, displacement map or rend
 | **Space-Time Transform** | Swap width or height with time, or rotate the video volume in 3D. |
 | **Self Time Displacement** | Bright or coloured parts of the same clip jump forward or backward in time. |
 | **Polar Time Warp** | Braided, folded and orbiting time structures around a movable centre. |
-| **Pixel Sort (Time)** | Pixel sorting through frames, so shadows and highlights flow through time. |
+| **Pixel Sort (Time)** | Sort through frames by luma, saturation or a shifted hue key using ascending, descending, zigzag or center-out order. |
 | **3D FFT Transform** | Swap or rotate spatial and temporal frequencies for spectral textures. |
 | **RGB Time Slip** | Pull red, green and blue from independent frames and split them horizontally, vertically or radially. |
-| **Horizontal Sync Loss** | Tear coherent row bands sideways with drifting deterministic noise, luma or edge drivers. |
+| **Sync Loss** | Tear coherent row or column bands horizontally or vertically with resolution-independent band sizing. |
 | **Chroma Carrier Drift** | Keep luma stable while Cb/Cr drift, delay and bleed together or in opposite directions. |
 | **Stride Error** | Read each frame with a deliberately wrong row stride and safe wrapped or mirrored memory addresses. |
 | **Block Address Corruption** | Replace held spatial blocks with deterministic addresses from elsewhere in space and nearby time. |
 | **Bitplane Forge** | Quantize selected luma, colour or alpha channels and shuffle, rotate, invert or XOR chosen bitplanes. |
 | **Optical Flow Time Warp** | Moving objects bend time more than the static background. |
 | **Time Feedback** | Recursive past and future echoes with colour and displacement blend modes. |
-| **Axis Datamosh** | Freeze and drag image data along time, horizontal or vertical lines. |
+| **Axis Datamosh** | Freeze and drag image data along time, horizontal or vertical lines, including bright- or dark-side luma triggering. |
 | **Seamless Loop** | Close a non-looping clip with a crossfade, a detail-driven luma weave or a guaranteed ping-pong pass. |
 
 ### Two videos
@@ -53,12 +53,12 @@ No formulas required. If you have used an effect stack, displacement map or rend
 
 1. Import a video or numbered PNG sequence. This becomes the primary source, **A**. Sequence import reports dimensions, numbering gaps and lets you choose FPS.
 2. Add effects from the sidebar. They run from top to bottom.
-3. Adjust **Amount** to blend any shape-compatible effect with its input, or press **Random Stack** to replace the chain with 1–3 compatible effects. One Undo restores the previous stack.
+3. Adjust **Amount** and its Normal/Add/Screen/Multiply/Difference/Displace/XOR Glitch mode, or press **Random Stack** to replace the chain with 1–3 compatible effects. One Undo restores the previous stack.
 4. Click **Update Preview**, or leave **Auto Update** enabled. Preview is always a smaller proxy so experimentation stays responsive.
 5. For a two-video effect, add another clip to Media and choose it as **Driver video (B)**.
-6. Use **Export** for an H.264 MP4 or alpha-preserving PNG sequence. Choose Playback FPS to reinterpret the finished frames without resampling them. **Add to Queue** remains available for MP4 batches; press **Shift–Command–R** to start the queue.
+6. Use **Export** for an H.264 MP4 or alpha-preserving PNG sequence. Choose FPS to reinterpret the finished frames without resampling them. **Add to Queue** remains available for MP4 batches; press **Shift–Command–R** to start the queue.
 
-Useful shortcuts: **Space** plays or pauses the preview, **Command–Z** / **Shift–Command–Z** undo and redo creative changes, **\\** temporarily shows Source A, and **Shift–S** hides or shows the sidebar.
+Useful shortcuts: **Space** plays or pauses Preview, **Command–Z** / **Shift–Command–Z** undo and redo, **\\** holds Before, **Shift–S** toggles the sidebar, **Shift–R** creates a Random Stack, **Shift–Delete** clears it, **Shift–Command–I** imports a PNG sequence, and **Option–Command–R** adds the current render to the queue.
 
 ## Why it is different
 

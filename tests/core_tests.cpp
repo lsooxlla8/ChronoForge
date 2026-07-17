@@ -108,7 +108,7 @@ void test_rgb_time_slip() {
 void test_horizontal_sync_loss() {
     const auto input = numbered({3, 6, 12, 4});
     const chronoforge::HorizontalSyncLossParams params{
-        0.75F, 2, 0.5F, 1.0F, chronoforge::SyncLossDriver::DeterministicNoise,
+        0.75F, 0.25F, 0.5F, 1.0F, chronoforge::SyncLossDriver::DeterministicNoise,
         chronoforge::EdgeBehavior::Wrap, 0xC0FFEE};
     const auto first = chronoforge::horizontal_sync_loss(input, params);
     const auto second = chronoforge::horizontal_sync_loss(input, params);
@@ -123,6 +123,11 @@ void test_horizontal_sync_loss() {
     require(
         chronoforge::horizontal_sync_loss(input, dry_params).values() == input.values(),
         "Zero tear density is an exact visual identity before Amount blending");
+    auto vertical_params = params;
+    vertical_params.axis = chronoforge::SyncLossAxis::Vertical;
+    require(
+        chronoforge::horizontal_sync_loss(input, vertical_params).values() != first.values(),
+        "Vertical Sync Loss shifts column bands on the orthogonal axis");
 }
 
 void test_chroma_carrier_drift() {
@@ -172,7 +177,7 @@ void test_stride_error() {
 void test_block_address_corruption() {
     const auto input = numbered({5, 7, 11, 4});
     const chronoforge::BlockAddressCorruptionParams params{
-        3, 0.8F, 2, 2, chronoforge::BlockCorruptionMapping::Cascade,
+        0.3F, 0.8F, 2, 2, chronoforge::BlockCorruptionMapping::Cascade,
         chronoforge::EdgeBehavior::Mirror, 0xC0FFEE};
     const auto first = chronoforge::block_address_corruption(input, params);
     require(first.shape() == input.shape(), "Block Address Corruption preserves the tensor shape at partial edge blocks");
@@ -230,6 +235,30 @@ void test_sort_and_rotation() {
     require_near(sorted.at(0, 0, 0, 0), 0.5F, "Sort moves eligible darkest sample first");
     require_near(sorted.at(1, 0, 0, 0), 0.2F, "Sort preserves threshold-excluded frame");
     require_near(sorted.at(2, 0, 0, 0), 0.8F, "Sort moves eligible brightest sample last");
+
+    chronoforge::VideoTensor four({4, 1, 1, 1});
+    four.at(0, 0, 0, 0) = 0.1F;
+    four.at(1, 0, 0, 0) = 0.2F;
+    four.at(2, 0, 0, 0) = 0.3F;
+    four.at(3, 0, 0, 0) = 0.4F;
+    const auto zigzag = chronoforge::temporal_pixel_sort(
+        four, {chronoforge::SortCriterion::Luma, chronoforge::SortDirection::Zigzag, 0.0F, 0.0F});
+    require_near(zigzag.at(0, 0, 0, 0), 0.1F, "Zigzag begins with the lowest eligible key");
+    require_near(zigzag.at(1, 0, 0, 0), 0.4F, "Zigzag alternates to the highest eligible key");
+    const auto center_out = chronoforge::temporal_pixel_sort(
+        four, {chronoforge::SortCriterion::Luma, chronoforge::SortDirection::CenterOut, 0.0F, 0.0F});
+    require_near(center_out.at(0, 0, 0, 0), 0.2F, "Center Out begins at the lower median");
+    require_near(center_out.at(1, 0, 0, 0), 0.3F, "Center Out expands toward the upper median");
+
+    chronoforge::VideoTensor hues({3, 1, 1, 3});
+    hues.at(0, 0, 0, 0) = 1.0F;
+    hues.at(1, 0, 0, 1) = 1.0F;
+    hues.at(2, 0, 0, 2) = 1.0F;
+    const auto hue_normal = chronoforge::temporal_pixel_sort(
+        hues, {chronoforge::SortCriterion::Hue, chronoforge::SortDirection::Ascending, 0.0F, 0.0F});
+    const auto hue_shifted = chronoforge::temporal_pixel_sort(
+        hues, {chronoforge::SortCriterion::Hue, chronoforge::SortDirection::Ascending, 0.0F, 140.0F});
+    require(hue_shifted.values() != hue_normal.values(), "Hue Key Shift changes ordering without altering source colour values");
 
     const auto rotation = chronoforge::tensor_3d_rotation(input, {});
     require(rotation.values() == input.values(), "Zero 3D rotation is identity");
@@ -323,22 +352,22 @@ void test_cross_tensor_and_flow_effects() {
     chronoforge::VideoTensor weave_b({2, 4, 3, 1}, 1.0F);
     const auto woven = chronoforge::signal_weave(
         weave_a, weave_b,
-        {chronoforge::SignalWeavePattern::Lines, 1, 0, 0, 0,
+        {chronoforge::SignalWeavePattern::Lines, 0, 0, 0, 0,
          chronoforge::TensorBroadcast::Clamp, 9});
     require_near(woven.at(0, 0, 0, 0), 0.0F, "Signal Weave keeps even lines from A");
     require_near(woven.at(0, 1, 0, 0), 1.0F, "Signal Weave takes odd lines from B");
     const auto irregular_a = chronoforge::signal_weave(
         weave_a, weave_b,
-        {chronoforge::SignalWeavePattern::Checker, 1, 0, 1, 0,
+        {chronoforge::SignalWeavePattern::Checker, 0.2F, 0, 1, 0,
          chronoforge::TensorBroadcast::Clamp, 10});
     const auto irregular_b = chronoforge::signal_weave(
         weave_a, weave_b,
-        {chronoforge::SignalWeavePattern::Checker, 1, 0, 1, 0,
+        {chronoforge::SignalWeavePattern::Checker, 0.2F, 0, 1, 0,
          chronoforge::TensorBroadcast::Clamp, 11});
     require(irregular_a.values() != irregular_b.values(), "Signal Weave irregularity responds to Reseed");
     const auto grafted = chronoforge::block_graft(
         weave_a, weave_b,
-        {2, 0.5F, 2, 0, chronoforge::BlockGraftTrigger::Difference,
+        {0.3F, 0.5F, 2, 0, chronoforge::BlockGraftTrigger::Difference,
          chronoforge::TensorBroadcast::Clamp, 0});
     require(grafted.values() == weave_b.values(), "Block Graft replaces complete B blocks when Difference crosses threshold");
     chronoforge::VideoTensor transplant_a({1, 1, 1, 4}, 0.0F);
@@ -388,6 +417,9 @@ void test_cross_tensor_and_flow_effects() {
     const auto datamosh = chronoforge::structural_datamosh(
         edge, {chronoforge::FreezeAxis::Horizontal, chronoforge::FreezeTrigger::Edge, 0.2F, 2, 0});
     require_near(datamosh.at(0, 0, 2, 0), 0.0F, "Structural datamosh holds an edge along the selected axis");
+    const auto dark_datamosh = chronoforge::structural_datamosh(
+        edge, {chronoforge::FreezeAxis::Horizontal, chronoforge::FreezeTrigger::Luma, 0.7F, 1, 0, 0, true});
+    require_near(dark_datamosh.at(0, 0, 1, 0), 0.0F, "Inverted luma trigger freezes from darker values");
 
     const auto loop_source = numbered({8, 1, 1, 1});
     const auto crossfade_loop = chronoforge::seamless_loop(
@@ -436,13 +468,13 @@ void test_file_backed_cross_tensor() {
     require_near(output.data()[((3 * 1 + 0) * 5 + 4)], source.at(1, 1, 2, 0), "Out-of-core Space-Time Map uses B RGB coordinates");
     const auto weave_path = root / "weave.raw";
     const chronoforge::EffectSpec weave_effect{
-        chronoforge::EffectOperation::SignalWeave, {1, 0.5F, 0.35F, 1}, {3, 2}, 1.0F, 37};
+        chronoforge::EffectOperation::SignalWeave, {0.2F, 0.5F, 0.35F, 1}, {3, 2}, 1.0F, 37};
     const auto weave_result = chronoforge::render_file_cross_tensor_effect(
         source_path, driver_path, weave_path, source.shape(), driver.shape(),
         source.metadata(), driver.metadata(), weave_effect, {});
     const auto weave_expected = chronoforge::signal_weave(
         source, driver,
-        {chronoforge::SignalWeavePattern::Checker, 1, 0.5F, 0.35F, 1,
+        {chronoforge::SignalWeavePattern::Checker, 0.2F, 0.5F, 0.35F, 1,
          chronoforge::TensorBroadcast::Crop, 37});
     require(weave_result.shape == weave_expected.shape(), "Out-of-core Signal Weave reports cropped A/B extents");
     const auto weave_output = chronoforge::MappedTensor::open(weave_path, weave_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
@@ -451,13 +483,13 @@ void test_file_backed_cross_tensor() {
     }
     const auto graft_path = root / "graft.raw";
     const chronoforge::EffectSpec graft_effect{
-        chronoforge::EffectOperation::BlockGraft, {2, 0.4F, 2, -1}, {3, 1}, 1.0F, 71};
+        chronoforge::EffectOperation::BlockGraft, {0.3F, 0.4F, 2, -1}, {3, 1}, 1.0F, 71};
     const auto graft_result = chronoforge::render_file_cross_tensor_effect(
         source_path, driver_path, graft_path, source.shape(), driver.shape(),
         source.metadata(), driver.metadata(), graft_effect, {});
     const auto graft_expected = chronoforge::block_graft(
         source, driver,
-        {2, 0.4F, 2, -1, chronoforge::BlockGraftTrigger::Difference,
+        {0.3F, 0.4F, 2, -1, chronoforge::BlockGraftTrigger::Difference,
          chronoforge::TensorBroadcast::Stretch, 71});
     const auto graft_output = chronoforge::MappedTensor::open(graft_path, graft_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
     for (std::size_t index = 0; index < graft_expected.values().size(); ++index) {
@@ -530,10 +562,10 @@ void test_file_backed_effect_chain() {
     const std::vector<chronoforge::EffectSpec> effects{
         {chronoforge::EffectOperation::LumaTimeShift, {2.0F, 0, 0, 0}, {0, 1, 0, 0}},
         {chronoforge::EffectOperation::RgbTimeSlip, {1.0F, 0.0F, -1.0F, 1.0F}, {0, 1}},
-        {chronoforge::EffectOperation::HorizontalSyncLoss, {0.4F, 2.0F, 0.5F, 0.75F}, {0, 1}, 1.0F, 0xC0FFEE},
+        {chronoforge::EffectOperation::HorizontalSyncLoss, {0.4F, 0.25F, 0.5F, 0.75F}, {0, 1, 0}, 1.0F, 0xC0FFEE},
         {chronoforge::EffectOperation::ChromaCarrierDrift, {1.0F, 0.0F, 1.0F, 2.0F}, {1, 1}},
         {chronoforge::EffectOperation::StrideError, {0.1F, 0.07F, 0.013F}, {1, 1}},
-        {chronoforge::EffectOperation::BlockAddressCorruption, {3.0F, 0.75F, 2.0F, 2.0F}, {3, 2}, 1.0F, 0xC0FFEE},
+        {chronoforge::EffectOperation::BlockAddressCorruption, {0.3F, 0.75F, 2.0F, 2.0F}, {3, 2}, 1.0F, 0xC0FFEE},
         {chronoforge::EffectOperation::BitplaneForge, {8.0F, 255.0F, 1.0F}, {3, 1}, 1.0F, 0xC0FFEE},
         {chronoforge::EffectOperation::RadialChronoFunnel, {0.5F, 0.5F, 0.2F, 0}, {2, 0, 0, 0}},
         {chronoforge::EffectOperation::TemporalPixelSort, {0.1F, 0, 0, 0}, {0, 0, 0, 0}},
@@ -563,7 +595,7 @@ void test_file_backed_effect_chain() {
     expected = chronoforge::rgb_time_slip(
         expected, {1.0F, 0.0F, -1.0F, 1.0F, chronoforge::SplitAxis::Horizontal, chronoforge::EdgeBehavior::Wrap});
     expected = chronoforge::horizontal_sync_loss(
-        expected, {0.4F, 2, 0.5F, 0.75F, chronoforge::SyncLossDriver::DeterministicNoise,
+        expected, {0.4F, 0.25F, 0.5F, 0.75F, chronoforge::SyncLossDriver::DeterministicNoise,
                    chronoforge::EdgeBehavior::Wrap, 0xC0FFEE});
     expected = chronoforge::chroma_carrier_drift(
         expected, {1.0F, 0.0F, 1.0F, 2.0F, chronoforge::ChromaDriftMode::SplitCbCr,
@@ -572,7 +604,7 @@ void test_file_backed_effect_chain() {
         expected, {0.1F, 0.07F, 0.013F, chronoforge::StrideChannelMode::SeparateChannels,
                    chronoforge::AddressEdge::Mirror});
     expected = chronoforge::block_address_corruption(
-        expected, {3, 0.75F, 2, 2, chronoforge::BlockCorruptionMapping::Cascade,
+        expected, {0.3F, 0.75F, 2, 2, chronoforge::BlockCorruptionMapping::Cascade,
                    chronoforge::EdgeBehavior::Mirror, 0xC0FFEE});
     expected = chronoforge::bitplane_forge(
         expected, {8, 255, 1, chronoforge::BitplaneOperation::Xor,
@@ -701,6 +733,52 @@ void test_file_backed_effect_chain() {
             "Out-of-core Amount blends in-place in linear tensor space");
     }
 
+    const std::array blend_modes{
+        chronoforge::AmountBlendMode::Add,
+        chronoforge::AmountBlendMode::Screen,
+        chronoforge::AmountBlendMode::Multiply,
+        chronoforge::AmountBlendMode::Difference,
+        chronoforge::AmountBlendMode::XorGlitch,
+    };
+    const auto composite = [](float base, float layer, chronoforge::AmountBlendMode mode) {
+        if (mode == chronoforge::AmountBlendMode::Add) return base + layer;
+        if (mode == chronoforge::AmountBlendMode::Screen) return 1.0F - (1.0F - base) * (1.0F - layer);
+        if (mode == chronoforge::AmountBlendMode::Multiply) return base * layer;
+        if (mode == chronoforge::AmountBlendMode::Difference) return std::abs(base - layer);
+        constexpr auto maximum = 4095U;
+        const auto a = static_cast<std::uint32_t>(std::llround(std::clamp(base, 0.0F, 1.0F) * maximum));
+        const auto b = static_cast<std::uint32_t>(std::llround(std::clamp(layer, 0.0F, 1.0F) * maximum));
+        return static_cast<float>((a ^ b) & maximum) / static_cast<float>(maximum);
+    };
+    for (const auto mode : blend_modes) {
+        const auto mode_path = root / ("amount-mode-" + std::to_string(static_cast<int>(mode)) + ".raw");
+        const std::vector<chronoforge::EffectSpec> mode_effects{
+            {chronoforge::EffectOperation::LumaTimeShift, {2.0F}, {0, 1}, 0.6F, 42, mode},
+        };
+        const auto mode_result = chronoforge::render_file_effect_chain(
+            input_path, mode_path, root / ("amount-mode-scratch-" + std::to_string(static_cast<int>(mode))),
+            input.shape(), input.metadata(), mode_effects, 64 * 1024 * 1024, {});
+        const auto mode_output = chronoforge::MappedTensor::open(
+            mode_path, mode_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
+        for (std::size_t i = 0; i < input.values().size(); ++i) {
+            const auto expected_composite = composite(input.values()[i], fully_shifted.values()[i], mode);
+            require_near(mode_output.data()[i], input.values()[i] + (expected_composite - input.values()[i]) * 0.6F,
+                         "Out-of-core Amount blend mode matches its compositing formula");
+        }
+    }
+
+    const auto displace_path = root / "amount-displace.raw";
+    const std::vector<chronoforge::EffectSpec> displace_effects{
+        {chronoforge::EffectOperation::LumaTimeShift, {2.0F}, {0, 1}, 1.0F, 42, chronoforge::AmountBlendMode::Displace},
+    };
+    const auto displace_result = chronoforge::render_file_effect_chain(
+        input_path, displace_path, root / "amount-displace-scratch", input.shape(), input.metadata(),
+        displace_effects, 64 * 1024 * 1024, {});
+    const auto displace_output = chronoforge::MappedTensor::open(
+        displace_path, displace_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
+    require(!std::equal(input.values().begin(), input.values().end(), displace_output.data()),
+            "Displace Amount mode uses the effect output as a spatial-temporal displacement field");
+
     const auto dry_path = root / "amount-zero.raw";
     const std::vector<chronoforge::EffectSpec> dry_effects{
         {chronoforge::EffectOperation::LumaTimeShift, {200.0F}, {0, 1}, 0.0F, 99},
@@ -723,7 +801,7 @@ void test_file_backed_effect_chain() {
     }
     const auto seeded_path = root / "seeded-datamosh.raw";
     const std::vector<chronoforge::EffectSpec> seeded_effects{
-        {chronoforge::EffectOperation::StructuralDatamosh, {0.2F, 3.0F, 0.37F}, {1, 2}, 1.0F, 0xC0FFEE},
+        {chronoforge::EffectOperation::StructuralDatamosh, {0.2F, 3.0F, 0.37F}, {1, 2, 0}, 1.0F, 0xC0FFEE},
     };
     const auto seeded_result = chronoforge::render_file_effect_chain(
         seeded_input_path, seeded_path, root / "seeded-datamosh-scratch", seeded_input.shape(), seeded_input.metadata(),

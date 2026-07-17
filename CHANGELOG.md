@@ -2,6 +2,11 @@
 
 ## 1.0.0 — in development
 
+- Refined Preview toolbar labels and layout, added stable progress geometry, automatic rerender after quality changes, and shortcuts for sequence import, queueing, Random Stack and stack clearing.
+- Expanded Pixel Sort with hue-key rotation, Zigzag and Center Out ordering; expanded Axis Datamosh with dark-side luma triggering.
+- Renamed Sync Loss and added vertical operation plus normalized resolution-independent sizing for Sync Loss, Block Address Corruption, Signal Weave and Block Graft.
+- Added Normal, Add, Screen, Multiply, Difference, Displace and XOR Glitch Amount compositing with proxy/full-render parity.
+
 - Added the centralized EffectDefinition registry and categorized Add Effect menu.
 - Introduced the versioned eight-slot effect descriptor with validated logical parameter counts, Amount and deterministic seed fields.
 - Added per-effect Amount controls with bit-exact zero, linear wet/dry blending in proxy and mapped full renders, and explicit rejection for shape-changing modes.

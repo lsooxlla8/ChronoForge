@@ -88,6 +88,7 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
     var inputNodeID: UUID?
     var driverMediaID: UUID? = nil
     var amount: Float = 1
+    var amountBlendMode: AmountBlendMode = .normal
     var randomSeed: UInt64
     var values: [Float]
     var options: [Int32]
@@ -99,6 +100,7 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
         inputNodeID: UUID? = nil,
         driverMediaID: UUID? = nil,
         amount: Float = 1,
+        amountBlendMode: AmountBlendMode = .normal,
         randomSeed: UInt64 = .random(in: UInt64.min...UInt64.max),
         values: [Float],
         options: [Int32]
@@ -109,6 +111,7 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
         self.inputNodeID = inputNodeID
         self.driverMediaID = driverMediaID
         self.amount = amount
+        self.amountBlendMode = amountBlendMode
         self.randomSeed = randomSeed
         self.values = values
         self.options = options
@@ -131,7 +134,7 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
     var supportsAmount: Bool { kind.definition.shapeBehavior.supportsAmount(for: self) }
 
     private enum CodingKeys: String, CodingKey {
-        case id, kind, enabled, inputNodeID, driverMediaID, amount, randomSeed, values, options
+        case id, kind, enabled, inputNodeID, driverMediaID, amount, amountBlendMode, randomSeed, values, options
     }
 
     init(from decoder: Decoder) throws {
@@ -142,9 +145,17 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
         inputNodeID = try values.decodeIfPresent(UUID.self, forKey: .inputNodeID)
         driverMediaID = try values.decodeIfPresent(UUID.self, forKey: .driverMediaID)
         amount = try values.decodeIfPresent(Float.self, forKey: .amount) ?? 1
+        amountBlendMode = try values.decodeIfPresent(AmountBlendMode.self, forKey: .amountBlendMode) ?? .normal
         randomSeed = try values.decodeIfPresent(UInt64.self, forKey: .randomSeed) ?? 0
         self.values = try values.decodeIfPresent([Float].self, forKey: .values) ?? []
         options = try values.decodeIfPresent([Int32].self, forKey: .options) ?? []
+        let definition = kind.definition
+        if self.values.count < definition.valueCount {
+            self.values += Array(repeating: 0, count: definition.valueCount - self.values.count)
+        }
+        if options.count < definition.optionCount {
+            options += Array(repeating: 0, count: definition.optionCount - options.count)
+        }
     }
 
     var modeTitle: String {
@@ -163,7 +174,7 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
         case .structuralDatamosh: ["Time", "Horizontal", "Vertical"][min(max(Int(options[0]), 0), 2)]
         case .seamlessLoop: ["Crossfade", "Luma Weave", "Ping-Pong"][min(max(Int(options[0]), 0), 2)]
         case .rgbTimeSlip: ["Horizontal", "Vertical", "Radial"][min(max(Int(options[0]), 0), 2)]
-        case .horizontalSyncLoss: ["Noise", "Luma", "Edges"][min(max(Int(options[0]), 0), 2)]
+        case .horizontalSyncLoss: ["Horizontal", "Vertical"][min(max(Int(options[2]), 0), 1)]
         case .chromaCarrierDrift: ["Together", "Split Cb–Cr", "Alternating"][min(max(Int(options[0]), 0), 2)]
         case .strideError: ["RGB Together", "Separate Channels", "Alpha Included"][min(max(Int(options[0]), 0), 2)]
         case .blockAddressCorruption: ["Swap", "Repeat", "Offset", "Cascade"][min(max(Int(options[0]), 0), 3)]
@@ -171,6 +182,29 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
         case .signalWeave: ["Lines", "Interlaced Fields", "Bands", "Checker"][min(max(Int(options[0]), 0), 3)]
         case .blockGraft: ["Random", "A Luma", "B Luma", "Difference", "A Edges"][min(max(Int(options[0]), 0), 4)]
         case .channelTransplant: options[3] == 0 ? "RGB Components" : "YCbCr Components"
+        }
+    }
+}
+
+enum AmountBlendMode: Int32, CaseIterable, Codable, Identifiable, Sendable {
+    case normal
+    case add
+    case screen
+    case multiply
+    case difference
+    case displace
+    case xorGlitch
+
+    var id: Int32 { rawValue }
+    var title: String {
+        switch self {
+        case .normal: "Normal"
+        case .add: "Add"
+        case .screen: "Screen"
+        case .multiply: "Multiply"
+        case .difference: "Difference"
+        case .displace: "Displace"
+        case .xorGlitch: "XOR Glitch"
         }
     }
 }

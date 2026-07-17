@@ -102,20 +102,20 @@ int main(int argc, char** argv) {
         const std::vector<Pair> rows{
             {chronoforge::rgb_time_slip(source, {-3, 0, 4, 9, chronoforge::SplitAxis::Horizontal, chronoforge::EdgeBehavior::Wrap}),
              chronoforge::rgb_time_slip(source, {-6, 2, 7, -13, chronoforge::SplitAxis::Radial, chronoforge::EdgeBehavior::Mirror})},
-            {chronoforge::horizontal_sync_loss(source, {0.22F, 6, 0.35F, 0.42F, chronoforge::SyncLossDriver::DeterministicNoise, chronoforge::EdgeBehavior::Wrap, 11}),
-             chronoforge::horizontal_sync_loss(source, {0.36F, 3, -0.8F, 0.62F, chronoforge::SyncLossDriver::DeterministicNoise, chronoforge::EdgeBehavior::Mirror, 12})},
+            {chronoforge::horizontal_sync_loss(source, {0.22F, 0.08F, 0.35F, 0.42F, chronoforge::SyncLossDriver::DeterministicNoise, chronoforge::EdgeBehavior::Wrap, 11}),
+             chronoforge::horizontal_sync_loss(source, {0.36F, 0.04F, -0.8F, 0.62F, chronoforge::SyncLossDriver::DeterministicNoise, chronoforge::EdgeBehavior::Mirror, 12, chronoforge::SyncLossAxis::Vertical})},
             {chronoforge::chroma_carrier_drift(source, {8, 2, 2, 7, chronoforge::ChromaDriftMode::SplitCbCr, chronoforge::EdgeBehavior::Wrap}),
              chronoforge::chroma_carrier_drift(source, {-14, 5, -3, 14, chronoforge::ChromaDriftMode::Alternating, chronoforge::EdgeBehavior::Mirror})},
             {chronoforge::stride_error(source, {0.06F, 0.04F, 0.01F, chronoforge::StrideChannelMode::RgbTogether, chronoforge::AddressEdge::Wrap}),
              chronoforge::stride_error(source, {-0.11F, 0.13F, -0.025F, chronoforge::StrideChannelMode::AlphaIncluded, chronoforge::AddressEdge::Mirror})},
-            {chronoforge::block_address_corruption(source, {12, 0.38F, 3, 2, chronoforge::BlockCorruptionMapping::Swap, chronoforge::EdgeBehavior::Wrap, 21}),
-             chronoforge::block_address_corruption(source, {7, 0.72F, 5, 3, chronoforge::BlockCorruptionMapping::Cascade, chronoforge::EdgeBehavior::Mirror, 22})},
+            {chronoforge::block_address_corruption(source, {0.15F, 0.38F, 3, 2, chronoforge::BlockCorruptionMapping::Swap, chronoforge::EdgeBehavior::Wrap, 21}),
+             chronoforge::block_address_corruption(source, {0.09F, 0.72F, 5, 3, chronoforge::BlockCorruptionMapping::Cascade, chronoforge::EdgeBehavior::Mirror, 22})},
             {chronoforge::bitplane_forge(source, {8, 0x00F0, 2, chronoforge::BitplaneOperation::Rotate, chronoforge::BitplaneChannel::RgbTogether, 31}),
              chronoforge::bitplane_forge(source, {10, 0x03FF, -3, chronoforge::BitplaneOperation::Xor, chronoforge::BitplaneChannel::Luma, 32})},
-            {chronoforge::signal_weave(source, driver, {chronoforge::SignalWeavePattern::Bands, 8, 0.3F, 0.12F, 1, chronoforge::TensorBroadcast::Stretch, 41}),
-             chronoforge::signal_weave(source, driver, {chronoforge::SignalWeavePattern::Checker, 6, -0.55F, 0.48F, -2, chronoforge::TensorBroadcast::Clamp, 42})},
-            {chronoforge::block_graft(source, driver, {12, 0.38F, 3, 1, chronoforge::BlockGraftTrigger::Random, chronoforge::TensorBroadcast::Stretch, 51}),
-             chronoforge::block_graft(source, driver, {8, 0.22F, 2, -1, chronoforge::BlockGraftTrigger::Difference, chronoforge::TensorBroadcast::Clamp, 52})},
+            {chronoforge::signal_weave(source, driver, {chronoforge::SignalWeavePattern::Bands, 0.12F, 0.3F, 0.12F, 1, chronoforge::TensorBroadcast::Stretch, 41}),
+             chronoforge::signal_weave(source, driver, {chronoforge::SignalWeavePattern::Checker, 0.08F, -0.55F, 0.48F, -2, chronoforge::TensorBroadcast::Clamp, 42})},
+            {chronoforge::block_graft(source, driver, {0.18F, 0.38F, 3, 1, chronoforge::BlockGraftTrigger::Random, chronoforge::TensorBroadcast::Stretch, 51}),
+             chronoforge::block_graft(source, driver, {0.12F, 0.22F, 2, -1, chronoforge::BlockGraftTrigger::Difference, chronoforge::TensorBroadcast::Clamp, 52})},
             {chronoforge::channel_transplant(source, driver, {{true, false, true}, 1, 3, -2, chronoforge::ChannelTransplantColourModel::Rgb, chronoforge::TensorBroadcast::Stretch}),
              chronoforge::channel_transplant(source, driver, {{false, true, true}, -2, -4, 3, chronoforge::ChannelTransplantColourModel::YCbCr, chronoforge::TensorBroadcast::Clamp})},
         };
@@ -131,7 +131,7 @@ int main(int argc, char** argv) {
         write_ppm(sheet_path, sheet, sheet_width, sheet_height);
         std::ofstream manifest(output_directory / "README.txt", std::ios::trunc);
         manifest << "Columns: source A | standard parameters | alternate/seeded parameters\n"
-                    "Rows: RGB Time Slip | Horizontal Sync Loss | Chroma Carrier Drift | Stride Error | "
+                    "Rows: RGB Time Slip | Sync Loss | Chroma Carrier Drift | Stride Error | "
                     "Block Address Corruption | Bitplane Forge | Signal Weave | Block Graft | Channel Transplant\n"
                     "Fixture: procedural RGBA gradient, moving geometry, portrait-like silhouette, noise, one-pixel lines; "
                     "two-source rows use a different B size, duration, motion and colour.\n";

@@ -392,6 +392,7 @@ enum SelfTestRunner {
             }
             store.startFreshSession()
         }
+        try await verifyProxyQualityRefresh(source: projectSource)
         try await verifyAutoUpdateDebounce(source: projectSource)
         let proxy = try await VideoDecoder.decodeProxy(from: source)
         guard proxy.tensor.width == 48, proxy.tensor.height == 64, proxy.sourceFrameCount == 8, proxy.sourceFrameCountIsExact,
@@ -502,6 +503,30 @@ enum SelfTestRunner {
         }
         store.setAutoUpdate(false)
         store.cancelWork()
+        store.startFreshSession()
+    }
+
+    @MainActor
+    private static func verifyProxyQualityRefresh(source: DecodedProxy) async throws {
+        let store = SessionStore()
+        store.source = source
+        store.mediaPool = [source]
+        store.output = source.tensor
+        store.addEffect(.lumaTimeShift)
+        store.setAutoUpdate(false)
+        let launchesBeforeQualityChange = store.previewLaunchCountForDiagnostics
+        store.changeProxyQuality(to: .high)
+        for _ in 0..<200 {
+            if !store.isImporting && !store.isRendering { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        guard store.proxyQuality == .high,
+              !store.isImporting,
+              !store.isRendering,
+              !store.isPreviewStale,
+              store.previewLaunchCountForDiagnostics == launchesBeforeQualityChange + 1 else {
+            throw IntegrationSelfTestError.message("Changing Preview quality did not rebuild media and refresh the effect preview automatically")
+        }
         store.startFreshSession()
     }
 

@@ -55,8 +55,8 @@ int main() {
     passed &= measure("RGB Time Slip", 4000, [&] {
         return chronoforge::rgb_time_slip(source, {-5, 0, 6, 10, chronoforge::SplitAxis::Radial, chronoforge::EdgeBehavior::Wrap});
     });
-    passed &= measure("Horizontal Sync Loss", 1000, [&] {
-        return chronoforge::horizontal_sync_loss(source, {0.25F, 8, 0.4F, 0.4F, chronoforge::SyncLossDriver::DeterministicNoise, chronoforge::EdgeBehavior::Wrap, 11});
+    passed &= measure("Sync Loss", 1000, [&] {
+        return chronoforge::horizontal_sync_loss(source, {0.25F, 0.045F, 0.4F, 0.4F, chronoforge::SyncLossDriver::DeterministicNoise, chronoforge::EdgeBehavior::Wrap, 11});
     });
     passed &= measure("Chroma Carrier Drift", 4000, [&] {
         return chronoforge::chroma_carrier_drift(source, {12, 4, 2, 8, chronoforge::ChromaDriftMode::SplitCbCr, chronoforge::EdgeBehavior::Wrap});
@@ -65,16 +65,16 @@ int main() {
         return chronoforge::stride_error(source, {0.08F, 0.06F, 0.01F, chronoforge::StrideChannelMode::SeparateChannels, chronoforge::AddressEdge::Mirror});
     });
     passed &= measure("Block Address Corruption", 4000, [&] {
-        return chronoforge::block_address_corruption(source, {16, 0.4F, 6, 3, chronoforge::BlockCorruptionMapping::Cascade, chronoforge::EdgeBehavior::Mirror, 21});
+        return chronoforge::block_address_corruption(source, {0.05F, 0.4F, 6, 3, chronoforge::BlockCorruptionMapping::Cascade, chronoforge::EdgeBehavior::Mirror, 21});
     });
     passed &= measure("Bitplane Forge", 1000, [&] {
         return chronoforge::bitplane_forge(source, {10, 0x03FF, 2, chronoforge::BitplaneOperation::Xor, chronoforge::BitplaneChannel::RgbTogether, 31});
     });
     passed &= measure("Signal Weave", 4000, [&] {
-        return chronoforge::signal_weave(source, driver, {chronoforge::SignalWeavePattern::Checker, 8, 0.3F, 0.2F, 2, chronoforge::TensorBroadcast::Stretch, 41});
+        return chronoforge::signal_weave(source, driver, {chronoforge::SignalWeavePattern::Checker, 0.025F, 0.3F, 0.2F, 2, chronoforge::TensorBroadcast::Stretch, 41});
     });
     passed &= measure("Block Graft", 4000, [&] {
-        return chronoforge::block_graft(source, driver, {16, 0.4F, 3, 1, chronoforge::BlockGraftTrigger::Random, chronoforge::TensorBroadcast::Stretch, 51});
+        return chronoforge::block_graft(source, driver, {0.05F, 0.4F, 3, 1, chronoforge::BlockGraftTrigger::Random, chronoforge::TensorBroadcast::Stretch, 51});
     });
     passed &= measure("Channel Transplant", 4000, [&] {
         return chronoforge::channel_transplant(source, driver, {{true, false, true}, 1, 4, -3, chronoforge::ChannelTransplantColourModel::YCbCr, chronoforge::TensorBroadcast::Stretch});

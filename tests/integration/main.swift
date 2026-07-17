@@ -20,7 +20,7 @@ struct ChronoForgeIntegration {
         let effectOptions: [Int32] = [0, 1]
         let effect = effectValues.withUnsafeBufferPointer { values in
             effectOptions.withUnsafeBufferPointer { options in
-                cf_effect_descriptor_v2_make(1, 1, 0, values.baseAddress, 1, options.baseAddress, 2)
+                cf_effect_descriptor_v2_make(1, 1, 0, 0, values.baseAddress, 1, options.baseAddress, 2)
             }
         }
 
@@ -90,18 +90,40 @@ struct ChronoForgeIntegration {
 
         let dryEffect = effectValues.withUnsafeBufferPointer { values in
             effectOptions.withUnsafeBufferPointer { options in
-                cf_effect_descriptor_v2_make(1, 0, 123, values.baseAddress, 1, options.baseAddress, 2)
+                cf_effect_descriptor_v2_make(1, 0, 0, 123, values.baseAddress, 1, options.baseAddress, 2)
             }
         }
         guard try render(dryEffect) == tensor.values else {
             throw IntegrationFailure.message("Amount zero must be a bit-exact identity")
         }
 
+        let differenceEffect = effectValues.withUnsafeBufferPointer { values in
+            effectOptions.withUnsafeBufferPointer { options in
+                cf_effect_descriptor_v2_make(1, 1, 4, 123, values.baseAddress, 1, options.baseAddress, 2)
+            }
+        }
+        let differenceOutput = try render(differenceEffect)
+        guard zip(differenceOutput, zip(tensor.values, first)).allSatisfy({ element in
+            let (output, pair) = element
+            return abs(output - abs(pair.0 - pair.1)) < 0.0001
+        }) else {
+            throw IntegrationFailure.message("Difference Amount mode was not applied by the proxy bridge")
+        }
+
+        let displaceEffect = effectValues.withUnsafeBufferPointer { values in
+            effectOptions.withUnsafeBufferPointer { options in
+                cf_effect_descriptor_v2_make(1, 1, 5, 123, values.baseAddress, 1, options.baseAddress, 2)
+            }
+        }
+        guard try render(displaceEffect) != tensor.values else {
+            throw IntegrationFailure.message("Displace Amount mode did not use the effect as a displacement field")
+        }
+
         let rgbValues: [Float] = [1, 0, -1, 2]
         let rgbOptions: [Int32] = [0, 1]
         let rgbTimeSlip = rgbValues.withUnsafeBufferPointer { values in
             rgbOptions.withUnsafeBufferPointer { options in
-                cf_effect_descriptor_v2_make(13, 1, 0, values.baseAddress, 4, options.baseAddress, 2)
+                cf_effect_descriptor_v2_make(13, 1, 0, 0, values.baseAddress, 4, options.baseAddress, 2)
             }
         }
         let rgbOutput = try render(rgbTimeSlip)
@@ -110,12 +132,12 @@ struct ChronoForgeIntegration {
             throw IntegrationFailure.message("RGB Time Slip bridge mapping did not separate channels while preserving current-frame alpha")
         }
 
-        let syncValues: [Float] = [0.5, 8, 0.5, 1]
-        let syncOptions: [Int32] = [0, 1]
+        let syncValues: [Float] = [0.5, 0.2, 0.5, 1]
+        let syncOptions: [Int32] = [0, 1, 0]
         func syncLoss(seed: UInt64) -> CFEffectDescriptorV2 {
             syncValues.withUnsafeBufferPointer { values in
                 syncOptions.withUnsafeBufferPointer { options in
-                    cf_effect_descriptor_v2_make(14, 1, seed, values.baseAddress, 4, options.baseAddress, 2)
+                    cf_effect_descriptor_v2_make(14, 1, 0, seed, values.baseAddress, 4, options.baseAddress, 3)
                 }
             }
         }
@@ -129,7 +151,7 @@ struct ChronoForgeIntegration {
         let chromaOptions: [Int32] = [1, 1]
         let chromaDrift = chromaValues.withUnsafeBufferPointer { values in
             chromaOptions.withUnsafeBufferPointer { options in
-                cf_effect_descriptor_v2_make(15, 1, 0, values.baseAddress, 4, options.baseAddress, 2)
+                cf_effect_descriptor_v2_make(15, 1, 0, 0, values.baseAddress, 4, options.baseAddress, 2)
             }
         }
         let chromaOutput = try render(chromaDrift)
@@ -142,7 +164,7 @@ struct ChronoForgeIntegration {
         let strideOptions: [Int32] = [0, 1]
         let strideError = strideValues.withUnsafeBufferPointer { values in
             strideOptions.withUnsafeBufferPointer { options in
-                cf_effect_descriptor_v2_make(16, 1, 0, values.baseAddress, 3, options.baseAddress, 2)
+                cf_effect_descriptor_v2_make(16, 1, 0, 0, values.baseAddress, 3, options.baseAddress, 2)
             }
         }
         let strideOutput = try render(strideError)
@@ -151,12 +173,12 @@ struct ChronoForgeIntegration {
             throw IntegrationFailure.message("Stride Error bridge path did not preserve current alpha in RGB Together mode")
         }
 
-        let blockValues: [Float] = [3, 1, 2, 2]
+        let blockValues: [Float] = [0.35, 1, 2, 2]
         let blockOptions: [Int32] = [3, 1]
         func blockCorruption(seed: UInt64) -> CFEffectDescriptorV2 {
             blockValues.withUnsafeBufferPointer { values in
                 blockOptions.withUnsafeBufferPointer { options in
-                    cf_effect_descriptor_v2_make(17, 1, seed, values.baseAddress, 4, options.baseAddress, 2)
+                    cf_effect_descriptor_v2_make(17, 1, 0, seed, values.baseAddress, 4, options.baseAddress, 2)
                 }
             }
         }
@@ -171,7 +193,7 @@ struct ChronoForgeIntegration {
         func bitplane(seed: UInt64) -> CFEffectDescriptorV2 {
             bitplaneValues.withUnsafeBufferPointer { values in
                 bitplaneOptions.withUnsafeBufferPointer { options in
-                    cf_effect_descriptor_v2_make(18, 1, seed, values.baseAddress, 3, options.baseAddress, 2)
+                    cf_effect_descriptor_v2_make(18, 1, 0, seed, values.baseAddress, 3, options.baseAddress, 2)
                 }
             }
         }
@@ -181,11 +203,11 @@ struct ChronoForgeIntegration {
             throw IntegrationFailure.message("Bitplane Forge bridge path ignored deterministic XOR seed semantics")
         }
 
-        let weaveValues: [Float] = [8, 0.25, 0.2, 1]
+        let weaveValues: [Float] = [0.25, 0.25, 0.2, 1]
         let weaveOptions: [Int32] = [2, 0]
         let weave = weaveValues.withUnsafeBufferPointer { values in
             weaveOptions.withUnsafeBufferPointer { options in
-                cf_effect_descriptor_v2_make(19, 1, 55, values.baseAddress, 4, options.baseAddress, 2)
+                cf_effect_descriptor_v2_make(19, 1, 0, 55, values.baseAddress, 4, options.baseAddress, 2)
             }
         }
         let weaveOutput = try renderCross(weave)
@@ -193,11 +215,11 @@ struct ChronoForgeIntegration {
             throw IntegrationFailure.message("Signal Weave bridge path did not combine A/B deterministically")
         }
 
-        let graftValues: [Float] = [16, 1, 3, 0]
+        let graftValues: [Float] = [0.5, 1, 3, 0]
         let graftOptions: [Int32] = [0, 0]
         let graft = graftValues.withUnsafeBufferPointer { values in
             graftOptions.withUnsafeBufferPointer { options in
-                cf_effect_descriptor_v2_make(20, 1, 88, values.baseAddress, 4, options.baseAddress, 2)
+                cf_effect_descriptor_v2_make(20, 1, 0, 88, values.baseAddress, 4, options.baseAddress, 2)
             }
         }
         let graftOutput = try renderCross(graft)
@@ -209,7 +231,7 @@ struct ChronoForgeIntegration {
         let transplantOptions: [Int32] = [1, 0, 1, 0, 0]
         let transplant = transplantValues.withUnsafeBufferPointer { values in
             transplantOptions.withUnsafeBufferPointer { options in
-                cf_effect_descriptor_v2_make(21, 1, 0, values.baseAddress, 3, options.baseAddress, 5)
+                cf_effect_descriptor_v2_make(21, 1, 0, 0, values.baseAddress, 3, options.baseAddress, 5)
             }
         }
         let transplantOutput = try renderCross(transplant)

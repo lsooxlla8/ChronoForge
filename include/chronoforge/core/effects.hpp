@@ -13,7 +13,7 @@ enum class TransposeResolution { NativeTensor, FitSourceCanvas };
 enum class EdgeBehavior { Clamp, Wrap, Mirror };
 enum class ShiftSource { Luma, Red, Green, Blue, Alpha };
 enum class SortCriterion { Luma, Hue, Saturation };
-enum class SortDirection { Ascending, Descending };
+enum class SortDirection { Ascending, Descending, Zigzag, CenterOut };
 enum class FillMode { Black, Transparent, Repeat, Fit };
 enum class RadialTopology { TimeLoom, KaleidoFold, EventHorizon };
 enum class PrefilterStrength { Off, Light, Strong };
@@ -26,6 +26,7 @@ enum class FreezeTrigger { Edge, Luma, Random };
 enum class SeamlessLoopMode { Crossfade, LumaWeave, PingPong };
 enum class SplitAxis { Horizontal, Vertical, Radial };
 enum class SyncLossDriver { DeterministicNoise, Luma, Edges };
+enum class SyncLossAxis { Horizontal, Vertical };
 enum class ChromaDriftMode { Together, SplitCbCr, Alternating };
 enum class StrideChannelMode { RgbTogether, SeparateChannels, AlphaIncluded };
 enum class AddressEdge { Wrap, Mirror };
@@ -62,6 +63,8 @@ struct TemporalPixelSortParams {
     SortDirection direction{SortDirection::Ascending};
     // Frames whose key is smaller than the threshold stay in their original slot.
     float threshold{0.0F};
+    // Rotates only the hue key used for ordering; output colour is unchanged.
+    float hue_shift_degrees{};
 };
 
 struct TensorRotationParams {
@@ -116,6 +119,7 @@ struct StructuralDatamoshParams {
     std::size_t max_hold{8};
     float probability{0.05F};
     std::uint64_t random_seed{};
+    bool invert_trigger{};
 };
 
 struct SeamlessLoopParams {
@@ -135,12 +139,13 @@ struct RGBTimeSlipParams {
 
 struct HorizontalSyncLossParams {
     float shift_fraction{0.2F};
-    std::size_t band_height{12};
+    float band_size{0.08F};
     float drift_speed{};
     float tear_density{0.35F};
     SyncLossDriver driver{SyncLossDriver::DeterministicNoise};
     EdgeBehavior edge_behavior{EdgeBehavior::Wrap};
     std::uint64_t random_seed{};
+    SyncLossAxis axis{SyncLossAxis::Horizontal};
 };
 
 struct ChromaCarrierDriftParams {
@@ -161,7 +166,7 @@ struct StrideErrorParams {
 };
 
 struct BlockAddressCorruptionParams {
-    std::size_t block_size{16};
+    float block_size{0.1F};
     float corruption{0.3F};
     std::size_t time_reach{};
     std::size_t hold{1};
@@ -181,7 +186,7 @@ struct BitplaneForgeParams {
 
 struct SignalWeaveParams {
     SignalWeavePattern pattern{SignalWeavePattern::Bands};
-    std::size_t band_size{8};
+    float band_size{0.05F};
     float phase_drift{};
     float irregularity{};
     int b_time_offset{};
@@ -190,7 +195,7 @@ struct SignalWeaveParams {
 };
 
 struct BlockGraftParams {
-    std::size_t block_size{16};
+    float block_size{0.1F};
     float density_or_threshold{0.35F};
     std::size_t hold{1};
     int b_time_offset{};

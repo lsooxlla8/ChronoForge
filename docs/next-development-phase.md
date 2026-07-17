@@ -35,7 +35,7 @@
 - Пользователь сохраняет результаты, но не обязан управлять проектами.
 - Интерфейс не должен требовать изучения node graph, модульной системы или композитинга.
 - Случайность должна помогать находить новые результаты, но не подменяться библиотекой пресетов.
-- Proxy preview остаётся интерактивным путём, full render всегда пересчитывается из оригинальных медиа.
+- Preview остаётся интерактивным proxy-путём, full render всегда пересчитывается из оригинальных медиа.
 - Одинаковый набор явных параметров и скрытых seed обязан давать детерминированный результат внутри каждого render path; различия proxy/full допустимы только из-за разрешения и временной выборки proxy.
 - Новые эффекты должны работать в RAM-прокси и out-of-core full render либо явно не попадать в релиз.
 
@@ -243,6 +243,7 @@
 
 ```swift
 var amount: Float = 1.0
+var amountBlendMode: AmountBlendMode = .normal
 var randomSeed: UInt64
 ```
 
@@ -255,6 +256,7 @@ var randomSeed: UInt64
 - Поле точного значения и slider используют существующий стиль.
 - Контекстное меню slider: Reset to 100%.
 - Для случайных стеков Amount выбирается по effect-specific distribution, обычно в диапазоне 25–100%.
+- `Amount Blend` предлагает Normal / Add / Screen / Multiply / Difference / Displace / XOR Glitch.
 
 ### 8.3. Семантика
 
@@ -263,6 +265,8 @@ var randomSeed: UInt64
 ```text
 output = input × (1 - amount) + effected × amount
 ```
+
+Формула выше описывает Normal. Остальные режимы сначала вычисляют выбранную compositing-операцию между input и effected, затем Amount интерполирует от input к этому результату. Displace использует effected как трёхмерное поле смещения input; XOR Glitch квантует и XOR-комбинирует значения для намеренно жёстких цифровых разломов.
 
 - Смешивание выполняется в linear premultiplied RGBA.
 - Amount 0 обязан быть точной identity-операцией.
@@ -484,7 +488,7 @@ typedef struct CFEffectDescriptorV2 {
 
 ### 11.4. FPS export
 
-- Добавить output setting `Playback FPS`: Result либо перечисленные стандартные/custom значения.
+- Добавить output setting `FPS`: Result либо перечисленные стандартные/custom значения.
 - В 1.1 FPS только переинтерпретирует готовые кадры: frame count не меняется, duration изменяется.
 - UI сразу показывает итоговую duration.
 - При FPS, отличном от source/effect result, Preserve Original Audio отключается с пояснением о рассинхронизации.
@@ -532,18 +536,19 @@ Shape: сохраняется
 
 Randomization должна часто оставлять один канал почти неподвижным, а два других разводить в разные стороны.
 
-### 12.2. Horizontal Sync Loss
+### 12.2. Sync Loss
 
 Категория: Signal & Analog  
 Входы: A  
 Shape: сохраняется
 
-Группы строк получают горизонтальный сдвиг, дрейфующий во времени. Эффект должен напоминать потерю синхронизации, а не обычный displacement noise.
+Группы строк или колонок получают ортогональный сдвиг, дрейфующий во времени. Эффект должен напоминать потерю синхронизации, а не обычный displacement noise.
 
 Параметры:
 
 - Shift: 0…100% width;
-- Band Height: 1…256 px;
+- Direction: Horizontal / Vertical;
+- Band Size: 0…1, где 0 означает один pixel, а 1 — одну полосу на весь frame;
 - Drift Speed: −10…10 bands/frame;
 - Tear Density: 0…1;
 - Driver: Deterministic Noise / Luma / Edges;
@@ -598,7 +603,7 @@ Shape: сохраняется
 
 Параметры:
 
-- Block Size: 2…256 px;
+- Block Size: 0…1, где 0 означает один pixel, а 1 покрывает весь frame;
 - Corruption: 0…1;
 - Time Reach: 0…240 frames;
 - Hold: 1…240 frames;
@@ -638,7 +643,7 @@ Shape: A по умолчанию
 Параметры:
 
 - Pattern: Lines / Interlaced Fields / Bands / Checker;
-- Band Size: 1…256 px;
+- Band Size: 0…1, где 0 означает один pixel, а 1 охватывает frame;
 - Phase Drift: −20…20 units/frame;
 - Irregularity: 0…1;
 - B Time Offset: −240…240 frames;
@@ -656,7 +661,7 @@ Shape: A
 
 Параметры:
 
-- Block Size: 2…256 px;
+- Block Size: 0…1, где 0 означает один pixel, а 1 покрывает весь frame;
 - Density/Threshold: 0…1;
 - Hold: 1…240 frames;
 - B Time Offset: −240…240 frames;
@@ -728,6 +733,18 @@ effectiveAmount(t, y, x) = amount × mask(t, y, x)
 
 До реализации требуется отдельное решение для эффектов, меняющих ось T.
 
+### 14.3. Встроенная Help — отложенный контракт
+
+Не входит в текущий обязательный пакет. Следующая продуктовая фаза должна добавить доступную из меню Help документацию для пользователей без опыта в tensor/video processing:
+
+- краткое объяснение session-based workflow, A/B media, Preview, Image AA, Time AA, FPS, Before/After, queue и export;
+- отдельную страницу каждого эффекта с визуальным принципом действия;
+- описание каждой кнопки, option, slider, единиц измерения, диапазона и безопасной стартовой точки;
+- объяснение Amount и всех Amount Blend modes;
+- контекстные ссылки `?` из Inspector и toolbar в соответствующий раздел;
+- searchable glossary терминов alpha, premultiplied, proxy, luma, chroma, FFT, stride, block address и datamosh;
+- документацию, сгенерированную или проверяемую против EffectDefinition, чтобы UI и Help не расходились.
+
 ---
 
 ## 15. Кэш, детерминизм и совместимость рендера
@@ -753,7 +770,7 @@ effectiveAmount(t, y, x) = amount × mask(t, y, x)
 - Viewer toolbar: Update Preview, Auto Update, hold-to-compare, background Black/Checkerboard.
 - Main toolbar: Export и Add to Queue; project controls удалены.
 - Inspector: Enabled, Amount, effect-specific controls, Driver B при необходимости, Reseed только для stochastic effects.
-- Output settings: Proxy Quality, Spatial/Temporal Prefilter, Playback FPS, Audio.
+- Output settings: Preview Quality, Image AA, Time AA, FPS, Audio.
 - Add Effect menu: только категории и эффекты, без поиска, presets и favorites.
 
 Если ширины toolbar не хватает, output settings переносятся в компактный popover `Output`, а не во второй постоянно видимый ряд новых controls.
@@ -887,14 +904,14 @@ swift run ChronoForgeMac --self-test
 15. Ввести MediaSource abstraction для movie/sequence.
 16. Добавить PNG sequence proxy/full decode.
 17. Добавить PNG sequence export.
-18. Добавить Playback FPS и audio restriction.
+18. Добавить FPS reinterpretation и audio restriction.
 19. Добавить checkerboard и MP4 alpha flatten.
 
 ### 18.5. Effect Wave A
 
 20. RGB Time Slip.
 21. Stride Error.
-22. Horizontal Sync Loss.
+22. Sync Loss.
 23. Chroma Carrier Drift.
 24. Bitplane Forge.
 25. Block Address Corruption.
@@ -972,4 +989,4 @@ swift run ChronoForgeMac --self-test
 - смена FPS в первой версии переинтерпретирует кадры, не конвертирует их;
 - MP4 всегда непрозрачный и композитится на чёрный;
 - ProRes import остаётся возможностью AVFoundation, ProRes export не добавляется;
-- keyframes, Apply To masks, Temporal Brush и Wave B отложены.
+- keyframes, Apply To masks, Temporal Brush, встроенная Help и Wave B отложены.

@@ -293,7 +293,7 @@ void require_amount(float amount) {
     }
 }
 
-void blend_amount(const MappedTensor& input, MappedTensor& output, float amount) {
+void blend_amount(const MappedTensor& input, MappedTensor& output, float amount, AmountBlendMode mode) {
     if (input.shape() != output.shape()) {
         throw std::invalid_argument("Partial Amount requires an effect that preserves tensor shape");
     }
@@ -301,11 +301,52 @@ void blend_amount(const MappedTensor& input, MappedTensor& output, float amount)
     const auto frame_values = shape.h * shape.w * shape.c;
     const auto* source = input.data();
     auto* destination = output.mutable_data();
+    if (mode == AmountBlendMode::Displace) {
+        parallel_for(shape.t, [](double) {}, [&](std::size_t t) {
+            for (std::size_t y = 0; y < shape.h; ++y) {
+                for (std::size_t x = 0; x < shape.w; ++x) {
+                    const auto field_r = read(output, t, y, x, 0);
+                    const auto field_g = read(output, t, y, x, std::min<std::size_t>(1, shape.c - 1));
+                    const auto field_b = read(output, t, y, x, std::min<std::size_t>(2, shape.c - 1));
+                    const auto st = static_cast<std::size_t>(std::clamp(
+                        std::llround(static_cast<double>(t) + (field_b - 0.5F) * amount * 0.15F * static_cast<float>(shape.t)),
+                        0LL, static_cast<long long>(shape.t - 1)));
+                    const auto sy = static_cast<std::size_t>(std::clamp(
+                        std::llround(static_cast<double>(y) + (field_g - 0.5F) * amount * 0.15F * static_cast<float>(shape.h)),
+                        0LL, static_cast<long long>(shape.h - 1)));
+                    const auto sx = static_cast<std::size_t>(std::clamp(
+                        std::llround(static_cast<double>(x) + (field_r - 0.5F) * amount * 0.15F * static_cast<float>(shape.w)),
+                        0LL, static_cast<long long>(shape.w - 1)));
+                    for (std::size_t c = 0; c < shape.c; ++c) {
+                        destination[linear(t, y, x, c, shape)] = read(input, st, sy, sx, c);
+                    }
+                }
+            }
+        });
+        return;
+    }
+    const auto composite = [mode](float base, float layer) {
+        switch (mode) {
+            case AmountBlendMode::Normal: return layer;
+            case AmountBlendMode::Add: return base + layer;
+            case AmountBlendMode::Screen: return 1.0F - (1.0F - base) * (1.0F - layer);
+            case AmountBlendMode::Multiply: return base * layer;
+            case AmountBlendMode::Difference: return std::abs(base - layer);
+            case AmountBlendMode::XorGlitch: {
+                constexpr auto maximum = 4095U;
+                const auto a = static_cast<std::uint32_t>(std::llround(std::clamp(base, 0.0F, 1.0F) * maximum));
+                const auto b = static_cast<std::uint32_t>(std::llround(std::clamp(layer, 0.0F, 1.0F) * maximum));
+                return static_cast<float>((a ^ b) & maximum) / static_cast<float>(maximum);
+            }
+            case AmountBlendMode::Displace: return base;
+        }
+        return layer;
+    };
     parallel_for(shape.t, [](double) {}, [&](std::size_t t) {
         const auto start = t * frame_values;
         const auto end = start + frame_values;
         for (auto index = start; index < end; ++index) {
-            destination[index] = source[index] + (destination[index] - source[index]) * amount;
+            destination[index] = source[index] + (composite(source[index], destination[index]) - source[index]) * amount;
         }
     });
 }
@@ -478,12 +519,17 @@ void rgb_time_slip(const MappedTensor& input, MappedTensor& output, const Effect
 void horizontal_sync_loss(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
     require_option(effect.options[0], 2, "sync loss driver");
     require_option(effect.options[1], 2, "sync loss edge behavior");
+    require_option(effect.options[2], 1, "sync loss axis");
     const auto driver_kind = static_cast<SyncLossDriver>(effect.options[0]);
     const auto edge = static_cast<EdgeBehavior>(effect.options[1]);
+    const auto horizontal = static_cast<SyncLossAxis>(effect.options[2]) == SyncLossAxis::Horizontal;
     const auto& shape = input.shape();
-    const auto band_height = static_cast<std::size_t>(std::max(1.0F, std::round(effect.values[1])));
+    const auto band_extent = horizontal ? shape.h : shape.w;
+    const auto shift_extent = horizontal ? shape.w : shape.h;
+    const auto band_size = 1 + static_cast<std::size_t>(std::round(
+        std::clamp(effect.values[1], 0.0F, 1.0F) * static_cast<float>(band_extent - 1)));
     const auto density = std::clamp(effect.values[3], 0.0F, 1.0F);
-    const auto maximum_shift = std::clamp(effect.values[0], 0.0F, 1.0F) * static_cast<float>(shape.w);
+    const auto maximum_shift = std::clamp(effect.values[0], 0.0F, 1.0F) * static_cast<float>(shift_extent);
     const auto mix_hash = [&](std::size_t t, std::int64_t band) {
         auto hash = (static_cast<std::uint64_t>(t) + 1) * 0x9E3779B185EBCA87ULL;
         hash ^= static_cast<std::uint64_t>(band) * 0xC2B2AE3D27D4EB4FULL;
@@ -496,32 +542,36 @@ void horizontal_sync_loss(const MappedTensor& input, MappedTensor& output, const
     auto* destination = output.mutable_data();
     parallel_for(shape.t, progress, [&](std::size_t t) {
         for (std::size_t y = 0; y < shape.h; ++y) {
-            const auto base_band = static_cast<std::int64_t>(y / band_height);
-            const auto band = base_band + static_cast<std::int64_t>(std::floor(static_cast<float>(t) * effect.values[2]));
-            const auto center_y = std::min((y / band_height) * band_height + band_height / 2, shape.h - 1);
-            const auto center_x = shape.w / 2;
-            float driver = 0.0F;
-            bool tears = density > 0.0F;
-            if (driver_kind == SyncLossDriver::DeterministicNoise) {
-                const auto hash = mix_hash(t, band);
-                const auto trigger = static_cast<float>(hash & 0xFFFFFFU) / static_cast<float>(0x1000000U);
-                driver = 2.0F * static_cast<float>((hash >> 24U) & 0xFFFFFFU) / static_cast<float>(0xFFFFFFU) - 1.0F;
-                tears = tears && trigger < density;
-            } else if (driver_kind == SyncLossDriver::Luma) {
-                driver = 2.0F * std::clamp(luma(input, t, center_y, center_x), 0.0F, 1.0F) - 1.0F;
-                tears = tears && std::abs(driver) >= 1.0F - density;
-            } else {
-                const auto previous_y = center_y == 0 ? 0 : center_y - 1;
-                const auto difference = luma(input, t, center_y, center_x) - luma(input, t, previous_y, center_x);
-                const auto strength = std::clamp(std::abs(difference) * 4.0F, 0.0F, 1.0F);
-                driver = difference < 0.0F ? -strength : strength;
-                tears = tears && strength >= 1.0F - density;
-            }
-            const auto shift = tears ? driver * maximum_shift : 0.0F;
             for (std::size_t x = 0; x < shape.w; ++x) {
+                const auto coordinate = horizontal ? y : x;
+                const auto base_band = static_cast<std::int64_t>(coordinate / band_size);
+                const auto band = base_band + static_cast<std::int64_t>(std::floor(static_cast<float>(t) * effect.values[2]));
+                const auto center_coordinate = std::min((coordinate / band_size) * band_size + band_size / 2, band_extent - 1);
+                const auto center_y = horizontal ? center_coordinate : shape.h / 2;
+                const auto center_x = horizontal ? shape.w / 2 : center_coordinate;
+                float driver = 0.0F;
+                bool tears = density > 0.0F;
+                if (driver_kind == SyncLossDriver::DeterministicNoise) {
+                    const auto hash = mix_hash(t, band);
+                    const auto trigger = static_cast<float>(hash & 0xFFFFFFU) / static_cast<float>(0x1000000U);
+                    driver = 2.0F * static_cast<float>((hash >> 24U) & 0xFFFFFFU) / static_cast<float>(0xFFFFFFU) - 1.0F;
+                    tears = tears && trigger < density;
+                } else if (driver_kind == SyncLossDriver::Luma) {
+                    driver = 2.0F * std::clamp(luma(input, t, center_y, center_x), 0.0F, 1.0F) - 1.0F;
+                    tears = tears && std::abs(driver) >= 1.0F - density;
+                } else {
+                    const auto previous_y = horizontal && center_y > 0 ? center_y - 1 : center_y;
+                    const auto previous_x = !horizontal && center_x > 0 ? center_x - 1 : center_x;
+                    const auto difference = luma(input, t, center_y, center_x) - luma(input, t, previous_y, previous_x);
+                    const auto strength = std::clamp(std::abs(difference) * 4.0F, 0.0F, 1.0F);
+                    driver = difference < 0.0F ? -strength : strength;
+                    tears = tears && strength >= 1.0F - density;
+                }
+                const auto shift = tears ? driver * maximum_shift : 0.0F;
                 for (std::size_t c = 0; c < shape.c; ++c) {
                     destination[linear(t, y, x, c, shape)] = sample_mapped(
-                        input, static_cast<float>(t), static_cast<float>(y), static_cast<float>(x) - shift, c, edge);
+                        input, static_cast<float>(t), static_cast<float>(y) - (horizontal ? 0.0F : shift),
+                        static_cast<float>(x) - (horizontal ? shift : 0.0F), c, edge);
                 }
             }
         }
@@ -656,7 +706,9 @@ void block_address_corruption(const MappedTensor& input, MappedTensor& output, c
     const auto mapping = static_cast<BlockCorruptionMapping>(effect.options[0]);
     const auto edge = static_cast<EdgeBehavior>(effect.options[1]);
     const auto& shape = input.shape();
-    const auto block_size = static_cast<std::size_t>(std::max(2.0F, std::round(effect.values[0])));
+    const auto maximum_block = std::max(shape.w, shape.h);
+    const auto block_size = 1 + static_cast<std::size_t>(std::round(
+        std::clamp(effect.values[0], 0.0F, 1.0F) * static_cast<float>(maximum_block - 1)));
     const auto blocks_x = (shape.w + block_size - 1) / block_size;
     const auto blocks_y = (shape.h + block_size - 1) / block_size;
     const auto block_count = blocks_x * blocks_y;
@@ -853,26 +905,53 @@ void radial(const MappedTensor& input, MappedTensor& output, const EffectSpec& e
 
 void pixel_sort(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
     require_option(effect.options[0], 2, "sort criterion");
-    require_option(effect.options[1], 1, "sort direction");
+    require_option(effect.options[1], 3, "sort order");
     const auto criterion = static_cast<SortCriterion>(effect.options[0]);
-    const auto descending = effect.options[1] == 1;
+    const auto order = static_cast<SortDirection>(effect.options[1]);
     const auto& s = input.shape();
+    const auto key_for_sort = [&](std::size_t t, std::size_t y, std::size_t x) {
+        auto key = sort_key(input, t, y, x, criterion);
+        if (criterion == SortCriterion::Hue) {
+            key = std::fmod(key + effect.values[1] / 360.0F, 1.0F);
+            if (key < 0.0F) key += 1.0F;
+        }
+        return key;
+    };
     std::memcpy(output.mutable_data(), input.data(), s.byte_count());
     parallel_for(s.h, progress, [&](std::size_t y) {
         for (std::size_t x = 0; x < s.w; ++x) {
             std::vector<std::size_t> positions;
             positions.reserve(s.t);
             for (std::size_t t = 0; t < s.t; ++t) {
-                if (sort_key(input, t, y, x, criterion) >= effect.values[0]) {
+                if (key_for_sort(t, y, x) >= effect.values[0]) {
                     positions.push_back(t);
                 }
             }
             auto sorted = positions;
             std::stable_sort(sorted.begin(), sorted.end(), [&](auto left, auto right) {
-                const auto a = sort_key(input, left, y, x, criterion);
-                const auto b = sort_key(input, right, y, x, criterion);
-                return descending ? a > b : a < b;
+                return key_for_sort(left, y, x) < key_for_sort(right, y, x);
             });
+            if (order == SortDirection::Descending) {
+                std::reverse(sorted.begin(), sorted.end());
+            } else if (order == SortDirection::Zigzag && sorted.size() > 1) {
+                std::vector<std::size_t> reordered;
+                reordered.reserve(sorted.size());
+                for (std::size_t low = 0, high = sorted.size() - 1; low <= high;) {
+                    reordered.push_back(sorted[low++]);
+                    if (low <= high) reordered.push_back(sorted[high--]);
+                }
+                sorted = std::move(reordered);
+            } else if (order == SortDirection::CenterOut && sorted.size() > 1) {
+                std::vector<std::size_t> reordered;
+                reordered.reserve(sorted.size());
+                const auto middle = (sorted.size() - 1) / 2;
+                reordered.push_back(sorted[middle]);
+                for (std::size_t distance = 1; reordered.size() < sorted.size(); ++distance) {
+                    if (middle + distance < sorted.size()) reordered.push_back(sorted[middle + distance]);
+                    if (distance <= middle) reordered.push_back(sorted[middle - distance]);
+                }
+                sorted = std::move(reordered);
+            }
             for (std::size_t index = 0; index < positions.size(); ++index) {
                 for (std::size_t c = 0; c < s.c; ++c) {
                     output.mutable_data()[linear(positions[index], y, x, c, s)] = read(input, sorted[index], y, x, c);
@@ -1637,13 +1716,18 @@ void datamosh(const MappedTensor& input, MappedTensor& output, const EffectSpec&
     require_option(effect.options[1], 2, "freeze trigger");
     const auto axis = static_cast<FreezeAxis>(effect.options[0]);
     const auto trigger = static_cast<FreezeTrigger>(effect.options[1]);
+    require_option(effect.options[2], 1, "freeze trigger polarity");
+    const auto invert_trigger = effect.options[2] != 0;
     const auto max_hold = static_cast<std::size_t>(std::max(0.0F, std::round(effect.values[1])));
     const auto& shape = input.shape();
     std::memcpy(output.mutable_data(), input.data(), shape.byte_count());
     const auto should_trigger = [&](std::size_t t, std::size_t y, std::size_t x,
                                     std::size_t pt, std::size_t py, std::size_t px) {
         if (trigger == FreezeTrigger::Edge) return std::abs(luma(input, t, y, x) - luma(input, pt, py, px)) > effect.values[0];
-        if (trigger == FreezeTrigger::Luma) return luma(input, t, y, x) >= effect.values[0];
+        if (trigger == FreezeTrigger::Luma) {
+            return invert_trigger ? luma(input, t, y, x) <= effect.values[0]
+                                  : luma(input, t, y, x) >= effect.values[0];
+        }
         std::uint64_t hash = (static_cast<std::uint64_t>(t) + 1) * 0x9E3779B185EBCA87ULL;
         hash ^= (static_cast<std::uint64_t>(y) + 1) * 0xC2B2AE3D27D4EB4FULL;
         hash ^= (static_cast<std::uint64_t>(x) + 1) * 0x165667B19E3779F9ULL;
@@ -1784,7 +1868,7 @@ void apply(
         case EffectOperation::RgbTimeSlip:
             return "RGB Time Slip";
         case EffectOperation::HorizontalSyncLoss:
-            return "Horizontal Sync Loss";
+            return "Sync Loss";
         case EffectOperation::ChromaCarrierDrift:
             return "Chroma Carrier Drift";
         case EffectOperation::StrideError:
@@ -1833,8 +1917,10 @@ FileRenderResult render_file_effect_chain(
         for (std::size_t index = 0; index < effects.size(); ++index) {
             const auto& effect = effects[index];
             require_amount(effect.amount);
+            require_option(static_cast<std::int32_t>(effect.amount_blend_mode), 6, "Amount blend mode");
+            const auto needs_amount_blend = effect.amount < 1.0F || effect.amount_blend_mode != AmountBlendMode::Normal;
             const auto next_shape = output_shape(current_shape, effect);
-            if (effect.amount < 1.0F && next_shape != current_shape) {
+            if (needs_amount_blend && next_shape != current_shape) {
                 throw std::invalid_argument("Partial Amount requires an effect that preserves tensor shape");
             }
             if (effect.amount == 0.0F) {
@@ -1853,8 +1939,8 @@ FileRenderResult render_file_effect_chain(
                     report(progress, (static_cast<double>(index) + fraction) / denominator, stage);
                 };
                 apply(input, output, effect, max_working_set_bytes, metadata, local_progress);
-                if (effect.amount < 1.0F) {
-                    blend_amount(input, output, effect.amount);
+                if (needs_amount_blend) {
+                    blend_amount(input, output, effect.amount, effect.amount_blend_mode);
                 }
                 output.sync();
             }
@@ -1899,6 +1985,8 @@ FileRenderResult render_file_cross_tensor_effect(
     const FileRenderProgress& progress) {
     TensorShape result_shape = source_shape;
     require_amount(effect.amount);
+    require_option(static_cast<std::int32_t>(effect.amount_blend_mode), 6, "Amount blend mode");
+    const auto needs_amount_blend = effect.amount < 1.0F || effect.amount_blend_mode != AmountBlendMode::Normal;
     if (effect.kind == EffectOperation::DimensionalSplicer) {
         require_option(effect.options[0], 5, "output X axis source");
         require_option(effect.options[1], 5, "output Y axis source");
@@ -1952,7 +2040,7 @@ FileRenderResult render_file_cross_tensor_effect(
         throw std::invalid_argument("The selected effect does not accept a driver tensor");
     }
 
-    if (effect.amount < 1.0F && result_shape != source_shape) {
+    if (needs_amount_blend && result_shape != source_shape) {
         throw std::invalid_argument("Partial Amount requires an effect that preserves tensor shape");
     }
     if (effect.amount == 0.0F) {
@@ -2048,7 +2136,10 @@ FileRenderResult render_file_cross_tensor_effect(
     } else if (effect.kind == EffectOperation::SignalWeave) {
         const auto pattern = static_cast<SignalWeavePattern>(effect.options[0]);
         const auto size_matching = static_cast<TensorBroadcast>(effect.options[1]);
-        const auto band_size = static_cast<std::size_t>(std::max(1.0F, std::round(effect.values[0])));
+        const auto band_extent = pattern == SignalWeavePattern::Checker
+            ? std::max(result_shape.w, result_shape.h) : result_shape.h;
+        const auto band_size = 1 + static_cast<std::size_t>(std::round(
+            std::clamp(effect.values[0], 0.0F, 1.0F) * static_cast<float>(band_extent - 1)));
         const auto irregularity = std::clamp(effect.values[2], 0.0F, 1.0F);
         const auto time_offset = static_cast<int>(std::clamp(std::round(effect.values[3]), -240.0F, 240.0F));
         const auto mix = [](std::uint64_t value) {
@@ -2095,7 +2186,9 @@ FileRenderResult render_file_cross_tensor_effect(
     } else if (effect.kind == EffectOperation::BlockGraft) {
         const auto trigger = static_cast<BlockGraftTrigger>(effect.options[0]);
         const auto size_matching = static_cast<TensorBroadcast>(effect.options[1]);
-        const auto block_size = static_cast<std::size_t>(std::max(2.0F, std::round(effect.values[0])));
+        const auto maximum_block = std::max(result_shape.w, result_shape.h);
+        const auto block_size = 1 + static_cast<std::size_t>(std::round(
+            std::clamp(effect.values[0], 0.0F, 1.0F) * static_cast<float>(maximum_block - 1)));
         const auto threshold = std::clamp(effect.values[1], 0.0F, 1.0F);
         const auto hold = static_cast<std::size_t>(std::max(1.0F, std::round(effect.values[2])));
         const auto time_offset = static_cast<int>(std::clamp(std::round(effect.values[3]), -240.0F, 240.0F));
@@ -2221,8 +2314,8 @@ FileRenderResult render_file_cross_tensor_effect(
             }
         });
     }
-    if (effect.amount < 1.0F) {
-        blend_amount(source, output, effect.amount);
+    if (needs_amount_blend) {
+        blend_amount(source, output, effect.amount, effect.amount_blend_mode);
     }
     output.sync();
     report(progress, 1.0, stage_name(effect.kind));

@@ -486,9 +486,13 @@ VideoTensor rgb_time_slip(const VideoTensor& input, const RGBTimeSlipParams& par
 VideoTensor horizontal_sync_loss(const VideoTensor& input, const HorizontalSyncLossParams& params) {
     const auto& shape = input.shape();
     VideoTensor output(shape, 0.0F, input.metadata());
-    const auto band_height = std::max<std::size_t>(1, params.band_height);
+    const auto horizontal = params.axis == SyncLossAxis::Horizontal;
+    const auto band_extent = horizontal ? shape.h : shape.w;
+    const auto shift_extent = horizontal ? shape.w : shape.h;
+    const auto band_size = 1 + static_cast<std::size_t>(std::round(
+        std::clamp(params.band_size, 0.0F, 1.0F) * static_cast<float>(band_extent - 1)));
     const auto density = std::clamp(params.tear_density, 0.0F, 1.0F);
-    const auto maximum_shift = std::clamp(params.shift_fraction, 0.0F, 1.0F) * static_cast<float>(shape.w);
+    const auto maximum_shift = std::clamp(params.shift_fraction, 0.0F, 1.0F) * static_cast<float>(shift_extent);
     const auto mix_hash = [&](std::size_t t, std::int64_t band) {
         auto hash = (static_cast<std::uint64_t>(t) + 1) * 0x9E3779B185EBCA87ULL;
         hash ^= static_cast<std::uint64_t>(band) * 0xC2B2AE3D27D4EB4FULL;
@@ -500,32 +504,36 @@ VideoTensor horizontal_sync_loss(const VideoTensor& input, const HorizontalSyncL
     };
     parallel_for(shape.t, [&](std::size_t t) {
         for (std::size_t y = 0; y < shape.h; ++y) {
-            const auto base_band = static_cast<std::int64_t>(y / band_height);
-            const auto band = base_band + static_cast<std::int64_t>(std::floor(static_cast<float>(t) * params.drift_speed));
-            const auto center_y = std::min((y / band_height) * band_height + band_height / 2, shape.h - 1);
-            const auto center_x = shape.w / 2;
-            float driver = 0.0F;
-            bool tears = density > 0.0F;
-            if (params.driver == SyncLossDriver::DeterministicNoise) {
-                const auto hash = mix_hash(t, band);
-                const auto trigger = static_cast<float>(hash & 0xFFFFFFU) / static_cast<float>(0x1000000U);
-                driver = 2.0F * static_cast<float>((hash >> 24U) & 0xFFFFFFU) / static_cast<float>(0xFFFFFFU) - 1.0F;
-                tears = tears && trigger < density;
-            } else if (params.driver == SyncLossDriver::Luma) {
-                driver = 2.0F * std::clamp(luma(input, t, center_y, center_x), 0.0F, 1.0F) - 1.0F;
-                tears = tears && std::abs(driver) >= 1.0F - density;
-            } else {
-                const auto previous_y = center_y == 0 ? 0 : center_y - 1;
-                const auto difference = luma(input, t, center_y, center_x) - luma(input, t, previous_y, center_x);
-                const auto strength = std::clamp(std::abs(difference) * 4.0F, 0.0F, 1.0F);
-                driver = difference < 0.0F ? -strength : strength;
-                tears = tears && strength >= 1.0F - density;
-            }
-            const auto shift = tears ? driver * maximum_shift : 0.0F;
             for (std::size_t x = 0; x < shape.w; ++x) {
+                const auto coordinate = horizontal ? y : x;
+                const auto base_band = static_cast<std::int64_t>(coordinate / band_size);
+                const auto band = base_band + static_cast<std::int64_t>(std::floor(static_cast<float>(t) * params.drift_speed));
+                const auto center_coordinate = std::min((coordinate / band_size) * band_size + band_size / 2, band_extent - 1);
+                const auto center_y = horizontal ? center_coordinate : shape.h / 2;
+                const auto center_x = horizontal ? shape.w / 2 : center_coordinate;
+                float driver = 0.0F;
+                bool tears = density > 0.0F;
+                if (params.driver == SyncLossDriver::DeterministicNoise) {
+                    const auto hash = mix_hash(t, band);
+                    const auto trigger = static_cast<float>(hash & 0xFFFFFFU) / static_cast<float>(0x1000000U);
+                    driver = 2.0F * static_cast<float>((hash >> 24U) & 0xFFFFFFU) / static_cast<float>(0xFFFFFFU) - 1.0F;
+                    tears = tears && trigger < density;
+                } else if (params.driver == SyncLossDriver::Luma) {
+                    driver = 2.0F * std::clamp(luma(input, t, center_y, center_x), 0.0F, 1.0F) - 1.0F;
+                    tears = tears && std::abs(driver) >= 1.0F - density;
+                } else {
+                    const auto previous_y = horizontal && center_y > 0 ? center_y - 1 : center_y;
+                    const auto previous_x = !horizontal && center_x > 0 ? center_x - 1 : center_x;
+                    const auto difference = luma(input, t, center_y, center_x) - luma(input, t, previous_y, previous_x);
+                    const auto strength = std::clamp(std::abs(difference) * 4.0F, 0.0F, 1.0F);
+                    driver = difference < 0.0F ? -strength : strength;
+                    tears = tears && strength >= 1.0F - density;
+                }
+                const auto shift = tears ? driver * maximum_shift : 0.0F;
                 for (std::size_t c = 0; c < shape.c; ++c) {
                     output.at(t, y, x, c) = sample_tensor(
-                        input, static_cast<float>(t), static_cast<float>(y), static_cast<float>(x) - shift,
+                        input, static_cast<float>(t), static_cast<float>(y) - (horizontal ? 0.0F : shift),
+                        static_cast<float>(x) - (horizontal ? shift : 0.0F),
                         c, params.edge_behavior);
                 }
             }
@@ -651,7 +659,9 @@ VideoTensor stride_error(const VideoTensor& input, const StrideErrorParams& para
 VideoTensor block_address_corruption(const VideoTensor& input, const BlockAddressCorruptionParams& params) {
     const auto& shape = input.shape();
     VideoTensor output(shape, 0.0F, input.metadata());
-    const auto block_size = std::max<std::size_t>(2, params.block_size);
+    const auto maximum_block = std::max(shape.w, shape.h);
+    const auto block_size = 1 + static_cast<std::size_t>(std::round(
+        std::clamp(params.block_size, 0.0F, 1.0F) * static_cast<float>(maximum_block - 1)));
     const auto blocks_x = (shape.w + block_size - 1) / block_size;
     const auto blocks_y = (shape.h + block_size - 1) / block_size;
     const auto block_count = blocks_x * blocks_y;
@@ -864,21 +874,48 @@ VideoTensor radial_chrono_funnel(const VideoTensor& input, const RadialChronoFun
 VideoTensor temporal_pixel_sort(const VideoTensor& input, const TemporalPixelSortParams& params) {
     const auto& shape = input.shape();
     VideoTensor output = input;
+    const auto sort_key = [&](std::size_t t, std::size_t y, std::size_t x) {
+        auto key = key_for(input, t, y, x, params.criterion);
+        if (params.criterion == SortCriterion::Hue) {
+            key = std::fmod(key + params.hue_shift_degrees / 360.0F, 1.0F);
+            if (key < 0.0F) key += 1.0F;
+        }
+        return key;
+    };
     parallel_for(shape.h, [&](std::size_t y) {
         for (std::size_t x = 0; x < shape.w; ++x) {
             std::vector<std::size_t> eligible;
             eligible.reserve(shape.t);
             for (std::size_t t = 0; t < shape.t; ++t) {
-                if (key_for(input, t, y, x, params.criterion) >= params.threshold) {
+                if (sort_key(t, y, x) >= params.threshold) {
                     eligible.push_back(t);
                 }
             }
             auto sorted = eligible;
             std::stable_sort(sorted.begin(), sorted.end(), [&](std::size_t left, std::size_t right) {
-                const auto left_key = key_for(input, left, y, x, params.criterion);
-                const auto right_key = key_for(input, right, y, x, params.criterion);
-                return params.direction == SortDirection::Ascending ? left_key < right_key : left_key > right_key;
+                return sort_key(left, y, x) < sort_key(right, y, x);
             });
+            if (params.direction == SortDirection::Descending) {
+                std::reverse(sorted.begin(), sorted.end());
+            } else if (params.direction == SortDirection::Zigzag && sorted.size() > 1) {
+                std::vector<std::size_t> reordered;
+                reordered.reserve(sorted.size());
+                for (std::size_t low = 0, high = sorted.size() - 1; low <= high;) {
+                    reordered.push_back(sorted[low++]);
+                    if (low <= high) reordered.push_back(sorted[high--]);
+                }
+                sorted = std::move(reordered);
+            } else if (params.direction == SortDirection::CenterOut && sorted.size() > 1) {
+                std::vector<std::size_t> reordered;
+                reordered.reserve(sorted.size());
+                const auto middle = (sorted.size() - 1) / 2;
+                reordered.push_back(sorted[middle]);
+                for (std::size_t distance = 1; reordered.size() < sorted.size(); ++distance) {
+                    if (middle + distance < sorted.size()) reordered.push_back(sorted[middle + distance]);
+                    if (distance <= middle) reordered.push_back(sorted[middle - distance]);
+                }
+                sorted = std::move(reordered);
+            }
             for (std::size_t index = 0; index < eligible.size(); ++index) {
                 for (std::size_t c = 0; c < shape.c; ++c) {
                     output.at(eligible[index], y, x, c) = input.at(sorted[index], y, x, c);
@@ -1087,7 +1124,10 @@ VideoTensor signal_weave(
         output_shape.w = std::min(source.shape().w, driver.shape().w);
     }
     VideoTensor output(output_shape, 0.0F, source.metadata());
-    const auto band_size = std::max<std::size_t>(1, params.band_size);
+    const auto band_extent = params.pattern == SignalWeavePattern::Checker
+        ? std::max(output_shape.w, output_shape.h) : output_shape.h;
+    const auto band_size = 1 + static_cast<std::size_t>(std::round(
+        std::clamp(params.band_size, 0.0F, 1.0F) * static_cast<float>(band_extent - 1)));
     const auto irregularity = std::clamp(params.irregularity, 0.0F, 1.0F);
     const auto mix = [](std::uint64_t value) {
         value ^= value >> 30U; value *= 0xBF58476D1CE4E5B9ULL;
@@ -1156,7 +1196,9 @@ VideoTensor block_graft(
         output_shape.w = std::min(source.shape().w, driver.shape().w);
     }
     VideoTensor output(output_shape, 0.0F, source.metadata());
-    const auto block_size = std::max<std::size_t>(2, params.block_size);
+    const auto maximum_block = std::max(output_shape.w, output_shape.h);
+    const auto block_size = 1 + static_cast<std::size_t>(std::round(
+        std::clamp(params.block_size, 0.0F, 1.0F) * static_cast<float>(maximum_block - 1)));
     const auto hold = std::max<std::size_t>(1, params.hold);
     const auto threshold = std::clamp(params.density_or_threshold, 0.0F, 1.0F);
     const auto mix = [](std::uint64_t value) {
@@ -1471,7 +1513,9 @@ VideoTensor structural_datamosh(const VideoTensor& input, const StructuralDatamo
             case FreezeTrigger::Edge:
                 return std::abs(luma(input, t, y, x) - luma(input, previous_t, previous_y, previous_x)) > params.threshold;
             case FreezeTrigger::Luma:
-                return luma(input, t, y, x) >= params.threshold;
+                return params.invert_trigger
+                    ? luma(input, t, y, x) <= params.threshold
+                    : luma(input, t, y, x) >= params.threshold;
             case FreezeTrigger::Random: {
                 std::uint64_t hash = (static_cast<std::uint64_t>(t) + 1) * 0x9E3779B185EBCA87ULL;
                 hash ^= (static_cast<std::uint64_t>(y) + 1) * 0xC2B2AE3D27D4EB4FULL;

@@ -62,7 +62,7 @@ void enforce_budget(const VideoTensor& tensor, uint64_t budget) {
         case CF_EFFECT_SPACE_TIME_TRANSPOSE: return {0, 2};
         case CF_EFFECT_LUMA_TIME_SHIFT: return {1, 2};
         case CF_EFFECT_RADIAL_CHRONO_FUNNEL: return {4, 2};
-        case CF_EFFECT_TEMPORAL_PIXEL_SORT: return {1, 2};
+        case CF_EFFECT_TEMPORAL_PIXEL_SORT: return {2, 2};
         case CF_EFFECT_TENSOR_3D_ROTATION: return {3, 1};
         case CF_EFFECT_SPECTRAL_FFT_SWAP: return {1, 4};
         case CF_EFFECT_SELECTIVE_PREFILTER: return {0, 2};
@@ -70,10 +70,10 @@ void enforce_budget(const VideoTensor& tensor, uint64_t budget) {
         case CF_EFFECT_TENSOR_DISPLACEMENT: return {3, 3};
         case CF_EFFECT_OPTICAL_FLOW_TIME_WARP: return {4, 1};
         case CF_EFFECT_CHRONO_FEEDBACK: return {4, 1};
-        case CF_EFFECT_STRUCTURAL_DATAMOSH: return {3, 2};
+        case CF_EFFECT_STRUCTURAL_DATAMOSH: return {3, 3};
         case CF_EFFECT_SEAMLESS_LOOP: return {2, 1};
         case CF_EFFECT_RGB_TIME_SLIP: return {4, 2};
-        case CF_EFFECT_HORIZONTAL_SYNC_LOSS: return {4, 2};
+        case CF_EFFECT_HORIZONTAL_SYNC_LOSS: return {4, 3};
         case CF_EFFECT_CHROMA_CARRIER_DRIFT: return {4, 2};
         case CF_EFFECT_STRIDE_ERROR: return {3, 2};
         case CF_EFFECT_BLOCK_ADDRESS_CORRUPTION: return {4, 2};
@@ -92,6 +92,7 @@ CFEffectKind validate_descriptor(const CFEffectDescriptorV2& descriptor) {
     if (!std::isfinite(descriptor.amount) || descriptor.amount < 0.0F || descriptor.amount > 1.0F) {
         throw std::invalid_argument("Effect amount must be between zero and one");
     }
+    checked_enum<chronoforge::AmountBlendMode>(descriptor.amount_blend_mode, 6, "Amount blend mode");
     const auto kind = checked_enum<CFEffectKind>(descriptor.kind, CF_EFFECT_CHANNEL_TRANSPLANT, "effect kind");
     const auto [values, options] = expected_parameter_counts(kind);
     if (descriptor.value_count != values || descriptor.option_count != options) {
@@ -110,14 +111,61 @@ CFEffectKind validate_descriptor(const CFEffectDescriptorV2& descriptor) {
     return kind;
 }
 
-void blend_amount(const VideoTensor& input, VideoTensor& effected, float amount) {
+void blend_amount(
+    const VideoTensor& input,
+    VideoTensor& effected,
+    float amount,
+    chronoforge::AmountBlendMode mode) {
     if (input.shape() != effected.shape()) {
         throw std::invalid_argument("Partial Amount requires an effect that preserves tensor shape");
     }
     auto& output = effected.values();
     const auto& source = input.values();
+    if (mode == chronoforge::AmountBlendMode::Displace) {
+        const auto field = output;
+        const auto& shape = input.shape();
+        const auto field_at = [&](std::size_t t, std::size_t y, std::size_t x, std::size_t c) {
+            return field[(((t * shape.h + y) * shape.w + x) * shape.c) + std::min(c, shape.c - 1)];
+        };
+        for (std::size_t t = 0; t < shape.t; ++t) {
+            for (std::size_t y = 0; y < shape.h; ++y) {
+                for (std::size_t x = 0; x < shape.w; ++x) {
+                    const auto st = static_cast<std::size_t>(std::clamp(
+                        std::llround(static_cast<double>(t) + (field_at(t, y, x, 2) - 0.5F) * amount * 0.15F * static_cast<float>(shape.t)),
+                        0LL, static_cast<long long>(shape.t - 1)));
+                    const auto sy = static_cast<std::size_t>(std::clamp(
+                        std::llround(static_cast<double>(y) + (field_at(t, y, x, 1) - 0.5F) * amount * 0.15F * static_cast<float>(shape.h)),
+                        0LL, static_cast<long long>(shape.h - 1)));
+                    const auto sx = static_cast<std::size_t>(std::clamp(
+                        std::llround(static_cast<double>(x) + (field_at(t, y, x, 0) - 0.5F) * amount * 0.15F * static_cast<float>(shape.w)),
+                        0LL, static_cast<long long>(shape.w - 1)));
+                    for (std::size_t c = 0; c < shape.c; ++c) {
+                        output[(((t * shape.h + y) * shape.w + x) * shape.c) + c] = input.at(st, sy, sx, c);
+                    }
+                }
+            }
+        }
+        return;
+    }
+    const auto composite = [mode](float base, float layer) {
+        switch (mode) {
+            case chronoforge::AmountBlendMode::Normal: return layer;
+            case chronoforge::AmountBlendMode::Add: return base + layer;
+            case chronoforge::AmountBlendMode::Screen: return 1.0F - (1.0F - base) * (1.0F - layer);
+            case chronoforge::AmountBlendMode::Multiply: return base * layer;
+            case chronoforge::AmountBlendMode::Difference: return std::abs(base - layer);
+            case chronoforge::AmountBlendMode::XorGlitch: {
+                constexpr auto maximum = 4095U;
+                const auto a = static_cast<std::uint32_t>(std::llround(std::clamp(base, 0.0F, 1.0F) * maximum));
+                const auto b = static_cast<std::uint32_t>(std::llround(std::clamp(layer, 0.0F, 1.0F) * maximum));
+                return static_cast<float>((a ^ b) & maximum) / static_cast<float>(maximum);
+            }
+            case chronoforge::AmountBlendMode::Displace: return base;
+        }
+        return layer;
+    };
     for (std::size_t index = 0; index < output.size(); ++index) {
-        output[index] = source[index] + (output[index] - source[index]) * amount;
+        output[index] = source[index] + (composite(source[index], output[index]) - source[index]) * amount;
     }
 }
 
@@ -155,8 +203,9 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptorV2& d
                 input,
                 {
                     checked_enum<chronoforge::SortCriterion>(descriptor.options[0], 2, "sort criterion"),
-                    checked_enum<chronoforge::SortDirection>(descriptor.options[1], 1, "sort direction"),
+                    checked_enum<chronoforge::SortDirection>(descriptor.options[1], 3, "sort order"),
                     descriptor.values[0],
+                    descriptor.values[1],
                 });
         case CF_EFFECT_TENSOR_3D_ROTATION:
             return chronoforge::tensor_3d_rotation(
@@ -210,6 +259,7 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptorV2& d
                     static_cast<std::size_t>(std::max(0.0F, std::round(descriptor.values[1]))),
                     descriptor.values[2],
                     descriptor.random_seed,
+                    checked_flag(descriptor.options[2], "freeze trigger polarity"),
                 });
         case CF_EFFECT_SEAMLESS_LOOP:
             return chronoforge::seamless_loop(
@@ -232,11 +282,12 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptorV2& d
                 input,
                 {
                     descriptor.values[0],
-                    static_cast<std::size_t>(std::max(1.0F, std::round(descriptor.values[1]))),
+                    descriptor.values[1],
                     descriptor.values[2], descriptor.values[3],
                     checked_enum<chronoforge::SyncLossDriver>(descriptor.options[0], 2, "sync loss driver"),
                     checked_enum<chronoforge::EdgeBehavior>(descriptor.options[1], 2, "sync loss edge behavior"),
                     descriptor.random_seed,
+                    checked_enum<chronoforge::SyncLossAxis>(descriptor.options[2], 1, "sync loss axis"),
                 });
         case CF_EFFECT_CHROMA_CARRIER_DRIFT:
             return chronoforge::chroma_carrier_drift(
@@ -258,7 +309,7 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptorV2& d
             return chronoforge::block_address_corruption(
                 input,
                 {
-                    static_cast<std::size_t>(std::max(2.0F, std::round(descriptor.values[0]))),
+                    descriptor.values[0],
                     descriptor.values[1],
                     static_cast<std::size_t>(std::max(0.0F, std::round(descriptor.values[2]))),
                     static_cast<std::size_t>(std::max(1.0F, std::round(descriptor.values[3]))),
@@ -319,7 +370,7 @@ VideoTensor apply_cross_effect(
                 driver,
                 {
                     checked_enum<chronoforge::SignalWeavePattern>(descriptor.options[0], 3, "signal weave pattern"),
-                    static_cast<std::size_t>(std::max(1.0F, std::round(descriptor.values[0]))),
+                    descriptor.values[0],
                     descriptor.values[1], descriptor.values[2],
                     static_cast<int>(std::clamp(std::round(descriptor.values[3]), -240.0F, 240.0F)),
                     checked_enum<chronoforge::TensorBroadcast>(descriptor.options[1], 2, "signal weave size matching"),
@@ -330,7 +381,7 @@ VideoTensor apply_cross_effect(
                 source,
                 driver,
                 {
-                    static_cast<std::size_t>(std::max(2.0F, std::round(descriptor.values[0]))),
+                    descriptor.values[0],
                     descriptor.values[1],
                     static_cast<std::size_t>(std::max(1.0F, std::round(descriptor.values[2]))),
                     static_cast<int>(std::clamp(std::round(descriptor.values[3]), -240.0F, 240.0F)),
@@ -364,6 +415,7 @@ extern "C" {
 CFEffectDescriptorV2 cf_effect_descriptor_v2_make(
     int32_t kind,
     float amount,
+    int32_t amount_blend_mode,
     uint64_t random_seed,
     const float* values,
     uint32_t value_count,
@@ -373,6 +425,7 @@ CFEffectDescriptorV2 cf_effect_descriptor_v2_make(
     descriptor.kind = kind;
     descriptor.descriptor_version = CF_EFFECT_DESCRIPTOR_VERSION;
     descriptor.amount = amount;
+    descriptor.amount_blend_mode = amount_blend_mode;
     descriptor.random_seed = random_seed;
     descriptor.value_count = value_count;
     descriptor.option_count = option_count;
@@ -385,7 +438,7 @@ CFEffectDescriptorV2 cf_effect_descriptor_v2_make(
     return descriptor;
 }
 
-const char* cf_core_version(void) { return "1.0.0-dev"; }
+const char* cf_core_version(void) { return "1.0.0-dev-creative-controls"; }
 
 int32_t cf_render_effect_chain(
     const float* input,
@@ -437,8 +490,9 @@ int32_t cf_render_effect_chain(
                 continue;
             }
             auto effected = apply_effect(current, descriptor, max_working_set_bytes);
-            if (descriptor.amount < 1.0F) {
-                blend_amount(current, effected, descriptor.amount);
+            const auto amount_mode = static_cast<chronoforge::AmountBlendMode>(descriptor.amount_blend_mode);
+            if (descriptor.amount < 1.0F || amount_mode != chronoforge::AmountBlendMode::Normal) {
+                blend_amount(current, effected, descriptor.amount, amount_mode);
             }
             current = std::move(effected);
             enforce_budget(current, max_working_set_bytes);
@@ -511,8 +565,9 @@ int32_t cf_render_cross_tensor_effect(
             return 0;
         }
         auto result = apply_cross_effect(source_tensor, driver_tensor, effect);
-        if (effect.amount < 1.0F) {
-            blend_amount(source_tensor, result, effect.amount);
+        const auto amount_mode = static_cast<chronoforge::AmountBlendMode>(effect.amount_blend_mode);
+        if (effect.amount < 1.0F || amount_mode != chronoforge::AmountBlendMode::Normal) {
+            blend_amount(source_tensor, result, effect.amount, amount_mode);
         }
         *output = new CFVideoBuffer(std::move(result));
         set_error(error_message, error_message_capacity, "");
@@ -569,6 +624,7 @@ int32_t cf_render_file_effect_chain(
                  effects[index].options[4], effects[index].options[5], effects[index].options[6], effects[index].options[7]},
                 effects[index].amount,
                 effects[index].random_seed,
+                checked_enum<chronoforge::AmountBlendMode>(effects[index].amount_blend_mode, 6, "Amount blend mode"),
             });
         }
         const chronoforge::VideoTensorMetadata metadata{
@@ -647,6 +703,7 @@ int32_t cf_render_file_cross_tensor_effect(
              effect.options[4], effect.options[5], effect.options[6], effect.options[7]},
             effect.amount,
             effect.random_seed,
+            checked_enum<chronoforge::AmountBlendMode>(effect.amount_blend_mode, 6, "Amount blend mode"),
         };
         const chronoforge::VideoTensorMetadata metadata{
             source_info.frame_rate_numerator, source_info.frame_rate_denominator,

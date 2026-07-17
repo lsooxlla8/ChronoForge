@@ -87,13 +87,23 @@ struct ChronoForgeMacApp: App {
                 Button("Import Video…") { project.addMedia() }
                     .keyboardShortcut("i", modifiers: .command)
                 Button("Import Image Sequence…") { project.addImageSequence() }
+                    .keyboardShortcut("i", modifiers: [.command, .shift])
                 Divider()
                 Button("Update Preview") { project.renderPreview() }
                     .keyboardShortcut("r", modifiers: .command)
                 Button("Add to Render Queue…") { project.addCurrentRenderToQueue() }
+                    .keyboardShortcut("r", modifiers: [.command, .option])
+                    .disabled(project.source == nil)
                 Button("Start Render Queue") { project.startRenderQueue() }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
                     .disabled(project.renderQueue.isEmpty || project.isQueueRunning)
+                Divider()
+                Button("Random Stack") { project.replaceWithRandomStack() }
+                    .keyboardShortcut("r", modifiers: [.shift])
+                    .disabled(project.source == nil)
+                Button("Clear Effect Stack") { project.clearEffectStack() }
+                    .keyboardShortcut(.delete, modifiers: [.shift])
+                    .disabled(project.effects.isEmpty)
                 Divider()
                 Button("Play/Pause Preview") { project.togglePlayback() }
                     .keyboardShortcut(.space, modifiers: [])
@@ -193,17 +203,6 @@ private struct WorkspaceView: View {
         } message: {
             Text("ChronoForge found a hidden recovery snapshot from a session that did not close normally.")
         }
-        .confirmationDialog(
-            "Clear the entire effect stack?",
-            isPresented: $project.showsClearEffectsConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Clear Effect Stack", role: .destructive) { project.clearEffectStack() }
-                .keyboardShortcut(.defaultAction)
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This removes every effect. The imported video and render queue are not affected.")
-        }
         .onOpenURL { url in
             project.importVideo(from: url)
         }
@@ -298,9 +297,8 @@ private struct WorkspaceView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 7) {
-                HStack {
-                    Menu("Add effect", systemImage: "plus") {
+            VStack(alignment: .leading, spacing: 7) {
+                Menu("Add effect", systemImage: "plus") {
                         ForEach(EffectCategory.allCases) { category in
                             let definitions = EffectRegistry.definitions(in: category)
                             if !definitions.isEmpty {
@@ -313,14 +311,14 @@ private struct WorkspaceView: View {
                                 }
                             }
                         }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    Button("Random Stack", systemImage: "dice") { project.replaceWithRandomStack() }
-                        .disabled(project.source == nil)
-                        .help("Replace the current stack with 1–3 compatible randomized effects. Undo restores the previous stack.")
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Button("Random Stack", systemImage: "dice") { project.replaceWithRandomStack() }
+                    .fixedSize(horizontal: true, vertical: false)
+                    .disabled(project.source == nil)
+                    .help("Replace the current stack with 1–3 compatible randomized effects. Undo restores the previous stack.")
                 Button("Clear Effect Stack", systemImage: "trash", role: .destructive) {
-                    project.showsClearEffectsConfirmation = true
+                    project.clearEffectStack()
                 }
                 .disabled(project.effects.isEmpty)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -348,14 +346,20 @@ private struct WorkspaceView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer()
-                if project.isRendering || project.isImporting || project.isExporting {
-                    if let progress = project.renderProgress {
-                        ProgressView(value: progress).frame(width: 90)
-                    } else {
-                        ProgressView().controlSize(.small)
+                ZStack(alignment: .trailing) {
+                    Color.clear
+                    if project.isRendering || project.isImporting || project.isExporting {
+                        HStack(spacing: 8) {
+                            if let progress = project.renderProgress {
+                                ProgressView(value: progress).frame(width: 72)
+                            } else {
+                                ProgressView().controlSize(.small)
+                            }
+                            Button("Cancel") { project.cancelWork() }
+                        }
                     }
-                    Button("Cancel") { project.cancelWork() }
                 }
+                .frame(width: 142, height: 24)
                 Button("Update Preview", systemImage: "eye") { project.renderPreview() }
                     .buttonStyle(.borderedProminent)
                     .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
@@ -367,14 +371,16 @@ private struct WorkspaceView: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .help("Update the proxy after a short pause when an effect or image setting changes.")
-                Button("Hold Source", systemImage: "rectangle.on.rectangle") {}
+            }
+            HStack(spacing: 12) {
+                Button("Before / After", systemImage: "rectangle.on.rectangle") {}
                     .simultaneousGesture(
                         DragGesture(minimumDistance: 0)
                             .onChanged { _ in isComparingSource = true }
                             .onEnded { _ in isComparingSource = false }
                     )
                     .disabled(project.source == nil || project.output == nil)
-                    .help("Hold to compare Source A with the latest result. Keyboard: hold \\")
+                    .help("Hold to show Before (Source A); release for After (the latest result). Keyboard: hold \\")
                 Button("Add to Queue", systemImage: "text.badge.plus") { project.addCurrentRenderToQueue() }
                     .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
                 Menu("Export…", systemImage: "square.and.arrow.up") {
@@ -391,7 +397,7 @@ private struct WorkspaceView: View {
                 }
                 .labelsHidden()
                 .frame(width: 125)
-                .help("Choose black or checkerboard behind transparent pixels.")
+                .help("Viewer-only background behind transparent pixels. Checkerboard makes alpha visible; Black previews opaque delivery. It does not change PNG pixels, and MP4 always flattens transparency onto black.")
                 Divider().frame(height: 22)
                 HStack(spacing: 6) {
                     Image(systemName: darkAppearance ? "moon.fill" : "sun.max.fill")
@@ -401,33 +407,40 @@ private struct WorkspaceView: View {
                         .toggleStyle(.switch)
                 }
                 .help(darkAppearance ? "Switch to light appearance" : "Switch to dark appearance")
+                Spacer()
             }
             HStack(spacing: 12) {
-                Picker("Proxy preview", selection: Binding(
+                Picker("Preview", selection: Binding(
                     get: { project.proxyQuality },
                     set: { project.changeProxyQuality(to: $0) }
                 )) {
                     ForEach(ProxyQuality.allCases) { quality in Text(quality.title).tag(quality) }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 245)
+                .frame(width: 205)
+                .fixedSize(horizontal: true, vertical: false)
                 .help(project.proxyQuality.detail)
-                Picker("Spatial prefilter", selection: Binding(
+                Picker("Image AA", selection: Binding(
                     get: { project.spatialPrefilter },
                     set: { project.setSpatialPrefilter($0) }
                 )) {
                     ForEach(PrefilterStrength.allCases) { strength in Text(strength.title).tag(strength) }
                 }
-                .frame(width: 165)
+                .frame(width: 145)
+                .fixedSize(horizontal: true, vertical: false)
                 .help("Reduces jagged spatial edges and shimmer after geometric resampling. Light is a subtle axial low-pass; Strong is smoother.")
-                Picker("Temporal prefilter", selection: Binding(
+                Picker("Time AA", selection: Binding(
                     get: { project.temporalPrefilter },
                     set: { project.setTemporalPrefilter($0) }
                 )) {
                     ForEach(PrefilterStrength.allCases) { strength in Text(strength.title).tag(strength) }
                 }
-                .frame(width: 175)
+                .frame(width: 145)
+                .fixedSize(horizontal: true, vertical: false)
                 .help("Blends adjacent output frames to reduce temporal aliasing and flicker. It can soften deliberately abrupt motion.")
+                Spacer()
+            }
+            HStack(spacing: 12) {
                 Picker("Audio", selection: Binding(
                     get: { project.audioMode },
                     set: { project.setAudioMode($0) }
@@ -438,17 +451,19 @@ private struct WorkspaceView: View {
                             .disabled(mode == .preserveOriginal && !project.canPreserveOriginalAudio)
                     }
                 }
-                .frame(width: 170)
+                .frame(width: 190)
+                .fixedSize(horizontal: true, vertical: false)
                 .help(project.canPreserveOriginalAudio
                     ? "Preserve the original movie audio without re-timing it."
                     : "Original audio is unavailable for image sequences or reinterpreted playback FPS.")
-                Picker("Playback FPS", selection: Binding(
+                Picker("FPS", selection: Binding(
                     get: { project.playbackFPSPreset },
                     set: { project.setPlaybackFPSPreset($0) }
                 )) {
                     ForEach(PlaybackFPSPreset.allCases) { preset in Text(preset.title).tag(preset) }
                 }
-                .frame(width: 155)
+                .frame(width: 125)
+                .fixedSize(horizontal: true, vertical: false)
                 if project.playbackFPSPreset == .custom {
                     TextField("FPS", value: Binding(
                         get: { project.customPlaybackFPS },
@@ -550,7 +565,7 @@ private struct WorkspaceView: View {
         if isComparingSelectedEffect, project.selectedEffectCaptureForSelection != nil {
             return isShowingSelectedEffectInput ? "Selected Effect Input" : "Selected Effect Output"
         }
-        return "Proxy Preview · \(project.proxyQuality.title)"
+        return "Preview · \(project.proxyQuality.title)"
     }
 
     private var previewModeSymbol: String {
@@ -726,8 +741,13 @@ private struct EffectInspector: View {
                 .foregroundStyle(.secondary)
         case .temporalPixelSort:
             optionPicker("Criterion", value: option(0), options: ["Luma", "Hue", "Saturation"])
-            optionPicker("Direction", value: option(1), options: ["Ascending", "Descending"])
+            optionPicker("Order", value: option(1), options: ["Ascending", "Descending", "Zigzag", "Center Out"])
             valueSlider("Threshold", index: 0, range: 0...1, format: "%.4f")
+            if node.options[0] == 1 {
+                valueSlider("Hue Key Shift", index: 1, range: -180...180, format: "%.1f°")
+                Text("Hue Key Shift rotates only the invisible sorting key. It changes temporal ordering without recolouring the output pixels.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         case .spectralFFTSwap:
             optionPicker("Transform", value: option(3), options: ["Swap", "Rotate"])
             optionPicker(node.options[3] == 0 ? "Swap" : "Rotation plane", value: option(0), options: node.options[3] == 0 ? ["X ↔ Time", "Y ↔ Time", "All axes"] : ["X–Time", "Y–Time", "X–Y"])
@@ -786,6 +806,12 @@ private struct EffectInspector: View {
             optionPicker("Trigger", value: option(1), options: ["Edge", "Luma", "Random"])
             valueSlider("Trigger threshold", index: 0, range: 0...1, format: "%.4f")
             valueSlider("Maximum hold", index: 1, range: 0...600, format: "%.0f samples")
+            if node.options[1] == 1 {
+                Toggle("Trigger from darker values", isOn: Binding(
+                    get: { node.options[2] != 0 },
+                    set: { node.options[2] = $0 ? 1 : 0 }
+                ))
+            }
             if node.options[1] == 2 {
                 valueSlider("Random probability", index: 2, range: 0...1, format: "%.5f")
             }
@@ -818,13 +844,14 @@ private struct EffectInspector: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .horizontalSyncLoss:
+            optionPicker("Direction", value: option(2), options: ["Horizontal", "Vertical"])
             valueSlider("Shift", index: 0, range: 0...1, format: "%.3f × width")
-            valueSlider("Band Height", index: 1, range: 1...256, format: "%.0f px")
+            valueSlider("Band Size", index: 1, range: 0...1, format: "%.4f")
             valueSlider("Drift Speed", index: 2, range: -10...10, format: "%.3f bands/frame")
             valueSlider("Tear Density", index: 3, range: 0...1, format: "%.4f")
             optionPicker("Driver", value: option(0), options: ["Deterministic Noise", "Luma", "Edges"])
             edgePicker(option(1))
-            Text("Rows move in coherent bands whose pattern drifts over time. Noise is deterministic and responds to Reseed.")
+            Text("Band Size is resolution-independent: 0 is one pixel and 1 is one full-frame band. Horizontal shifts row bands; Vertical shifts column bands. Noise is deterministic and responds to Reseed.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .chromaCarrierDrift:
@@ -847,13 +874,13 @@ private struct EffectInspector: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .blockAddressCorruption:
-            valueSlider("Block Size", index: 0, range: 2...256, format: "%.0f px")
+            valueSlider("Block Size", index: 0, range: 0...1, format: "%.4f")
             valueSlider("Corruption", index: 1, range: 0...1, format: "%.4f")
             valueSlider("Time Reach", index: 2, range: 0...240, format: "%.0f frames")
             valueSlider("Hold", index: 3, range: 1...240, format: "%.0f frames")
             optionPicker("Mapping", value: option(0), options: ["Swap", "Repeat", "Offset", "Cascade"])
             edgePicker(option(1))
-            Text("Corrupted blocks retain their mapping for Hold frames. Reseed changes both spatial addresses and optional time reach.")
+            Text("Block Size is resolution-independent: 0 is one pixel and 1 covers the frame. Corrupted blocks retain their mapping for Hold frames.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .bitplaneForge:
@@ -868,23 +895,23 @@ private struct EffectInspector: View {
         case .signalWeave:
             driverPicker()
             optionPicker("Pattern", value: option(0), options: ["Lines", "Interlaced Fields", "Bands", "Checker"])
-            valueSlider("Band Size", index: 0, range: 1...256, format: "%.0f px")
+            valueSlider("Band Size", index: 0, range: 0...1, format: "%.4f")
             valueSlider("Phase Drift", index: 1, range: -20...20, format: "%.3f units/frame")
             valueSlider("Irregularity", index: 2, range: 0...1, format: "%.4f")
             valueSlider("B Time Offset", index: 3, range: -240...240, format: "%.0f frames")
             optionPicker("Size Matching", value: option(1), options: ["Clamp", "Stretch", "Crop"])
-            Text("Alternating rows, fields, bands or checker cells come from A and B. Irregularity relaxes the regular weave with a seed-stable pattern.")
+            Text("Band Size is resolution-independent: 0 is one pixel and 1 spans the frame. Alternating rows, fields, bands or checker cells come from A and B.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .blockGraft:
             driverPicker()
-            valueSlider("Block Size", index: 0, range: 2...256, format: "%.0f px")
+            valueSlider("Block Size", index: 0, range: 0...1, format: "%.4f")
             valueSlider(node.options[0] == 0 ? "Density" : "Threshold", index: 1, range: 0...1, format: "%.4f")
             valueSlider("Hold", index: 2, range: 1...240, format: "%.0f frames")
             valueSlider("B Time Offset", index: 3, range: -240...240, format: "%.0f frames")
             optionPicker("Trigger", value: option(0), options: ["Random", "A Luma", "B Luma", "Difference", "A Edges"])
             optionPicker("Size Matching", value: option(1), options: ["Clamp", "Stretch", "Crop"])
-            Text("Selected blocks from B replace A as complete colour samples. Hold freezes each block decision for several frames.")
+            Text("Block Size is resolution-independent: 0 is one pixel and 1 covers the frame. Selected blocks from B replace A as complete colour samples.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .channelTransplant:
@@ -914,8 +941,12 @@ private struct EffectInspector: View {
                 replacement.id = node.id
                 replacement.enabled = node.enabled
                 replacement.amount = node.amount
+                replacement.amountBlendMode = node.amountBlendMode
                 replacement.randomSeed = node.randomSeed
-                if !replacement.supportsAmount { replacement.amount = 1 }
+                if !replacement.supportsAmount {
+                    replacement.amount = 1
+                    replacement.amountBlendMode = .normal
+                }
                 node = replacement
             }
         )
@@ -924,7 +955,10 @@ private struct EffectInspector: View {
     private func option(_ index: Int) -> Binding<Int32> {
         Binding(get: { node.options[index] }, set: {
             node.options[index] = $0
-            if !node.supportsAmount { node.amount = 1 }
+            if !node.supportsAmount {
+                node.amount = 1
+                node.amountBlendMode = .normal
+            }
         })
     }
 
@@ -944,6 +978,19 @@ private struct EffectInspector: View {
                 }
             if !node.supportsAmount {
                 Text("Partial Amount requires an output with the same tensor shape as the input.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Picker("Amount Blend", selection: $node.amountBlendMode) {
+                    ForEach(AmountBlendMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                Text(node.amountBlendMode == .displace
+                     ? "The effect output becomes a 3D displacement field for the original image."
+                     : node.amountBlendMode == .xorGlitch
+                     ? "XOR Glitch combines quantized source and effect values into hard digital colour fractures."
+                     : "Amount mixes the effect using the selected compositing operation.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

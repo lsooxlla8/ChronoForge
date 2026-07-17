@@ -13,6 +13,7 @@ extension EffectNode {
                 cf_effect_descriptor_v2_make(
                     kind.rawValue,
                     min(max(amount, 0), 1),
+                    amountBlendMode.rawValue,
                     randomSeed,
                     valueBuffer.baseAddress,
                     UInt32(definition.valueCount),
