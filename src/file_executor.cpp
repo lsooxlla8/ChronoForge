@@ -474,6 +474,59 @@ void rgb_time_slip(const MappedTensor& input, MappedTensor& output, const Effect
     });
 }
 
+void horizontal_sync_loss(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
+    require_option(effect.options[0], 2, "sync loss driver");
+    require_option(effect.options[1], 2, "sync loss edge behavior");
+    const auto driver_kind = static_cast<SyncLossDriver>(effect.options[0]);
+    const auto edge = static_cast<EdgeBehavior>(effect.options[1]);
+    const auto& shape = input.shape();
+    const auto band_height = static_cast<std::size_t>(std::max(1.0F, std::round(effect.values[1])));
+    const auto density = std::clamp(effect.values[3], 0.0F, 1.0F);
+    const auto maximum_shift = std::clamp(effect.values[0], 0.0F, 1.0F) * static_cast<float>(shape.w);
+    const auto mix_hash = [&](std::size_t t, std::int64_t band) {
+        auto hash = (static_cast<std::uint64_t>(t) + 1) * 0x9E3779B185EBCA87ULL;
+        hash ^= static_cast<std::uint64_t>(band) * 0xC2B2AE3D27D4EB4FULL;
+        hash ^= effect.random_seed * 0xD6E8FEB86659FD93ULL;
+        hash ^= hash >> 30U;
+        hash *= 0xBF58476D1CE4E5B9ULL;
+        hash ^= hash >> 27U;
+        return hash;
+    };
+    auto* destination = output.mutable_data();
+    parallel_for(shape.t, progress, [&](std::size_t t) {
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            const auto base_band = static_cast<std::int64_t>(y / band_height);
+            const auto band = base_band + static_cast<std::int64_t>(std::floor(static_cast<float>(t) * effect.values[2]));
+            const auto center_y = std::min((y / band_height) * band_height + band_height / 2, shape.h - 1);
+            const auto center_x = shape.w / 2;
+            float driver = 0.0F;
+            bool tears = density > 0.0F;
+            if (driver_kind == SyncLossDriver::DeterministicNoise) {
+                const auto hash = mix_hash(t, band);
+                const auto trigger = static_cast<float>(hash & 0xFFFFFFU) / static_cast<float>(0x1000000U);
+                driver = 2.0F * static_cast<float>((hash >> 24U) & 0xFFFFFFU) / static_cast<float>(0xFFFFFFU) - 1.0F;
+                tears = tears && trigger < density;
+            } else if (driver_kind == SyncLossDriver::Luma) {
+                driver = 2.0F * std::clamp(luma(input, t, center_y, center_x), 0.0F, 1.0F) - 1.0F;
+                tears = tears && std::abs(driver) >= 1.0F - density;
+            } else {
+                const auto previous_y = center_y == 0 ? 0 : center_y - 1;
+                const auto difference = luma(input, t, center_y, center_x) - luma(input, t, previous_y, center_x);
+                const auto strength = std::clamp(std::abs(difference) * 4.0F, 0.0F, 1.0F);
+                driver = difference < 0.0F ? -strength : strength;
+                tears = tears && strength >= 1.0F - density;
+            }
+            const auto shift = tears ? driver * maximum_shift : 0.0F;
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                for (std::size_t c = 0; c < shape.c; ++c) {
+                    destination[linear(t, y, x, c, shape)] = sample_mapped(
+                        input, static_cast<float>(t), static_cast<float>(y), static_cast<float>(x) - shift, c, edge);
+                }
+            }
+        }
+    });
+}
+
 void radial(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
     require_option(effect.options[0], 2, "edge behavior");
     require_option(effect.options[1], 2, "radial topology");
@@ -1413,6 +1466,9 @@ void apply(
         case EffectOperation::RgbTimeSlip:
             rgb_time_slip(input, output, effect, progress);
             return;
+        case EffectOperation::HorizontalSyncLoss:
+            horizontal_sync_loss(input, output, effect, progress);
+            return;
         case EffectOperation::DimensionalSplicer:
         case EffectOperation::TensorDisplacement:
             throw std::invalid_argument("This effect requires a driver tensor");
@@ -1450,6 +1506,8 @@ void apply(
             return "Seamless Loop";
         case EffectOperation::RgbTimeSlip:
             return "RGB Time Slip";
+        case EffectOperation::HorizontalSyncLoss:
+            return "Horizontal Sync Loss";
     }
     return "Unknown";
 }

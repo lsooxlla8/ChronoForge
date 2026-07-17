@@ -262,10 +262,10 @@ enum SelfTestRunner {
                 throw IntegrationSelfTestError.message("Image sequence incorrectly allowed Preserve Original Audio")
             }
             let store = SessionStore()
-            guard EffectKind.addableKinds.count == 12,
+            guard EffectKind.addableKinds.count == 13,
                   EffectKind.spaceTimeTranspose.title == EffectKind.tensor3DRotation.title,
                   EffectKind.spaceTimeTranspose.title == "Space-Time Transform",
-                  EffectKind.singleInputKinds.count == 10,
+                  EffectKind.singleInputKinds.count == 11,
                   EffectKind.twoInputKinds.count == 2,
                   EffectKind.opticalFlowTimeWarp.symbol == "wind" else {
                 throw IntegrationSelfTestError.message("Effect families were not exposed as a homogeneous effect stack")

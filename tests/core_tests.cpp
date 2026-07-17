@@ -105,6 +105,26 @@ void test_rgb_time_slip() {
     require_near(output.at(1, 0, 0, 3), 0.5F, "RGB Time Slip keeps alpha on the current frame");
 }
 
+void test_horizontal_sync_loss() {
+    const auto input = numbered({3, 6, 12, 4});
+    const chronoforge::HorizontalSyncLossParams params{
+        0.75F, 2, 0.5F, 1.0F, chronoforge::SyncLossDriver::DeterministicNoise,
+        chronoforge::EdgeBehavior::Wrap, 0xC0FFEE};
+    const auto first = chronoforge::horizontal_sync_loss(input, params);
+    const auto second = chronoforge::horizontal_sync_loss(input, params);
+    require(first.values() == second.values(), "Horizontal Sync Loss is deterministic for a stored seed");
+    auto changed_params = params;
+    changed_params.random_seed = 7;
+    require(
+        chronoforge::horizontal_sync_loss(input, changed_params).values() != first.values(),
+        "Horizontal Sync Loss Reseed changes deterministic noise bands");
+    auto dry_params = params;
+    dry_params.tear_density = 0.0F;
+    require(
+        chronoforge::horizontal_sync_loss(input, dry_params).values() == input.values(),
+        "Zero tear density is an exact visual identity before Amount blending");
+}
+
 void test_sort_and_rotation() {
     chronoforge::VideoTensor input({3, 1, 1, 1});
     input.at(0, 0, 0, 0) = 0.8F;
@@ -333,6 +353,7 @@ void test_file_backed_effect_chain() {
     const std::vector<chronoforge::EffectSpec> effects{
         {chronoforge::EffectOperation::LumaTimeShift, {2.0F, 0, 0, 0}, {0, 1, 0, 0}},
         {chronoforge::EffectOperation::RgbTimeSlip, {1.0F, 0.0F, -1.0F, 1.0F}, {0, 1}},
+        {chronoforge::EffectOperation::HorizontalSyncLoss, {0.4F, 2.0F, 0.5F, 0.75F}, {0, 1}, 1.0F, 0xC0FFEE},
         {chronoforge::EffectOperation::RadialChronoFunnel, {0.5F, 0.5F, 0.2F, 0}, {2, 0, 0, 0}},
         {chronoforge::EffectOperation::TemporalPixelSort, {0.1F, 0, 0, 0}, {0, 0, 0, 0}},
         {chronoforge::EffectOperation::Tensor3dRotation, {5.0F, 10.0F, 0, 0}, {3, 0, 0, 0}},
@@ -360,6 +381,9 @@ void test_file_backed_effect_chain() {
     auto expected = chronoforge::luma_time_shift(input, {2.0F, chronoforge::ShiftSource::Luma, chronoforge::EdgeBehavior::Wrap});
     expected = chronoforge::rgb_time_slip(
         expected, {1.0F, 0.0F, -1.0F, 1.0F, chronoforge::SplitAxis::Horizontal, chronoforge::EdgeBehavior::Wrap});
+    expected = chronoforge::horizontal_sync_loss(
+        expected, {0.4F, 2, 0.5F, 0.75F, chronoforge::SyncLossDriver::DeterministicNoise,
+                   chronoforge::EdgeBehavior::Wrap, 0xC0FFEE});
     expected = chronoforge::radial_chrono_funnel(
         expected,
         {0.5F, 0.5F, 0.2F, chronoforge::EdgeBehavior::Mirror, 0.0F, chronoforge::RadialTopology::TimeLoom});
@@ -565,6 +589,7 @@ int main() {
         test_transpose();
         test_time_shift_and_funnel();
         test_rgb_time_slip();
+        test_horizontal_sync_loss();
         test_sort_and_rotation();
         test_fft_swap();
         test_cross_tensor_and_flow_effects();

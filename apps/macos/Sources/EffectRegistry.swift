@@ -121,6 +121,9 @@ enum EffectRegistry {
         definition(.rgbTimeSlip, "RGB Time Slip", "square.stack.3d.up", .indigo, .dataAndChannels,
                    cost: .temporal, values: [-12, 0, 12, 8], options: [0, 0],
                    randomization: .init(identifier: "rgb-time-slip", amount: .triangular(0.3...1, preferred: 0.75))),
+        definition(.horizontalSyncLoss, "Horizontal Sync Loss", "line.3.horizontal.decrease", .red, .signalAndAnalog,
+                   usesRandomSeed: true, values: [0.22, 12, 0.35, 0.4], options: [0, 1],
+                   randomization: .init(identifier: "horizontal-sync-loss", amount: .triangular(0.3...1, preferred: 0.8))),
     ]
 
     private static let byKind = Dictionary(uniqueKeysWithValues: definitions.map { ($0.kind, $0) })

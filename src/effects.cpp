@@ -483,6 +483,57 @@ VideoTensor rgb_time_slip(const VideoTensor& input, const RGBTimeSlipParams& par
     return output;
 }
 
+VideoTensor horizontal_sync_loss(const VideoTensor& input, const HorizontalSyncLossParams& params) {
+    const auto& shape = input.shape();
+    VideoTensor output(shape, 0.0F, input.metadata());
+    const auto band_height = std::max<std::size_t>(1, params.band_height);
+    const auto density = std::clamp(params.tear_density, 0.0F, 1.0F);
+    const auto maximum_shift = std::clamp(params.shift_fraction, 0.0F, 1.0F) * static_cast<float>(shape.w);
+    const auto mix_hash = [&](std::size_t t, std::int64_t band) {
+        auto hash = (static_cast<std::uint64_t>(t) + 1) * 0x9E3779B185EBCA87ULL;
+        hash ^= static_cast<std::uint64_t>(band) * 0xC2B2AE3D27D4EB4FULL;
+        hash ^= params.random_seed * 0xD6E8FEB86659FD93ULL;
+        hash ^= hash >> 30U;
+        hash *= 0xBF58476D1CE4E5B9ULL;
+        hash ^= hash >> 27U;
+        return hash;
+    };
+    parallel_for(shape.t, [&](std::size_t t) {
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            const auto base_band = static_cast<std::int64_t>(y / band_height);
+            const auto band = base_band + static_cast<std::int64_t>(std::floor(static_cast<float>(t) * params.drift_speed));
+            const auto center_y = std::min((y / band_height) * band_height + band_height / 2, shape.h - 1);
+            const auto center_x = shape.w / 2;
+            float driver = 0.0F;
+            bool tears = density > 0.0F;
+            if (params.driver == SyncLossDriver::DeterministicNoise) {
+                const auto hash = mix_hash(t, band);
+                const auto trigger = static_cast<float>(hash & 0xFFFFFFU) / static_cast<float>(0x1000000U);
+                driver = 2.0F * static_cast<float>((hash >> 24U) & 0xFFFFFFU) / static_cast<float>(0xFFFFFFU) - 1.0F;
+                tears = tears && trigger < density;
+            } else if (params.driver == SyncLossDriver::Luma) {
+                driver = 2.0F * std::clamp(luma(input, t, center_y, center_x), 0.0F, 1.0F) - 1.0F;
+                tears = tears && std::abs(driver) >= 1.0F - density;
+            } else {
+                const auto previous_y = center_y == 0 ? 0 : center_y - 1;
+                const auto difference = luma(input, t, center_y, center_x) - luma(input, t, previous_y, center_x);
+                const auto strength = std::clamp(std::abs(difference) * 4.0F, 0.0F, 1.0F);
+                driver = difference < 0.0F ? -strength : strength;
+                tears = tears && strength >= 1.0F - density;
+            }
+            const auto shift = tears ? driver * maximum_shift : 0.0F;
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                for (std::size_t c = 0; c < shape.c; ++c) {
+                    output.at(t, y, x, c) = sample_tensor(
+                        input, static_cast<float>(t), static_cast<float>(y), static_cast<float>(x) - shift,
+                        c, params.edge_behavior);
+                }
+            }
+        }
+    });
+    return output;
+}
+
 VideoTensor radial_chrono_funnel(const VideoTensor& input, const RadialChronoFunnelParams& params) {
     const auto& shape = input.shape();
     VideoTensor output(shape, 0.0F, input.metadata());

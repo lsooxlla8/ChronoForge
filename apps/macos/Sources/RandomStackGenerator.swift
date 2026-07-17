@@ -192,6 +192,14 @@ enum RandomStackGenerator {
             if random.chance(0.5) { offsets.swapAt(moving[0], moving[1]) }
             node.values = offsets + [RandomFloatDistribution.signedMagnitude(2...120, deadZone: 2).sample(using: &random)]
             node.options = [Int32(random.integer(in: 0...2)), Int32(random.integer(in: 0...2))]
+        case "horizontal-sync-loss":
+            node.values = [
+                .triangular(0.05...0.85, preferred: 0.25, using: &random),
+                RandomFloatDistribution.logarithmic(1...96).sample(using: &random),
+                RandomFloatDistribution.signedMagnitude(0.05...4, deadZone: 0.05).sample(using: &random),
+                .triangular(0.08...0.9, preferred: 0.35, using: &random),
+            ]
+            node.options = [weighted([0, 0, 0, 1, 2], using: &random), Int32(random.integer(in: 0...2))]
         default:
             break
         }

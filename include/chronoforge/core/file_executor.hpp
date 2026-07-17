@@ -26,6 +26,7 @@ enum class EffectOperation : std::int32_t {
     StructuralDatamosh = 11,
     SeamlessLoop = 12,
     RgbTimeSlip = 13,
+    HorizontalSyncLoss = 14,
 };
 
 struct EffectSpec {

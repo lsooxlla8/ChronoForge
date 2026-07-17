@@ -18,6 +18,7 @@
 - Added streaming 8-bit RGBA PNG sequence export with six-digit names, non-empty-folder protection and alpha-preserving round-trip coverage.
 - Added Result/preset/custom Playback FPS reinterpretation, output-duration feedback, audio sync restrictions, Black/Checkerboard viewer backgrounds and explicit black compositing for H.264.
 - Added RGB Time Slip with independent R/G/B frame offsets, horizontal/vertical/radial spatial separation, current-frame premultiplied alpha, Amount, effect-aware randomization and matching RAM/mapped render paths.
+- Added Horizontal Sync Loss with drifting row bands, deterministic Noise/Luma/Edges drivers, Wrap/Clamp/Mirror edges, Reseed, Amount and RAM/mapped parity.
 
 ## 0.9.0 — seamless loops and interaction fixes
 

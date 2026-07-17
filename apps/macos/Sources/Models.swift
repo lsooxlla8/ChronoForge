@@ -54,6 +54,7 @@ enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
     case structuralDatamosh = 11
     case seamlessLoop = 12
     case rgbTimeSlip = 13
+    case horizontalSyncLoss = 14
 
     var id: Int32 { rawValue }
 
@@ -155,6 +156,7 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
         case .structuralDatamosh: ["Time", "Horizontal", "Vertical"][min(max(Int(options[0]), 0), 2)]
         case .seamlessLoop: ["Crossfade", "Luma Weave", "Ping-Pong"][min(max(Int(options[0]), 0), 2)]
         case .rgbTimeSlip: ["Horizontal", "Vertical", "Radial"][min(max(Int(options[0]), 0), 2)]
+        case .horizontalSyncLoss: ["Noise", "Luma", "Edges"][min(max(Int(options[0]), 0), 2)]
         }
     }
 }

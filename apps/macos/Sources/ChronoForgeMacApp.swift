@@ -680,6 +680,7 @@ private struct EffectInspector: View {
         amountControl
         if node.kind.definition.usesRandomSeed {
             Button("Reseed", systemImage: "arrow.triangle.2.circlepath", action: onReseed)
+                .disabled(node.kind == .horizontalSyncLoss && node.options[0] != 0)
                 .help("Generate a new deterministic pattern for this effect.")
         }
         Text(node.kind.title).font(.title3.weight(.semibold))
@@ -807,6 +808,16 @@ private struct EffectInspector: View {
             optionPicker("Split Axis", value: option(0), options: ["Horizontal", "Vertical", "Radial"])
             edgePicker(option(1))
             Text("Each colour channel reads an independent moment. Alpha stays on the current frame and RGB is re-premultiplied to it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .horizontalSyncLoss:
+            valueSlider("Shift", index: 0, range: 0...1, format: "%.3f × width")
+            valueSlider("Band Height", index: 1, range: 1...256, format: "%.0f px")
+            valueSlider("Drift Speed", index: 2, range: -10...10, format: "%.3f bands/frame")
+            valueSlider("Tear Density", index: 3, range: 0...1, format: "%.4f")
+            optionPicker("Driver", value: option(0), options: ["Deterministic Noise", "Luma", "Edges"])
+            edgePicker(option(1))
+            Text("Rows move in coherent bands whose pattern drifts over time. Noise is deterministic and responds to Reseed.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

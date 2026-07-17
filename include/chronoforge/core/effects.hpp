@@ -23,6 +23,7 @@ enum class FreezeAxis { Time, Horizontal, Vertical };
 enum class FreezeTrigger { Edge, Luma, Random };
 enum class SeamlessLoopMode { Crossfade, LumaWeave, PingPong };
 enum class SplitAxis { Horizontal, Vertical, Radial };
+enum class SyncLossDriver { DeterministicNoise, Luma, Edges };
 
 struct LumaTimeShiftParams {
     float shift_multiplier{};
@@ -121,6 +122,16 @@ struct RGBTimeSlipParams {
     EdgeBehavior edge_behavior{EdgeBehavior::Clamp};
 };
 
+struct HorizontalSyncLossParams {
+    float shift_fraction{0.2F};
+    std::size_t band_height{12};
+    float drift_speed{};
+    float tear_density{0.35F};
+    SyncLossDriver driver{SyncLossDriver::DeterministicNoise};
+    EdgeBehavior edge_behavior{EdgeBehavior::Wrap};
+    std::uint64_t random_seed{};
+};
+
 VideoTensor space_time_transpose(const VideoTensor& input, SpatialAxis axis);
 VideoTensor space_time_transpose(const VideoTensor& input, const SpaceTimeTransposeParams& params);
 VideoTensor luma_time_shift(const VideoTensor& input, const LumaTimeShiftParams& params);
@@ -141,5 +152,6 @@ VideoTensor chrono_feedback(const VideoTensor& input, const ChronoFeedbackParams
 VideoTensor structural_datamosh(const VideoTensor& input, const StructuralDatamoshParams& params);
 VideoTensor seamless_loop(const VideoTensor& input, const SeamlessLoopParams& params);
 VideoTensor rgb_time_slip(const VideoTensor& input, const RGBTimeSlipParams& params);
+VideoTensor horizontal_sync_loss(const VideoTensor& input, const HorizontalSyncLossParams& params);
 
 }  // namespace chronoforge

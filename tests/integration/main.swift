@@ -87,6 +87,21 @@ struct ChronoForgeIntegration {
             throw IntegrationFailure.message("RGB Time Slip bridge mapping did not separate channels while preserving current-frame alpha")
         }
 
+        let syncValues: [Float] = [0.5, 8, 0.5, 1]
+        let syncOptions: [Int32] = [0, 1]
+        func syncLoss(seed: UInt64) -> CFEffectDescriptorV2 {
+            syncValues.withUnsafeBufferPointer { values in
+                syncOptions.withUnsafeBufferPointer { options in
+                    cf_effect_descriptor_v2_make(14, 1, seed, values.baseAddress, 4, options.baseAddress, 2)
+                }
+            }
+        }
+        let syncA = try render(syncLoss(seed: 11))
+        guard syncA == (try render(syncLoss(seed: 11))),
+              syncA != (try render(syncLoss(seed: 12))) else {
+            throw IntegrationFailure.message("Horizontal Sync Loss bridge path ignored deterministic seed semantics")
+        }
+
         var outdated = effect
         outdated.descriptor_version = 1
         do {
@@ -97,7 +112,7 @@ struct ChronoForgeIntegration {
                 throw IntegrationFailure.message(message)
             }
         }
-        print("ChronoForge integration passed: descriptor V2 validation, deterministic render, Amount identity and RGB Time Slip mapping")
+        print("ChronoForge integration passed: descriptor V2 validation, Amount identity and Wave A bridge mappings")
     }
 
     private static func makeMovie(at url: URL) async throws {
