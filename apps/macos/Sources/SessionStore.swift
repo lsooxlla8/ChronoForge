@@ -7,6 +7,7 @@ final class SessionStore: ObservableObject {
     @Published var source: DecodedProxy?
     @Published var mediaPool: [DecodedProxy] = []
     @Published var output: VideoTensorData?
+    @Published private(set) var selectedEffectCapture: SelectedEffectCapture?
     @Published var effects: [EffectNode] = []
     @Published var selectedNodeID: UUID?
     @Published var outputNodeID: UUID?
@@ -59,6 +60,10 @@ final class SessionStore: ObservableObject {
 
     var displayedTensor: VideoTensorData? { output ?? source?.tensor }
     var selectedNodeIndex: Int? { effects.firstIndex { $0.id == selectedNodeID } }
+    var selectedEffectCaptureForSelection: SelectedEffectCapture? {
+        guard let selectedNodeID, selectedEffectCapture?.nodeID == selectedNodeID else { return nil }
+        return selectedEffectCapture
+    }
 
     func effect(withID id: UUID) -> EffectNode? {
         effects.first { $0.id == id }
@@ -68,7 +73,10 @@ final class SessionStore: ObservableObject {
         guard let index = effects.firstIndex(where: { $0.id == node.id }) else { return }
         if coalescedEditStart != nil {
             effects[index] = node
-            if source != nil { isPreviewStale = true }
+            if source != nil {
+                isPreviewStale = true
+                selectedEffectCapture = nil
+            }
         } else {
             performCreativeEdit(named: "Change Effect") { effects[index] = node }
         }
@@ -334,6 +342,7 @@ final class SessionStore: ObservableObject {
         source = nil
         mediaPool = []
         output = nil
+        selectedEffectCapture = nil
         isPreviewStale = false
         effects = []
         renderQueue = []
@@ -354,6 +363,7 @@ final class SessionStore: ObservableObject {
     func markEdited(invalidatePreview: Bool = true) {
         if invalidatePreview, source != nil {
             isPreviewStale = true
+            selectedEffectCapture = nil
             scheduleAutoPreview()
         }
         scheduleRecoverySave()
@@ -553,24 +563,43 @@ final class SessionStore: ObservableObject {
         let driverURLs = graph.compactMap { effect in
             effect.driverMediaID.flatMap { id in mediaPool.first(where: { $0.id == id })?.sourceURL }
         }
+        let selectedEffectID = selectedNodeID
         let cacheKey = ProxyCache.key(source: source!.sourceURL, input: input, effects: graph, drivers: driverURLs)
         previewTask = Task {
             defer {
                 if previewGeneration == generation { isRendering = false }
             }
             do {
+                let drivers = Dictionary(uniqueKeysWithValues: mediaPool.map { ($0.id, $0.tensor) })
                 if let cached = await ProxyCache.shared.load(key: cacheKey) {
+                    let capture: SelectedEffectCapture? = if let selectedEffectID {
+                        try await CoreRenderer.captureSelectedEffect(
+                            input: input,
+                            effects: graph,
+                            drivers: drivers,
+                            selectedNodeID: selectedEffectID
+                        )
+                    } else {
+                        nil
+                    }
                     try Task.checkCancellation()
                     output = cached
+                    selectedEffectCapture = capture
                     isPreviewStale = false
                     currentFrame = min(currentFrame, max(0, cached.frames - 1))
                     statusMessage = "Loaded from render cache"
                     return
                 }
-                let drivers = Dictionary(uniqueKeysWithValues: mediaPool.map { ($0.id, $0.tensor) })
-                let result = try await CoreRenderer.render(input: input, effects: graph, drivers: drivers)
+                let preview = try await CoreRenderer.renderCapturingSelectedEffect(
+                    input: input,
+                    effects: graph,
+                    drivers: drivers,
+                    selectedNodeID: selectedEffectID
+                )
                 try Task.checkCancellation()
+                let result = preview.output
                 output = result
+                selectedEffectCapture = preview.selectedEffect
                 isPreviewStale = false
                 currentFrame = min(currentFrame, max(0, result.frames - 1))
                 statusMessage = "Rendered · \(result.frames) × \(result.width) × \(result.height)"

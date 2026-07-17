@@ -84,6 +84,36 @@ enum SelfTestRunner {
               (80...160).contains(lengthCounts[3]) else {
             throw IntegrationSelfTestError.message("Random Stack length weights drifted outside their expected ranges")
         }
+        let compareInput = VideoTensorData(
+            values: [
+                0, 0, 0, 1,
+                0.25, 0.25, 0.25, 1,
+                0.75, 0.75, 0.75, 1,
+                1, 1, 1, 1,
+            ],
+            frames: 4,
+            height: 1,
+            width: 1,
+            channels: 4,
+            framesPerSecond: 8,
+            duration: 0.5
+        )
+        var compareFirst = EffectNode.make(.lumaTimeShift)
+        compareFirst.values[0] = 1
+        let compareSecond = EffectNode.make(.temporalPixelSort, inputNodeID: compareFirst.id)
+        let expectedSelectedInput = try await CoreRenderer.render(input: compareInput, effects: [compareFirst])
+        let expectedFinal = try await CoreRenderer.render(input: compareInput, effects: [compareFirst, compareSecond])
+        let compared = try await CoreRenderer.renderCapturingSelectedEffect(
+            input: compareInput,
+            effects: [compareFirst, compareSecond],
+            selectedNodeID: compareSecond.id
+        )
+        guard compared.selectedEffect?.nodeID == compareSecond.id,
+              compared.selectedEffect?.input.values == expectedSelectedInput.values,
+              compared.selectedEffect?.output.values == expectedFinal.values,
+              compared.output.values == expectedFinal.values else {
+            throw IntegrationSelfTestError.message("Selected Effect compare did not capture the node's immediate input and output")
+        }
         try await MainActor.run {
             let store = SessionStore()
             guard EffectKind.addableKinds.count == 11,

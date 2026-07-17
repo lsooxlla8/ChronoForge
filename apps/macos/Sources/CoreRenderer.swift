@@ -15,6 +15,17 @@ enum CoreRendererError: LocalizedError {
     }
 }
 
+struct SelectedEffectCapture: Sendable {
+    let nodeID: UUID
+    let input: VideoTensorData
+    let output: VideoTensorData
+}
+
+struct PreviewRenderResult: Sendable {
+    let output: VideoTensorData
+    let selectedEffect: SelectedEffectCapture?
+}
+
 enum CoreRenderer {
     static let defaultBudget: UInt64 = 768 * 1024 * 1024
 
@@ -92,6 +103,84 @@ enum CoreRenderer {
                 duration: Double(cf_video_buffer_frames(output)) / input.framesPerSecond
             )
         }.value
+    }
+
+    static func renderCapturingSelectedEffect(
+        input: VideoTensorData,
+        effects: [EffectNode],
+        drivers: [UUID: VideoTensorData] = [:],
+        selectedNodeID: UUID?,
+        budget: UInt64 = defaultBudget
+    ) async throws -> PreviewRenderResult {
+        guard let selectedNodeID,
+              effects.contains(where: { $0.id == selectedNodeID }) else {
+            return PreviewRenderResult(
+                output: try await render(input: input, effects: effects, drivers: drivers, budget: budget),
+                selectedEffect: nil
+            )
+        }
+        return try await renderSequentially(
+            input: input,
+            effects: effects,
+            drivers: drivers,
+            selectedNodeID: selectedNodeID,
+            stopAfterCapture: false,
+            budget: budget
+        )
+    }
+
+    static func captureSelectedEffect(
+        input: VideoTensorData,
+        effects: [EffectNode],
+        drivers: [UUID: VideoTensorData] = [:],
+        selectedNodeID: UUID,
+        budget: UInt64 = defaultBudget
+    ) async throws -> SelectedEffectCapture? {
+        guard effects.contains(where: { $0.id == selectedNodeID }) else { return nil }
+        return try await renderSequentially(
+            input: input,
+            effects: effects,
+            drivers: drivers,
+            selectedNodeID: selectedNodeID,
+            stopAfterCapture: true,
+            budget: budget
+        ).selectedEffect
+    }
+
+    private static func renderSequentially(
+        input: VideoTensorData,
+        effects: [EffectNode],
+        drivers: [UUID: VideoTensorData],
+        selectedNodeID: UUID,
+        stopAfterCapture: Bool,
+        budget: UInt64
+    ) async throws -> PreviewRenderResult {
+        var current = input
+        var capture: SelectedEffectCapture?
+        for effect in effects {
+            try Task.checkCancellation()
+            let effectInput = current
+            if effect.enabled {
+                if effect.kind.requiresDriver {
+                    guard let id = effect.driverMediaID, let driver = drivers[id] else {
+                        throw CoreRendererError.missingDriver
+                    }
+                    current = try await renderCrossEffect(
+                        source: current,
+                        driver: driver,
+                        effect: effect,
+                        budget: budget
+                    )
+                } else {
+                    current = try await render(input: current, effects: [effect], budget: budget)
+                }
+            }
+            if effect.id == selectedNodeID {
+                capture = SelectedEffectCapture(nodeID: effect.id, input: effectInput, output: current)
+                if stopAfterCapture { break }
+            }
+        }
+        return PreviewRenderResult(output: current, selectedEffect: capture)
     }
 
     private static func renderCrossEffect(

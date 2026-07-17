@@ -113,6 +113,8 @@ private struct WorkspaceView: View {
     @EnvironmentObject private var project: SessionStore
     @AppStorage("ChronoForge.darkAppearance") private var darkAppearance = false
     @State private var isComparingSource = false
+    @State private var isComparingSelectedEffect = false
+    @State private var isShowingSelectedEffectInput = false
     var body: some View {
         NavigationSplitView {
             sidebar
@@ -133,6 +135,16 @@ private struct WorkspaceView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .compareSourceChanged)) { notification in
             isComparingSource = notification.userInfo?["pressed"] as? Bool ?? false
+        }
+        .onChange(of: project.selectedNodeID) { _, _ in
+            isComparingSelectedEffect = false
+            isShowingSelectedEffectInput = false
+        }
+        .onChange(of: project.isPreviewStale) { _, stale in
+            if stale {
+                isComparingSelectedEffect = false
+                isShowingSelectedEffectInput = false
+            }
         }
         .preferredColorScheme(darkAppearance ? .dark : .light)
         .fileImporter(
@@ -428,8 +440,8 @@ private struct WorkspaceView: View {
             VStack {
                 HStack {
                     Label(
-                        isComparingSource ? "Source A" : "Proxy Preview · \(project.proxyQuality.title)",
-                        systemImage: isComparingSource ? "film" : "eye"
+                        previewModeLabel,
+                        systemImage: previewModeSymbol
                     )
                         .font(.caption.weight(.semibold))
                         .padding(.horizontal, 9)
@@ -455,12 +467,40 @@ private struct WorkspaceView: View {
 
     private var previewPresentation: (tensor: VideoTensorData, frame: Int)? {
         guard let result = project.displayedTensor else { return nil }
-        guard isComparingSource, let source = project.source?.tensor else {
-            return (result, project.currentFrame)
+        if isComparingSource, let source = project.source?.tensor {
+            return normalizedPresentation(of: source, relativeTo: result)
         }
+        if isComparingSelectedEffect,
+           let capture = project.selectedEffectCaptureForSelection {
+            let tensor = isShowingSelectedEffectInput ? capture.input : capture.output
+            return normalizedPresentation(of: tensor, relativeTo: result)
+        }
+        return (result, project.currentFrame)
+    }
+
+    private func normalizedPresentation(
+        of tensor: VideoTensorData,
+        relativeTo result: VideoTensorData
+    ) -> (tensor: VideoTensorData, frame: Int) {
         let position = Double(project.currentFrame) / Double(max(1, result.frames - 1))
-        let sourceFrame = Int((position * Double(max(0, source.frames - 1))).rounded())
-        return (source, sourceFrame)
+        let frame = Int((position * Double(max(0, tensor.frames - 1))).rounded())
+        return (tensor, frame)
+    }
+
+    private var previewModeLabel: String {
+        if isComparingSource { return "Source A" }
+        if isComparingSelectedEffect, project.selectedEffectCaptureForSelection != nil {
+            return isShowingSelectedEffectInput ? "Selected Effect Input" : "Selected Effect Output"
+        }
+        return "Proxy Preview · \(project.proxyQuality.title)"
+    }
+
+    private var previewModeSymbol: String {
+        if isComparingSource { return "film" }
+        if isComparingSelectedEffect, project.selectedEffectCaptureForSelection != nil {
+            return isShowingSelectedEffectInput ? "arrow.right.to.line" : "arrow.right.circle"
+        }
+        return "eye"
     }
 
     @ViewBuilder
@@ -471,6 +511,7 @@ private struct WorkspaceView: View {
                 LabeledContent("Input", value: project.nodeName(selectedNode.inputNodeID))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                selectedEffectCompareControls
                 EffectInspector(node: Binding(
                     get: { project.effect(withID: nodeID) ?? selectedNode },
                     set: { project.updateEffect($0) }
@@ -489,6 +530,32 @@ private struct WorkspaceView: View {
             Spacer()
         }
         .padding(16)
+    }
+
+    @ViewBuilder
+    private var selectedEffectCompareControls: some View {
+        let isAvailable = project.selectedEffectCaptureForSelection != nil
+        Toggle("Compare Selected Effect", isOn: Binding(
+            get: { isComparingSelectedEffect },
+            set: { enabled in
+                isComparingSelectedEffect = enabled
+                if !enabled { isShowingSelectedEffectInput = false }
+            }
+        ))
+        .toggleStyle(.switch)
+        .disabled(!isAvailable)
+        .help(isAvailable
+            ? "Compare the selected effect's immediate input and output."
+            : "Update Preview to capture the selected effect's input and output.")
+        if isComparingSelectedEffect, isAvailable {
+            Button("Selected Effect Input", systemImage: "rectangle.on.rectangle") {}
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { _ in isShowingSelectedEffectInput = true }
+                        .onEnded { _ in isShowingSelectedEffectInput = false }
+                )
+                .help("Hold to show the selected effect's immediate input. Release to show its immediate output.")
+        }
     }
 
     private var timeline: some View {
