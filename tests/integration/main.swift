@@ -102,6 +102,19 @@ struct ChronoForgeIntegration {
             throw IntegrationFailure.message("Horizontal Sync Loss bridge path ignored deterministic seed semantics")
         }
 
+        let chromaValues: [Float] = [12, 4, 1, 3]
+        let chromaOptions: [Int32] = [1, 1]
+        let chromaDrift = chromaValues.withUnsafeBufferPointer { values in
+            chromaOptions.withUnsafeBufferPointer { options in
+                cf_effect_descriptor_v2_make(15, 1, 0, values.baseAddress, 4, options.baseAddress, 2)
+            }
+        }
+        let chromaOutput = try render(chromaDrift)
+        guard chromaOutput != tensor.values,
+              stride(from: 3, to: chromaOutput.count, by: 4).allSatisfy({ chromaOutput[$0] == tensor.values[$0] }) else {
+            throw IntegrationFailure.message("Chroma Carrier Drift bridge path failed to preserve current-frame alpha")
+        }
+
         var outdated = effect
         outdated.descriptor_version = 1
         do {

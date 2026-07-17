@@ -125,6 +125,37 @@ void test_horizontal_sync_loss() {
         "Zero tear density is an exact visual identity before Amount blending");
 }
 
+void test_chroma_carrier_drift() {
+    chronoforge::VideoTensor grayscale({3, 1, 3, 4}, 0.0F);
+    for (std::size_t t = 0; t < 3; ++t) {
+        for (std::size_t x = 0; x < 3; ++x) {
+            const auto alpha = 0.5F;
+            const auto gray = 0.1F + 0.1F * static_cast<float>(t * 3 + x);
+            for (std::size_t c = 0; c < 3; ++c) grayscale.at(t, 0, x, c) = gray * alpha;
+            grayscale.at(t, 0, x, 3) = alpha;
+        }
+    }
+    const auto neutral = chronoforge::chroma_carrier_drift(
+        grayscale,
+        {2.0F, 0.0F, 1.0F, 3.0F, chronoforge::ChromaDriftMode::SplitCbCr, chronoforge::EdgeBehavior::Wrap});
+    for (std::size_t index = 0; index < grayscale.values().size(); ++index) {
+        require_near(neutral.values()[index], grayscale.values()[index], "Chroma drift leaves neutral grayscale unchanged");
+    }
+
+    chronoforge::VideoTensor colour({2, 1, 1, 4}, 0.0F);
+    colour.at(0, 0, 0, 0) = 0.25F;
+    colour.at(0, 0, 0, 3) = 0.25F;
+    colour.at(1, 0, 0, 2) = 0.75F;
+    colour.at(1, 0, 0, 3) = 0.75F;
+    const auto drifted = chronoforge::chroma_carrier_drift(
+        colour,
+        {0.0F, 0.0F, 1.0F, 0.0F, chronoforge::ChromaDriftMode::Together, chronoforge::EdgeBehavior::Wrap});
+    require_near(drifted.at(0, 0, 0, 3), 0.25F, "Chroma drift keeps current-frame alpha");
+    require(
+        drifted.at(0, 0, 0, 0) <= 0.25F && drifted.at(0, 0, 0, 1) <= 0.25F && drifted.at(0, 0, 0, 2) <= 0.25F,
+        "Chroma drift output remains premultiplied");
+}
+
 void test_sort_and_rotation() {
     chronoforge::VideoTensor input({3, 1, 1, 1});
     input.at(0, 0, 0, 0) = 0.8F;
@@ -354,6 +385,7 @@ void test_file_backed_effect_chain() {
         {chronoforge::EffectOperation::LumaTimeShift, {2.0F, 0, 0, 0}, {0, 1, 0, 0}},
         {chronoforge::EffectOperation::RgbTimeSlip, {1.0F, 0.0F, -1.0F, 1.0F}, {0, 1}},
         {chronoforge::EffectOperation::HorizontalSyncLoss, {0.4F, 2.0F, 0.5F, 0.75F}, {0, 1}, 1.0F, 0xC0FFEE},
+        {chronoforge::EffectOperation::ChromaCarrierDrift, {1.0F, 0.0F, 1.0F, 2.0F}, {1, 1}},
         {chronoforge::EffectOperation::RadialChronoFunnel, {0.5F, 0.5F, 0.2F, 0}, {2, 0, 0, 0}},
         {chronoforge::EffectOperation::TemporalPixelSort, {0.1F, 0, 0, 0}, {0, 0, 0, 0}},
         {chronoforge::EffectOperation::Tensor3dRotation, {5.0F, 10.0F, 0, 0}, {3, 0, 0, 0}},
@@ -384,6 +416,9 @@ void test_file_backed_effect_chain() {
     expected = chronoforge::horizontal_sync_loss(
         expected, {0.4F, 2, 0.5F, 0.75F, chronoforge::SyncLossDriver::DeterministicNoise,
                    chronoforge::EdgeBehavior::Wrap, 0xC0FFEE});
+    expected = chronoforge::chroma_carrier_drift(
+        expected, {1.0F, 0.0F, 1.0F, 2.0F, chronoforge::ChromaDriftMode::SplitCbCr,
+                   chronoforge::EdgeBehavior::Wrap});
     expected = chronoforge::radial_chrono_funnel(
         expected,
         {0.5F, 0.5F, 0.2F, chronoforge::EdgeBehavior::Mirror, 0.0F, chronoforge::RadialTopology::TimeLoom});
@@ -590,6 +625,7 @@ int main() {
         test_time_shift_and_funnel();
         test_rgb_time_slip();
         test_horizontal_sync_loss();
+        test_chroma_carrier_drift();
         test_sort_and_rotation();
         test_fft_swap();
         test_cross_tensor_and_flow_effects();

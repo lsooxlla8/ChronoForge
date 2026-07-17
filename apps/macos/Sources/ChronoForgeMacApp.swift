@@ -820,6 +820,16 @@ private struct EffectInspector: View {
             Text("Rows move in coherent bands whose pattern drifts over time. Noise is deterministic and responds to Reseed.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        case .chromaCarrierDrift:
+            valueSlider("Chroma X Offset", index: 0, range: -500...500, format: "%.2f px")
+            valueSlider("Chroma Y Offset", index: 1, range: -500...500, format: "%.2f px")
+            valueSlider("Chroma Time Offset", index: 2, range: -120...120, format: "%.2f frames")
+            valueSlider("Bleed", index: 3, range: 0...100, format: "%.2f px")
+            optionPicker("Mode", value: option(0), options: ["Together", "Split Cb–Cr", "Alternating"])
+            edgePicker(option(1))
+            Text("Luma remains on the current frame while the two chroma carriers drift and bleed independently.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

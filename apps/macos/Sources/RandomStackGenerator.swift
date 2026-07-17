@@ -200,6 +200,14 @@ enum RandomStackGenerator {
                 .triangular(0.08...0.9, preferred: 0.35, using: &random),
             ]
             node.options = [weighted([0, 0, 0, 1, 2], using: &random), Int32(random.integer(in: 0...2))]
+        case "chroma-carrier-drift":
+            node.values = [
+                RandomFloatDistribution.signedMagnitude(2...240, deadZone: 2).sample(using: &random),
+                RandomFloatDistribution.signedMagnitude(1...160, deadZone: 1).sample(using: &random),
+                RandomFloatDistribution.signedMagnitude(0.5...60, deadZone: 0.5).sample(using: &random),
+                RandomFloatDistribution.logarithmic(0.5...60).sample(using: &random),
+            ]
+            node.options = [weighted([0, 1, 1, 2], using: &random), Int32(random.integer(in: 0...2))]
         default:
             break
         }

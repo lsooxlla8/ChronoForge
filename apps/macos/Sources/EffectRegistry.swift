@@ -124,6 +124,9 @@ enum EffectRegistry {
         definition(.horizontalSyncLoss, "Horizontal Sync Loss", "line.3.horizontal.decrease", .red, .signalAndAnalog,
                    usesRandomSeed: true, values: [0.22, 12, 0.35, 0.4], options: [0, 1],
                    randomization: .init(identifier: "horizontal-sync-loss", amount: .triangular(0.3...1, preferred: 0.8))),
+        definition(.chromaCarrierDrift, "Chroma Carrier Drift", "dot.radiowaves.left.and.right", .pink, .signalAndAnalog,
+                   cost: .temporal, values: [24, 0, 2, 8], options: [1, 1],
+                   randomization: .init(identifier: "chroma-carrier-drift", amount: .triangular(0.25...0.9, preferred: 0.65))),
     ]
 
     private static let byKind = Dictionary(uniqueKeysWithValues: definitions.map { ($0.kind, $0) })

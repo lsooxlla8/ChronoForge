@@ -527,6 +527,72 @@ void horizontal_sync_loss(const MappedTensor& input, MappedTensor& output, const
     });
 }
 
+void chroma_carrier_drift(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
+    require_option(effect.options[0], 2, "chroma drift mode");
+    require_option(effect.options[1], 2, "chroma drift edge behavior");
+    const auto mode = static_cast<ChromaDriftMode>(effect.options[0]);
+    const auto edge = static_cast<EdgeBehavior>(effect.options[1]);
+    const auto& shape = input.shape();
+    if (shape.c < 3) throw std::invalid_argument("Chroma Carrier Drift requires RGB input");
+    const auto straight_rgb = [&](float t, float y, float x, std::size_t channel) {
+        auto value = sample_mapped(input, t, y, x, channel, edge);
+        if (shape.c >= 4) {
+            const auto alpha = sample_mapped(input, t, y, x, 3, edge);
+            value = alpha > 0.00001F ? value / alpha : 0.0F;
+        }
+        return value;
+    };
+    const auto chroma = [&](float t, float y, float x, bool cb) {
+        float total = 0.0F;
+        constexpr std::array<float, 5> taps{-1.0F, -0.5F, 0.0F, 0.5F, 1.0F};
+        for (const auto tap : taps) {
+            const auto sample_x = x + tap * std::clamp(effect.values[3], 0.0F, 100.0F);
+            const auto r = straight_rgb(t, y, sample_x, 0);
+            const auto g = straight_rgb(t, y, sample_x, 1);
+            const auto b = straight_rgb(t, y, sample_x, 2);
+            const auto yy = 0.2126F * r + 0.7152F * g + 0.0722F * b;
+            total += cb ? (b - yy) / 1.8556F : (r - yy) / 1.5748F;
+        }
+        return total / static_cast<float>(taps.size());
+    };
+    auto* destination = output.mutable_data();
+    parallel_for(shape.t, progress, [&](std::size_t t) {
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                const auto alpha = shape.c >= 4 ? read(input, t, y, x, 3) : 1.0F;
+                const auto current_r = alpha > 0.00001F ? read(input, t, y, x, 0) / alpha : 0.0F;
+                const auto current_g = alpha > 0.00001F ? read(input, t, y, x, 1) / alpha : 0.0F;
+                const auto current_b = alpha > 0.00001F ? read(input, t, y, x, 2) / alpha : 0.0F;
+                const auto yy = 0.2126F * current_r + 0.7152F * current_g + 0.0722F * current_b;
+                float cb_sign = 1.0F, cr_sign = 1.0F;
+                if (mode == ChromaDriftMode::SplitCbCr) cr_sign = -1.0F;
+                if (mode == ChromaDriftMode::Alternating) {
+                    cb_sign = t % 2 == 0 ? 1.0F : -1.0F;
+                    cr_sign = -cb_sign;
+                }
+                const auto cb = chroma(
+                    static_cast<float>(t) - cb_sign * effect.values[2],
+                    static_cast<float>(y) - cb_sign * effect.values[1],
+                    static_cast<float>(x) - cb_sign * effect.values[0], true);
+                const auto cr = chroma(
+                    static_cast<float>(t) - cr_sign * effect.values[2],
+                    static_cast<float>(y) - cr_sign * effect.values[1],
+                    static_cast<float>(x) - cr_sign * effect.values[0], false);
+                const auto r = yy + 1.5748F * cr;
+                const auto b = yy + 1.8556F * cb;
+                const auto g = (yy - 0.2126F * r - 0.0722F * b) / 0.7152F;
+                destination[linear(t, y, x, 0, shape)] = std::clamp(r, 0.0F, 1.0F) * alpha;
+                destination[linear(t, y, x, 1, shape)] = std::clamp(g, 0.0F, 1.0F) * alpha;
+                destination[linear(t, y, x, 2, shape)] = std::clamp(b, 0.0F, 1.0F) * alpha;
+                if (shape.c >= 4) destination[linear(t, y, x, 3, shape)] = alpha;
+                for (std::size_t c = 4; c < shape.c; ++c) {
+                    destination[linear(t, y, x, c, shape)] = read(input, t, y, x, c);
+                }
+            }
+        }
+    });
+}
+
 void radial(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
     require_option(effect.options[0], 2, "edge behavior");
     require_option(effect.options[1], 2, "radial topology");
@@ -1469,6 +1535,9 @@ void apply(
         case EffectOperation::HorizontalSyncLoss:
             horizontal_sync_loss(input, output, effect, progress);
             return;
+        case EffectOperation::ChromaCarrierDrift:
+            chroma_carrier_drift(input, output, effect, progress);
+            return;
         case EffectOperation::DimensionalSplicer:
         case EffectOperation::TensorDisplacement:
             throw std::invalid_argument("This effect requires a driver tensor");
@@ -1508,6 +1577,8 @@ void apply(
             return "RGB Time Slip";
         case EffectOperation::HorizontalSyncLoss:
             return "Horizontal Sync Loss";
+        case EffectOperation::ChromaCarrierDrift:
+            return "Chroma Carrier Drift";
     }
     return "Unknown";
 }

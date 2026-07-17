@@ -534,6 +534,67 @@ VideoTensor horizontal_sync_loss(const VideoTensor& input, const HorizontalSyncL
     return output;
 }
 
+VideoTensor chroma_carrier_drift(const VideoTensor& input, const ChromaCarrierDriftParams& params) {
+    const auto& shape = input.shape();
+    if (shape.c < 3) throw std::invalid_argument("Chroma Carrier Drift requires RGB input");
+    VideoTensor output(shape, 0.0F, input.metadata());
+    const auto straight_rgb = [&](float t, float y, float x, std::size_t channel) {
+        auto value = sample_tensor(input, t, y, x, channel, params.edge_behavior);
+        if (shape.c >= 4) {
+            const auto alpha = sample_tensor(input, t, y, x, 3, params.edge_behavior);
+            value = alpha > 0.00001F ? value / alpha : 0.0F;
+        }
+        return value;
+    };
+    const auto chroma = [&](float t, float y, float x, bool cb) {
+        float total = 0.0F;
+        constexpr std::array<float, 5> taps{-1.0F, -0.5F, 0.0F, 0.5F, 1.0F};
+        for (const auto tap : taps) {
+            const auto sample_x = x + tap * std::clamp(params.bleed, 0.0F, 100.0F);
+            const auto r = straight_rgb(t, y, sample_x, 0);
+            const auto g = straight_rgb(t, y, sample_x, 1);
+            const auto b = straight_rgb(t, y, sample_x, 2);
+            const auto yy = 0.2126F * r + 0.7152F * g + 0.0722F * b;
+            total += cb ? (b - yy) / 1.8556F : (r - yy) / 1.5748F;
+        }
+        return total / static_cast<float>(taps.size());
+    };
+    parallel_for(shape.t, [&](std::size_t t) {
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                const auto alpha = shape.c >= 4 ? input.at(t, y, x, 3) : 1.0F;
+                const auto current_r = alpha > 0.00001F ? input.at(t, y, x, 0) / alpha : 0.0F;
+                const auto current_g = alpha > 0.00001F ? input.at(t, y, x, 1) / alpha : 0.0F;
+                const auto current_b = alpha > 0.00001F ? input.at(t, y, x, 2) / alpha : 0.0F;
+                const auto yy = 0.2126F * current_r + 0.7152F * current_g + 0.0722F * current_b;
+                float cb_sign = 1.0F, cr_sign = 1.0F;
+                if (params.mode == ChromaDriftMode::SplitCbCr) cr_sign = -1.0F;
+                if (params.mode == ChromaDriftMode::Alternating) {
+                    cb_sign = t % 2 == 0 ? 1.0F : -1.0F;
+                    cr_sign = -cb_sign;
+                }
+                const auto cb = chroma(
+                    static_cast<float>(t) - cb_sign * params.time_offset,
+                    static_cast<float>(y) - cb_sign * params.y_offset,
+                    static_cast<float>(x) - cb_sign * params.x_offset, true);
+                const auto cr = chroma(
+                    static_cast<float>(t) - cr_sign * params.time_offset,
+                    static_cast<float>(y) - cr_sign * params.y_offset,
+                    static_cast<float>(x) - cr_sign * params.x_offset, false);
+                const auto r = yy + 1.5748F * cr;
+                const auto b = yy + 1.8556F * cb;
+                const auto g = (yy - 0.2126F * r - 0.0722F * b) / 0.7152F;
+                output.at(t, y, x, 0) = std::clamp(r, 0.0F, 1.0F) * alpha;
+                output.at(t, y, x, 1) = std::clamp(g, 0.0F, 1.0F) * alpha;
+                output.at(t, y, x, 2) = std::clamp(b, 0.0F, 1.0F) * alpha;
+                if (shape.c >= 4) output.at(t, y, x, 3) = alpha;
+                for (std::size_t c = 4; c < shape.c; ++c) output.at(t, y, x, c) = input.at(t, y, x, c);
+            }
+        }
+    });
+    return output;
+}
+
 VideoTensor radial_chrono_funnel(const VideoTensor& input, const RadialChronoFunnelParams& params) {
     const auto& shape = input.shape();
     VideoTensor output(shape, 0.0F, input.metadata());
