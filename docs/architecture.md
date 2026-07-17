@@ -102,6 +102,8 @@ Spatial and Temporal Prefilter are project-level output settings rather than edi
 
 The test build also provides `chronoforge-visual-regression`. It creates a copyright-free procedural A/B corpus and a Wave A contact sheet with source, standard and alternate/seeded columns under `build/visual-regression`; CTest verifies that this visual QA artifact remains generatable.
 
+`chronoforge-performance-smoke` profiles all Wave A effects on the specified 10-second Standard proxy (320 × 180 at 10 fps). It applies the 1-second local/channel and 4-second temporal/memory budgets from the phase specification and exits nonzero when a target is exceeded; it is intentionally run on release hardware rather than as a machine-independent CTest.
+
 ## macOS-specific plan
 
 | Phase | Deliverable |

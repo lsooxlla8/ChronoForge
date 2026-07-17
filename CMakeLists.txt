@@ -41,6 +41,8 @@ if(CHRONOFORGE_BUILD_TESTS)
     add_test(NAME chronoforge-core-tests COMMAND chronoforge-core-tests)
     add_executable(chronoforge-visual-regression tests/visual_regression.cpp)
     target_link_libraries(chronoforge-visual-regression PRIVATE chronoforge_core)
+    add_executable(chronoforge-performance-smoke tests/performance_smoke.cpp)
+    target_link_libraries(chronoforge-performance-smoke PRIVATE chronoforge_core)
     add_test(
         NAME chronoforge-visual-regression
         COMMAND chronoforge-visual-regression ${CMAKE_CURRENT_BINARY_DIR}/visual-regression

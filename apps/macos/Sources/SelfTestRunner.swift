@@ -296,6 +296,7 @@ enum SelfTestRunner {
                 throw IntegrationSelfTestError.message("Image sequence incorrectly allowed Preserve Original Audio")
             }
             let store = SessionStore()
+            store.setAutoUpdate(false)
             guard EffectKind.addableKinds.count == 20,
                   EffectKind.spaceTimeTranspose.title == EffectKind.tensor3DRotation.title,
                   EffectKind.spaceTimeTranspose.title == "Space-Time Transform",
@@ -391,6 +392,7 @@ enum SelfTestRunner {
             }
             store.startFreshSession()
         }
+        try await verifyAutoUpdateDebounce(source: projectSource)
         let proxy = try await VideoDecoder.decodeProxy(from: source)
         guard proxy.tensor.width == 48, proxy.tensor.height == 64, proxy.sourceFrameCount == 8, proxy.sourceFrameCountIsExact,
               proxy.tensor.values.count == proxy.tensor.valueCount else {
@@ -477,6 +479,30 @@ enum SelfTestRunner {
               (try movie.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) > 0 else {
             throw IntegrationSelfTestError.message("Full exporter did not create a playable MP4")
         }
+    }
+
+    @MainActor
+    private static func verifyAutoUpdateDebounce(source: DecodedProxy) async throws {
+        let store = SessionStore()
+        store.setAutoUpdate(false)
+        store.source = source
+        store.mediaPool = [source]
+        store.output = source.tensor
+        store.addEffect(.lumaTimeShift)
+        let previewLaunchesBeforeBurst = store.previewLaunchCountForDiagnostics
+        store.setAutoUpdate(true)
+        for amount in stride(from: Float(0.15), through: 0.75, by: 0.1) {
+            var edit = store.effects[0]
+            edit.amount = amount
+            store.updateEffect(edit)
+        }
+        try await Task.sleep(for: .milliseconds(700))
+        guard store.previewLaunchCountForDiagnostics == previewLaunchesBeforeBurst + 1 else {
+            throw IntegrationSelfTestError.message("Auto Update launched more than one preview for a rapid edit burst")
+        }
+        store.setAutoUpdate(false)
+        store.cancelWork()
+        store.startFreshSession()
     }
 
     private static func makeMovie(at url: URL) async throws {

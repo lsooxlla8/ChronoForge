@@ -38,6 +38,7 @@ final class SessionStore: ObservableObject {
     }
     @Published private(set) var canUndo = false
     @Published private(set) var canRedo = false
+    private(set) var previewLaunchCountForDiagnostics = 0
     var mediaReplacementID: UUID?
 
     private static let autoUpdatePreferenceKey = "ChronoForge.autoUpdatePreview"
@@ -698,6 +699,7 @@ final class SessionStore: ObservableObject {
             errorMessage = "Import a video before rendering."
             return
         }
+        previewLaunchCountForDiagnostics += 1
         autoPreviewTask?.cancel()
         previewTask?.cancel()
         let generation = UUID()
