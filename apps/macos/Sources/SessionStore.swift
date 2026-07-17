@@ -159,6 +159,33 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func replaceWithRandomStack(seed: UInt64 = .random(in: UInt64.min...UInt64.max)) {
+        guard source != nil else { return }
+        do {
+            let generated = try RandomStackGenerator.generate(
+                mediaPool: mediaPool,
+                primaryMediaID: source?.id,
+                seed: seed
+            )
+            performCreativeEdit(named: "Replace with Random Stack") {
+                effects = generated
+                outputNodeID = generated.last?.id
+                selectedNodeID = generated.first(where: { $0.kind != .seamlessLoop })?.id ?? generated.first?.id
+            }
+            statusMessage = "Random Stack · \(generated.count) effect\(generated.count == 1 ? "" : "s")"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func reseedEffect(_ id: UUID) {
+        guard let index = effects.firstIndex(where: { $0.id == id }),
+              effects[index].kind.definition.usesRandomSeed else { return }
+        performCreativeEdit(named: "Reseed Effect") {
+            effects[index].randomSeed = .random(in: UInt64.min...UInt64.max)
+        }
+    }
+
     func duplicateEffect(_ id: UUID) {
         guard let index = effects.firstIndex(where: { $0.id == id }) else { return }
         performCreativeEdit(named: "Duplicate Effect") {

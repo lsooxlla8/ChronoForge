@@ -56,6 +56,34 @@ enum SelfTestRunner {
               try restoredSnapshot.sourceURL() == source else {
             throw IntegrationSelfTestError.message("Session recovery snapshot round-trip failed")
         }
+        let driverSource: DecodedProxy = {
+            var value = projectSource
+            value.id = UUID()
+            return value
+        }()
+        let deterministicStackA = try RandomStackGenerator.generate(
+            mediaPool: [projectSource, driverSource], primaryMediaID: projectSource.id, seed: 0xC0FFEE)
+        let deterministicStackB = try RandomStackGenerator.generate(
+            mediaPool: [projectSource, driverSource], primaryMediaID: projectSource.id, seed: 0xC0FFEE)
+        guard deterministicStackA == deterministicStackB else {
+            throw IntegrationSelfTestError.message("Random Stack was not deterministic for an injected seed")
+        }
+        var lengthCounts = [0, 0, 0, 0]
+        for seed in 0..<600 {
+            let stack = try RandomStackGenerator.generate(
+                mediaPool: [projectSource, driverSource], primaryMediaID: projectSource.id, seed: UInt64(seed))
+            lengthCounts[stack.count] += 1
+            guard stack.filter({ $0.kind.definition.costClass == .global }).count <= 1,
+                  stack.dropLast().allSatisfy({ $0.kind != .seamlessLoop }),
+                  stack.allSatisfy({ $0.amount == 1 || $0.supportsAmount }) else {
+                throw IntegrationSelfTestError.message("Random Stack generated an incompatible combination")
+            }
+        }
+        guard (160...260).contains(lengthCounts[1]),
+              (220...320).contains(lengthCounts[2]),
+              (80...160).contains(lengthCounts[3]) else {
+            throw IntegrationSelfTestError.message("Random Stack length weights drifted outside their expected ranges")
+        }
         try await MainActor.run {
             let store = SessionStore()
             guard EffectKind.addableKinds.count == 11,
@@ -117,14 +145,23 @@ enum SelfTestRunner {
                 throw IntegrationSelfTestError.message("Redo did not restore the grouped slider result")
             }
             store.source = projectSource
-            store.mediaPool = [projectSource]
+            store.mediaPool = [projectSource, driverSource]
             store.output = projectSource.tensor
+            let beforeRandom = store.effects
+            store.replaceWithRandomStack(seed: 0xC0FFEE)
+            guard 1...3 ~= store.effects.count else {
+                throw IntegrationSelfTestError.message("Random Stack did not replace the current effect stack")
+            }
+            store.undo()
+            guard store.effects == beforeRandom else {
+                throw IntegrationSelfTestError.message("Random Stack was not reversible as one Undo operation")
+            }
             store.removeMedia(projectSource.id)
-            guard store.source == nil, store.mediaPool.isEmpty else {
+            guard store.source?.id == driverSource.id, store.mediaPool.map(\.id) == [driverSource.id] else {
                 throw IntegrationSelfTestError.message("Media removal did not clear the active source")
             }
             store.undo()
-            guard store.source?.id == projectSource.id, store.mediaPool.map(\.id) == [projectSource.id] else {
+            guard store.source?.id == projectSource.id, store.mediaPool.map(\.id) == [projectSource.id, driverSource.id] else {
                 throw IntegrationSelfTestError.message("Undo did not restore a decoded proxy that remained in memory")
             }
             store.startFreshSession()

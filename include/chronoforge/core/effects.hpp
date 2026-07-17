@@ -102,6 +102,7 @@ struct StructuralDatamoshParams {
     float threshold{0.2F};
     std::size_t max_hold{8};
     float probability{0.05F};
+    std::uint64_t random_seed{};
 };
 
 struct SeamlessLoopParams {

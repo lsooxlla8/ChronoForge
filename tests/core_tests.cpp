@@ -477,6 +477,33 @@ void test_file_backed_effect_chain() {
         std::equal(input.values().begin(), input.values().end(), dry_output.data()),
         "Amount zero is a bit-exact identity and skips effect evaluation");
 
+    const auto seeded_input = numbered({5, 5, 12, 1});
+    const auto seeded_input_path = root / "seeded-input.raw";
+    {
+        auto mapped = chronoforge::MappedTensor::create(seeded_input_path, seeded_input.shape());
+        std::copy(seeded_input.values().begin(), seeded_input.values().end(), mapped.mutable_data());
+        mapped.sync();
+    }
+    const auto seeded_path = root / "seeded-datamosh.raw";
+    const std::vector<chronoforge::EffectSpec> seeded_effects{
+        {chronoforge::EffectOperation::StructuralDatamosh, {0.2F, 3.0F, 0.37F}, {1, 2}, 1.0F, 0xC0FFEE},
+    };
+    const auto seeded_result = chronoforge::render_file_effect_chain(
+        seeded_input_path, seeded_path, root / "seeded-datamosh-scratch", seeded_input.shape(), seeded_input.metadata(),
+        seeded_effects, 64 * 1024 * 1024, {});
+    const auto seeded_expected = chronoforge::structural_datamosh(
+        seeded_input,
+        {chronoforge::FreezeAxis::Horizontal, chronoforge::FreezeTrigger::Random, 0.2F, 3, 0.37F, 0xC0FFEE});
+    const auto seeded_output = chronoforge::MappedTensor::open(
+        seeded_path, seeded_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
+    require(
+        std::equal(seeded_expected.values().begin(), seeded_expected.values().end(), seeded_output.data()),
+        "Random seed produces identical RAM and out-of-core datamosh patterns");
+    const auto different_seed = chronoforge::structural_datamosh(
+        seeded_input,
+        {chronoforge::FreezeAxis::Horizontal, chronoforge::FreezeTrigger::Random, 0.2F, 3, 0.37F, 0});
+    require(different_seed.values() != seeded_expected.values(), "Changing the random seed changes the datamosh pattern");
+
     bool partial_shape_change_rejected = false;
     try {
         const std::vector<chronoforge::EffectSpec> invalid_amount{

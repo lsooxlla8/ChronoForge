@@ -272,21 +272,26 @@ private struct WorkspaceView: View {
         }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 7) {
-                Menu("Add effect", systemImage: "plus") {
-                    ForEach(EffectCategory.allCases) { category in
-                        let definitions = EffectRegistry.definitions(in: category)
-                        if !definitions.isEmpty {
-                            Section(category.title) {
-                                ForEach(definitions, id: \.kind) { definition in
-                                    Button(definition.title, systemImage: definition.symbol) {
-                                        project.addEffect(definition.kind)
+                HStack {
+                    Menu("Add effect", systemImage: "plus") {
+                        ForEach(EffectCategory.allCases) { category in
+                            let definitions = EffectRegistry.definitions(in: category)
+                            if !definitions.isEmpty {
+                                Section(category.title) {
+                                    ForEach(definitions, id: \.kind) { definition in
+                                        Button(definition.title, systemImage: definition.symbol) {
+                                            project.addEffect(definition.kind)
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("Random Stack", systemImage: "dice") { project.replaceWithRandomStack() }
+                        .disabled(project.source == nil)
+                        .help("Replace the current stack with 1–3 compatible randomized effects. Undo restores the previous stack.")
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
                 Button("Clear Effect Stack", systemImage: "trash", role: .destructive) {
                     project.showsClearEffectsConfirmation = true
                 }
@@ -475,6 +480,8 @@ private struct WorkspaceView: View {
                     } else {
                         project.endContinuousEffectEdit()
                     }
+                } onReseed: {
+                    project.reseedEffect(nodeID)
                 }
             } else {
                 ContentUnavailableView("Select an effect", systemImage: "slider.horizontal.3")
@@ -527,10 +534,15 @@ private struct EffectInspector: View {
     @Binding var node: EffectNode
     let mediaPool: [DecodedProxy]
     let onContinuousEditChanged: (Bool) -> Void
+    let onReseed: () -> Void
 
     var body: some View {
         Toggle("Enabled", isOn: $node.enabled)
         amountControl
+        if node.kind.definition.usesRandomSeed {
+            Button("Reseed", systemImage: "arrow.triangle.2.circlepath", action: onReseed)
+                .help("Generate a new deterministic pattern for this effect.")
+        }
         Text(node.kind.title).font(.title3.weight(.semibold))
         Divider()
         switch node.kind {

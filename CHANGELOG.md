@@ -10,6 +10,8 @@
 - Added persistent Auto Update with cost-aware debounce and a proxy-only cancellation domain that cannot cancel full export.
 - Added held Source A comparison with normalized timeline mapping and a keyboard hold shortcut.
 - Removed project commands, `.chronoforge` registration, project title/Edited UI and normal-session persistence; only crash recovery remains.
+- Added deterministic Random Stack replacement with 1–3 effects, effect-specific distributions, driver/cost/shape validation and single-operation Undo.
+- Added a real seed path and Reseed action for Axis Datamosh with matching RAM and out-of-core patterns.
 
 ## 0.9.0 — seamless loops and interaction fixes
 

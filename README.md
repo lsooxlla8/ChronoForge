@@ -44,9 +44,10 @@ No formulas required. If you have used an effect stack, displacement map or rend
 
 1. Click **Import Video**. This becomes the primary clip, **A**.
 2. Add effects from the sidebar. They run from top to bottom.
-3. Adjust **Amount** to blend any shape-compatible effect with its input, then click **Update Preview**. Preview is always a smaller proxy so experimentation stays responsive.
-4. For a two-video effect, add another clip to Media and choose it as **Driver video (B)**.
-5. Click **Export MP4** for one full-quality render, or **Add to Queue** for a batch. Press **Shift–Command–R** to start the queue.
+3. Adjust **Amount** to blend any shape-compatible effect with its input, or press **Random Stack** to replace the chain with 1–3 compatible effects. One Undo restores the previous stack.
+4. Click **Update Preview**, or leave **Auto Update** enabled. Preview is always a smaller proxy so experimentation stays responsive.
+5. For a two-video effect, add another clip to Media and choose it as **Driver video (B)**.
+6. Click **Export MP4** for one full-quality render, or **Add to Queue** for a batch. Press **Shift–Command–R** to start the queue.
 
 Useful shortcuts: **Space** plays or pauses the preview, **Command–Z** / **Shift–Command–Z** undo and redo creative changes, **\\** temporarily shows Source A, and **Shift–S** hides or shows the sidebar.
 

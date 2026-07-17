@@ -193,6 +193,7 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptorV2& d
                     descriptor.values[0],
                     static_cast<std::size_t>(std::max(0.0F, std::round(descriptor.values[1]))),
                     descriptor.values[2],
+                    descriptor.random_seed,
                 });
         case CF_EFFECT_SEAMLESS_LOOP:
             return chronoforge::seamless_loop(

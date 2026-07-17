@@ -45,6 +45,8 @@ The editor presents one ordered effect stack and automatically reconnects every 
 
 `SessionStore` separates lightweight `CreativeSessionState` from decoded media, render tasks, playback and queue state. `UndoManager` keeps at most 100 creative operations; slider drags are coalesced into one operation. Auto Update waits 450 ms after a committed edit, or 800 ms for global-cost effects, and owns cancellation only for its debounce and proxy render. A full export retains an independent immutable stack snapshot.
 
+`RandomStackGenerator` uses injectable SplitMix64 state, the per-effect `RandomizationProfile`, and reusable uniform, triangular, logarithmic, signed-magnitude and fixed distributions. It produces one to three nodes with 35/45/20 percent length weights, rejects a second global-cost node, requires a real B source for two-input effects, forces shape-safe modes for partial Amount and keeps Seamless Loop last. Axis Datamosh incorporates its stored seed in both RAM and mapped implementations, so Reseed changes the pattern without breaking proxy/full parity.
+
 There is no user project format in the 1.0 workflow. A hidden `SessionRecoverySnapshot` is written while a session is active, removed by normal application termination, and offered once after a crash or force quit. The internal recovery JSON is not registered with Launch Services and is not a long-term document contract.
 
 ## Out-of-core strategy

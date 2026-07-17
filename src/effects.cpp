@@ -895,6 +895,7 @@ VideoTensor structural_datamosh(const VideoTensor& input, const StructuralDatamo
                 std::uint64_t hash = (static_cast<std::uint64_t>(t) + 1) * 0x9E3779B185EBCA87ULL;
                 hash ^= (static_cast<std::uint64_t>(y) + 1) * 0xC2B2AE3D27D4EB4FULL;
                 hash ^= (static_cast<std::uint64_t>(x) + 1) * 0x165667B19E3779F9ULL;
+                hash ^= params.random_seed * 0xD6E8FEB86659FD93ULL;
                 hash ^= hash >> 29U;
                 return static_cast<double>(hash & 0xFFFFFFU) / static_cast<double>(0x1000000U) <
                        std::clamp(static_cast<double>(params.probability), 0.0, 1.0);
