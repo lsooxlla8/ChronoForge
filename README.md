@@ -53,8 +53,8 @@ No formulas required. If you have used an effect stack, displacement map or rend
 
 1. Import a video or numbered PNG sequence. This becomes the primary source, **A**. Sequence import reports dimensions, numbering gaps and lets you choose FPS.
 2. Add effects from the sidebar. They run from top to bottom.
-3. Adjust **Amount** and its Normal/Add/Screen/Multiply/Difference/Displace/XOR Glitch mode, or press **Random Stack** to replace the chain with 1–3 compatible effects. One Undo restores the previous stack.
-4. Click **Update Preview**, or leave **Auto Update** enabled. Preview is always a smaller proxy so experimentation stays responsive.
+3. Adjust **Amount** and its Normal/Add/Screen/Multiply/Difference/Displace/XOR Glitch mode, or press **Random** to replace the chain with 1–3 compatible effects. One Undo restores the previous stack.
+4. Preview updates automatically after a short pause. It is always a smaller proxy so experimentation stays responsive.
 5. For a two-video effect, add another clip to Media and choose it as **Driver video (B)**.
 6. Use **Export** for an H.264 MP4 or alpha-preserving PNG sequence. Choose FPS to reinterpret the finished frames without resampling them. **Add to Queue** remains available for MP4 batches; press **Shift–Command–R** to start the queue.
 

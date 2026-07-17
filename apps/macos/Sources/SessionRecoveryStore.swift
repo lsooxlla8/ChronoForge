@@ -24,7 +24,7 @@ struct SessionRecoverySnapshot: Codable, Sendable {
         mediaPool: [DecodedProxy]? = nil,
         effects: [EffectNode],
         outputNodeID: UUID? = nil,
-        proxyQuality: ProxyQuality = .standard,
+        proxyQuality: ProxyQuality = .high,
         spatialPrefilter: PrefilterStrength = .off,
         temporalPrefilter: PrefilterStrength = .off,
         audioMode: AudioMode = .none,

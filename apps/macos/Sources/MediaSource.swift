@@ -109,7 +109,7 @@ enum MediaSource: Codable, Equatable, Sendable {
 }
 
 enum MediaSourceDecoder {
-    static func decodeProxy(from source: MediaSource, quality: ProxyQuality = .standard) async throws -> DecodedProxy {
+    static func decodeProxy(from source: MediaSource, quality: ProxyQuality = .high) async throws -> DecodedProxy {
         switch source {
         case .movie(let movie):
             var decoded = try await VideoDecoder.decodeProxy(from: movie.url, quality: quality)

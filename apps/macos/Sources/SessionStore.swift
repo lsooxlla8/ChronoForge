@@ -12,7 +12,7 @@ final class SessionStore: ObservableObject {
     @Published var selectedNodeID: UUID?
     @Published var outputNodeID: UUID?
     @Published var currentFrame = 0
-    @Published var proxyQuality = ProxyQuality.standard
+    @Published var proxyQuality = ProxyQuality.high
     @Published var spatialPrefilter = PrefilterStrength.off
     @Published var temporalPrefilter = PrefilterStrength.off
     @Published var audioMode = AudioMode.none
@@ -32,15 +32,11 @@ final class SessionStore: ObservableObject {
     @Published var renderQueue: [RenderQueueItem] = []
     @Published var isQueueRunning = false
     @Published var isPreviewStale = false
-    @Published var autoUpdate: Bool {
-        didSet { UserDefaults.standard.set(autoUpdate, forKey: Self.autoUpdatePreferenceKey) }
-    }
     @Published private(set) var canUndo = false
     @Published private(set) var canRedo = false
     private(set) var previewLaunchCountForDiagnostics = 0
     var mediaReplacementID: UUID?
 
-    private static let autoUpdatePreferenceKey = "ChronoForge.autoUpdatePreview"
     private var task: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
     private var autoPreviewTask: Task<Void, Never>?
@@ -55,7 +51,6 @@ final class SessionStore: ObservableObject {
     init() {
         isUIAcceptanceMode = CommandLine.arguments.contains("--ui-acceptance")
         hasInterruptedSession = isUIAcceptanceMode ? false : SessionRecoveryStore.exists
-        autoUpdate = UserDefaults.standard.object(forKey: Self.autoUpdatePreferenceKey) as? Bool ?? true
         sessionUndoManager.levelsOfUndo = 100
         sessionUndoManager.groupsByEvent = false
         Task {
@@ -80,8 +75,8 @@ final class SessionStore: ObservableObject {
             try? FileManager.default.removeItem(at: driverURL)
             try await SelfTestRunner.makeMovie(at: primaryURL, phase: 0)
             try await SelfTestRunner.makeMovie(at: driverURL, phase: 5)
-            let primary = try await VideoDecoder.decodeProxy(from: primaryURL, quality: .standard)
-            let driver = try await VideoDecoder.decodeProxy(from: driverURL, quality: .standard)
+            let primary = try await VideoDecoder.decodeProxy(from: primaryURL, quality: .high)
+            let driver = try await VideoDecoder.decodeProxy(from: driverURL, quality: .high)
             mediaPool = [primary, driver]
             source = primary
             output = primary.tensor
@@ -646,15 +641,9 @@ final class SessionStore: ObservableObject {
         canRedo = sessionUndoManager.canRedo
     }
 
-    func setAutoUpdate(_ enabled: Bool) {
-        autoUpdate = enabled
-        if enabled, isPreviewStale { scheduleAutoPreview() }
-        if !enabled { autoPreviewTask?.cancel() }
-    }
-
     private func scheduleAutoPreview() {
         autoPreviewTask?.cancel()
-        guard autoUpdate, source != nil else { return }
+        guard source != nil else { return }
         previewTask?.cancel()
         let hasGlobalCost = effects.contains { $0.enabled && $0.kind.definition.costClass == .global }
         let delay = hasGlobalCost ? 800 : 450

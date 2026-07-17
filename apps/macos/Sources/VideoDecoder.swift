@@ -73,7 +73,7 @@ enum VideoDecoderError: LocalizedError {
 }
 
 enum VideoDecoder {
-    static func decodeProxy(from url: URL, quality: ProxyQuality = .standard) async throws -> DecodedProxy {
+    static func decodeProxy(from url: URL, quality: ProxyQuality = .high) async throws -> DecodedProxy {
         let maximumProxyFrames = 180
         let maximumWidth = quality == .standard ? 320 : 480
         let maximumHeight = quality == .standard ? 180 : 270

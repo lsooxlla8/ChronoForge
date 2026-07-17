@@ -2,6 +2,8 @@
 
 ## 1.0.0 — in development
 
+- Made Preview automatic and non-optional, removed the manual Update Preview control and stale badge, defaulted new sessions to High Preview, and compacted the toolbar around a top-left appearance button.
+- Fixed the sidebar cache-label overlap and shortened its contextual controls to Add effect, Random and Clear.
 - Refined Preview toolbar labels and layout, added stable progress geometry, automatic rerender after quality changes, and shortcuts for sequence import, queueing, Random Stack and stack clearing.
 - Expanded Pixel Sort with hue-key rotation, Zigzag and Center Out ordering; expanded Axis Datamosh with dark-side luma triggering.
 - Renamed Sync Loss and added vertical operation plus normalized resolution-independent sizing for Sync Loss, Block Address Corruption, Signal Weave and Block Graft.

@@ -296,7 +296,6 @@ enum SelfTestRunner {
                 throw IntegrationSelfTestError.message("Image sequence incorrectly allowed Preserve Original Audio")
             }
             let store = SessionStore()
-            store.setAutoUpdate(false)
             guard EffectKind.addableKinds.count == 20,
                   EffectKind.spaceTimeTranspose.title == EffectKind.tensor3DRotation.title,
                   EffectKind.spaceTimeTranspose.title == "Space-Time Transform",
@@ -485,13 +484,12 @@ enum SelfTestRunner {
     @MainActor
     private static func verifyAutoUpdateDebounce(source: DecodedProxy) async throws {
         let store = SessionStore()
-        store.setAutoUpdate(false)
         store.source = source
         store.mediaPool = [source]
         store.output = source.tensor
         store.addEffect(.lumaTimeShift)
+        store.cancelWork()
         let previewLaunchesBeforeBurst = store.previewLaunchCountForDiagnostics
-        store.setAutoUpdate(true)
         for amount in stride(from: Float(0.15), through: 0.75, by: 0.1) {
             var edit = store.effects[0]
             edit.amount = amount
@@ -501,7 +499,6 @@ enum SelfTestRunner {
         guard store.previewLaunchCountForDiagnostics == previewLaunchesBeforeBurst + 1 else {
             throw IntegrationSelfTestError.message("Auto Update launched more than one preview for a rapid edit burst")
         }
-        store.setAutoUpdate(false)
         store.cancelWork()
         store.startFreshSession()
     }
@@ -509,18 +506,21 @@ enum SelfTestRunner {
     @MainActor
     private static func verifyProxyQualityRefresh(source: DecodedProxy) async throws {
         let store = SessionStore()
+        guard store.proxyQuality == .high else {
+            throw IntegrationSelfTestError.message("High must be the default Preview quality")
+        }
         store.source = source
         store.mediaPool = [source]
         store.output = source.tensor
         store.addEffect(.lumaTimeShift)
-        store.setAutoUpdate(false)
+        store.cancelWork()
         let launchesBeforeQualityChange = store.previewLaunchCountForDiagnostics
-        store.changeProxyQuality(to: .high)
+        store.changeProxyQuality(to: .standard)
         for _ in 0..<200 {
             if !store.isImporting && !store.isRendering { break }
             try await Task.sleep(for: .milliseconds(25))
         }
-        guard store.proxyQuality == .high,
+        guard store.proxyQuality == .standard,
               !store.isImporting,
               !store.isRendering,
               !store.isPreviewStale,

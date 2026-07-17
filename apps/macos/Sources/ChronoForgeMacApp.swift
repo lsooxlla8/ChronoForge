@@ -89,8 +89,6 @@ struct ChronoForgeMacApp: App {
                 Button("Import Image Sequence…") { project.addImageSequence() }
                     .keyboardShortcut("i", modifiers: [.command, .shift])
                 Divider()
-                Button("Update Preview") { project.renderPreview() }
-                    .keyboardShortcut("r", modifiers: .command)
                 Button("Add to Render Queue…") { project.addCurrentRenderToQueue() }
                     .keyboardShortcut("r", modifiers: [.command, .option])
                     .disabled(project.source == nil)
@@ -313,32 +311,40 @@ private struct WorkspaceView: View {
                         }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                Button("Random Stack", systemImage: "dice") { project.replaceWithRandomStack() }
+                Button("Random", systemImage: "dice") { project.replaceWithRandomStack() }
                     .fixedSize(horizontal: true, vertical: false)
                     .disabled(project.source == nil)
                     .help("Replace the current stack with 1–3 compatible randomized effects. Undo restores the previous stack.")
-                Button("Clear Effect Stack", systemImage: "trash", role: .destructive) {
+                Button("Clear", systemImage: "trash", role: .destructive) {
                     project.clearEffectStack()
                 }
                 .disabled(project.effects.isEmpty)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                Divider()
+                Text("Cache: \(project.cacheSizeDescription) · auto limit 8 GB")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             .padding(10)
             .background(.bar)
         }
-        .overlay(alignment: .bottomLeading) {
-            Text("Cache: \(project.cacheSizeDescription) · auto limit 8 GB")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .padding(.leading, 12)
-                .padding(.bottom, 80)
-                .allowsHitTesting(false)
-        }
     }
 
     private var toolbar: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 7) {
             HStack(spacing: 12) {
+                Button {
+                    darkAppearance.toggle()
+                } label: {
+                    Image(systemName: darkAppearance ? "moon.fill" : "sun.max.fill")
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(darkAppearance ? "Switch to light appearance" : "Switch to dark appearance")
+                .help(darkAppearance ? "Switch to light appearance" : "Switch to dark appearance")
+                Divider().frame(height: 18)
                 Label("ChronoForge", systemImage: "cube.transparent")
                     .font(.headline)
                 Text(project.statusMessage)
@@ -360,18 +366,8 @@ private struct WorkspaceView: View {
                     }
                 }
                 .frame(width: 142, height: 24)
-                Button("Update Preview", systemImage: "eye") { project.renderPreview() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
-                    .help("Recalculate the small proxy shown in the viewer. This does not create a video file.")
-                Toggle("Auto Update", isOn: Binding(
-                    get: { project.autoUpdate },
-                    set: { project.setAutoUpdate($0) }
-                ))
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .help("Update the proxy after a short pause when an effect or image setting changes.")
             }
+            Divider()
             HStack(spacing: 12) {
                 Button("Before / After", systemImage: "rectangle.on.rectangle") {}
                     .simultaneousGesture(
@@ -398,15 +394,6 @@ private struct WorkspaceView: View {
                 .labelsHidden()
                 .frame(width: 125)
                 .help("Viewer-only background behind transparent pixels. Checkerboard makes alpha visible; Black previews opaque delivery. It does not change PNG pixels, and MP4 always flattens transparency onto black.")
-                Divider().frame(height: 22)
-                HStack(spacing: 6) {
-                    Image(systemName: darkAppearance ? "moon.fill" : "sun.max.fill")
-                        .foregroundStyle(.secondary)
-                    Toggle("Dark appearance", isOn: $darkAppearance)
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                }
-                .help(darkAppearance ? "Switch to light appearance" : "Switch to dark appearance")
                 Spacer()
             }
             HStack(spacing: 12) {
@@ -438,9 +425,6 @@ private struct WorkspaceView: View {
                 .frame(width: 145)
                 .fixedSize(horizontal: true, vertical: false)
                 .help("Blends adjacent output frames to reduce temporal aliasing and flicker. It can soften deliberately abrupt motion.")
-                Spacer()
-            }
-            HStack(spacing: 12) {
                 Picker("Audio", selection: Binding(
                     get: { project.audioMode },
                     set: { project.setAudioMode($0) }
@@ -522,14 +506,6 @@ private struct WorkspaceView: View {
                         .background(.black.opacity(0.68), in: Capsule())
                         .foregroundStyle(.white)
                     Spacer()
-                    if project.isPreviewStale {
-                        Label("Update Preview", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 5)
-                            .background(.orange.opacity(0.85), in: Capsule())
-                            .foregroundStyle(.white)
-                    }
                 }
                 Spacer()
             }
@@ -619,7 +595,7 @@ private struct WorkspaceView: View {
         .disabled(!isAvailable)
         .help(isAvailable
             ? "Compare the selected effect's immediate input and output."
-            : "Update Preview to capture the selected effect's input and output.")
+            : "The comparison becomes available after the preview finishes updating.")
         if isComparingSelectedEffect, isAvailable {
             Button("Selected Effect Input", systemImage: "rectangle.on.rectangle") {}
                 .simultaneousGesture(

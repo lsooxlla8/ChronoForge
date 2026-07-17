@@ -65,8 +65,8 @@
 - добавить Undo/Redo;
 - добавить постоянный bypass и моментальное сравнение Before/After;
 - добавить Amount каждому совместимому эффекту;
-- добавить Replace with Random Stack;
-- добавить опциональный Auto Update preview;
+- добавить Replace with Random;
+- добавить всегда включённое автоматическое обновление preview;
 - сгруппировать эффекты по семействам;
 - централизовать метаданные эффектов в реестре;
 - сохранить render queue как состояние только текущего запуска.
@@ -101,7 +101,7 @@
 - При нормальном запуске всегда показывать пустой workspace.
 - При нормальном закрытии не сохранять медиа, стек, параметры, очередь и позицию playhead.
 - Кэш decoded proxy и результатов может сохраняться между запусками, так как он не является творческим состоянием.
-- Настройки самого приложения могут сохраняться: тема, Auto Update, proxy quality по умолчанию и фон preview.
+- Настройки самого приложения могут сохраняться: тема, proxy quality по умолчанию и фон preview.
 
 ### 4.2. Аварийное восстановление
 
@@ -207,26 +207,23 @@
 
 ---
 
-## 7. Auto Update preview
+## 7. Автоматическое обновление preview
 
 ### 7.1. Поведение
 
-- Добавить компактный Toggle `Auto Update` рядом с Update Preview.
-- Настройка сохраняется как preference приложения.
-- Рекомендуемое значение по умолчанию: On.
+- Auto Update всегда включён и не имеет пользовательского Toggle или ручной кнопки Update Preview.
 - Slider не запускает render во время drag.
 - После отпускания slider, подтверждения числа, изменения Picker/Toggle, Undo/Redo либо structural edit запускать debounce.
 - Обычная задержка debounce: 450 мс.
 - Для global-cost эффектов допустима задержка 800 мс без отдельной настройки пользователя.
 - Новое изменение отменяет только ещё не начатый debounce либо активный proxy render; export не затрагивается.
-- Ручная кнопка Update Preview всегда запускает немедленно.
 
 ### 7.2. Состояния UI
 
 - `Waiting to update` во время debounce показывать не нужно.
 - Во время render сохранить нынешний progress/cancel UX.
-- Stale badge появляется сразу после изменения и исчезает только после успешного preview.
-- Ошибка автоматического preview показывается так же, как ошибка ручного, но Auto Update после ошибки не отключается.
+- Stale badge не нужен: preview сам обновляется после debounce.
+- Ошибка preview показывается в обычном error UX; автоматическое обновление остаётся активным.
 
 ### 7.3. Домены отмены
 
@@ -291,16 +288,16 @@ output = input × (1 - amount) + effected × amount
 
 ---
 
-## 9. Replace with Random Stack
+## 9. Replace with Random
 
 ### 9.1. UX
 
-- В нижней части sidebar рядом с Add Effect добавить кнопку с dice-иконкой `Random Stack`.
+- В нижней части sidebar рядом с Add Effect добавить кнопку с dice-иконкой `Random`.
 - Кнопка полностью заменяет текущий стек без confirmation dialog.
 - Операция всегда отменяется одним `⌘Z`.
 - Доступна только после импорта primary A.
 - После генерации выбирается первый либо самый визуально значимый узел; точное правило должно быть стабильным.
-- При включённом Auto Update preview запускается через обычный debounce.
+- Preview запускается через обычный debounce.
 
 ### 9.2. Базовые правила генерации
 
@@ -766,8 +763,8 @@ effectiveAmount(t, y, x) = amount × mask(t, y, x)
 
 Рекомендуемое размещение:
 
-- Sidebar bottom: Add Effect, Random Stack, Clear Stack.
-- Viewer toolbar: Update Preview, Auto Update, hold-to-compare, background Black/Checkerboard.
+- Sidebar bottom: Add Effect, Random, Clear.
+- Viewer toolbar: hold-to-compare, background Black/Checkerboard; тема — отдельной кнопкой в левом верхнем углу над разделителем.
 - Main toolbar: Export и Add to Queue; project controls удалены.
 - Inspector: Enabled, Amount, effect-specific controls, Driver B при необходимости, Reseed только для stochastic effects.
 - Output settings: Preview Quality, Image AA, Time AA, FPS, Audio.
@@ -981,7 +978,7 @@ swift run ChronoForgeMac --self-test
 
 - обычные проекты удаляются полностью;
 - crash recovery сохраняется только как страховка;
-- Auto Update включён по умолчанию;
+- Auto Update всегда включён и не настраивается;
 - Random Stack заменяет стек без confirmation и отменяется одним Undo;
 - случайный стек содержит 1–3 эффекта;
 - Amount реализуется раньше простых масок;
