@@ -839,6 +839,16 @@ private struct EffectInspector: View {
             Text("The current frame is read with a deliberately wrong row stride. Every address is wrapped or mirrored inside that frame buffer.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        case .blockAddressCorruption:
+            valueSlider("Block Size", index: 0, range: 2...256, format: "%.0f px")
+            valueSlider("Corruption", index: 1, range: 0...1, format: "%.4f")
+            valueSlider("Time Reach", index: 2, range: 0...240, format: "%.0f frames")
+            valueSlider("Hold", index: 3, range: 1...240, format: "%.0f frames")
+            optionPicker("Mapping", value: option(0), options: ["Swap", "Repeat", "Offset", "Cascade"])
+            edgePicker(option(1))
+            Text("Corrupted blocks retain their mapping for Hold frames. Reseed changes both spatial addresses and optional time reach.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

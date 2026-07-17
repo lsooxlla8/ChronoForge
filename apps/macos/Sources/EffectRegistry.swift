@@ -130,6 +130,9 @@ enum EffectRegistry {
         definition(.strideError, "Stride Error", "memorychip", .orange, .memoryAndCompression,
                    values: [0.08, 0.07, 0.013], options: [0, 0],
                    randomization: .init(identifier: "stride-error", amount: .triangular(0.25...1, preferred: 0.7))),
+        definition(.blockAddressCorruption, "Block Address Corruption", "square.grid.3x3.topleft.filled", .red, .memoryAndCompression,
+                   cost: .temporal, usesRandomSeed: true, values: [24, 0.35, 8, 4], options: [0, 1],
+                   randomization: .init(identifier: "block-address-corruption", amount: .triangular(0.3...1, preferred: 0.75))),
     ]
 
     private static let byKind = Dictionary(uniqueKeysWithValues: definitions.map { ($0.kind, $0) })

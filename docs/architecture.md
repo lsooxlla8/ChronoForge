@@ -92,6 +92,7 @@ The supplied `TilePlanner` implements the per-pixel-temporal class. It will be g
 13. **Horizontal Sync Loss** assigns coherent horizontal row bands a time-drifting identity. Deterministic seeded noise, band luma or cross-row edges gate signed horizontal tears; all channels move together so premultiplied alpha remains valid.
 14. **Chroma Carrier Drift** converts straight sampled colour to luma and two chroma carriers. Current-frame luma and alpha stay fixed while Cb/Cr use mode-dependent X/Y/Time offsets and a bounded five-tap horizontal bleed, then reconstruct and re-premultiply RGB.
 15. **Stride Error** computes a deliberately incorrect linear row address, base displacement and per-frame drift, then resolves every channel address through bounded Wrap or Mirror arithmetic inside the current frame buffer. Separate-channel modes re-premultiply sampled straight colour against the selected output alpha.
+16. **Block Address Corruption** hashes the seed, hold epoch and destination block into a stable mapping and optional time displacement. Partial edge blocks and temporal addresses always resolve through Clamp, Wrap or Mirror, and complete colour vectors move together to preserve premultiplied alpha.
 
 Spatial and Temporal Prefilter are project-level output settings rather than editable nodes. The renderer injects one deterministic hidden low-pass stage after the visible stack, so preview, direct export and queued renders share the same cache signature and result.
 

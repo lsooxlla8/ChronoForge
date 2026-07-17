@@ -648,6 +648,63 @@ VideoTensor stride_error(const VideoTensor& input, const StrideErrorParams& para
     return output;
 }
 
+VideoTensor block_address_corruption(const VideoTensor& input, const BlockAddressCorruptionParams& params) {
+    const auto& shape = input.shape();
+    VideoTensor output(shape, 0.0F, input.metadata());
+    const auto block_size = std::max<std::size_t>(2, params.block_size);
+    const auto blocks_x = (shape.w + block_size - 1) / block_size;
+    const auto blocks_y = (shape.h + block_size - 1) / block_size;
+    const auto block_count = blocks_x * blocks_y;
+    const auto hold = std::max<std::size_t>(1, params.hold);
+    const auto corruption = std::clamp(params.corruption, 0.0F, 1.0F);
+    const auto hash_for = [&](std::size_t epoch, std::size_t block) {
+        auto hash = (epoch + 1) * 0x9E3779B185EBCA87ULL;
+        hash ^= (block + 1) * 0xC2B2AE3D27D4EB4FULL;
+        hash ^= params.random_seed * 0xD6E8FEB86659FD93ULL;
+        hash ^= hash >> 30U; hash *= 0xBF58476D1CE4E5B9ULL; hash ^= hash >> 27U;
+        return hash;
+    };
+    parallel_for(shape.t, [&](std::size_t t) {
+        const auto epoch = t / hold;
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                const auto bx = x / block_size, by = y / block_size;
+                const auto block = by * blocks_x + bx;
+                const auto hash = hash_for(epoch, block);
+                const auto trigger = static_cast<float>(hash & 0xFFFFFFU) / static_cast<float>(0x1000000U);
+                const auto corrupted = trigger < corruption;
+                auto source_block = block;
+                if (corrupted && block_count > 1) {
+                    switch (params.mapping) {
+                        case BlockCorruptionMapping::Swap:
+                            source_block = (block + 1 + static_cast<std::size_t>((hash >> 24U) % (block_count - 1))) % block_count;
+                            break;
+                        case BlockCorruptionMapping::Repeat:
+                            source_block = block == 0 ? block_count - 1 : block - 1;
+                            break;
+                        case BlockCorruptionMapping::Offset:
+                            source_block = (block + static_cast<std::size_t>((hash >> 32U) % block_count)) % block_count;
+                            break;
+                        case BlockCorruptionMapping::Cascade:
+                            source_block = (block + epoch + 1 + static_cast<std::size_t>((hash >> 40U) & 3U)) % block_count;
+                            break;
+                    }
+                }
+                const auto source_bx = source_block % blocks_x, source_by = source_block / blocks_x;
+                const auto source_x = static_cast<std::ptrdiff_t>(source_bx * block_size + x % block_size);
+                const auto source_y = static_cast<std::ptrdiff_t>(source_by * block_size + y % block_size);
+                const auto time_span = static_cast<std::int64_t>(params.time_reach);
+                const auto signed_time = !corrupted || time_span == 0 ? 0 : static_cast<std::int64_t>((hash >> 48U) % static_cast<std::uint64_t>(2 * time_span + 1)) - time_span;
+                const auto source_t = resolve_time(static_cast<std::ptrdiff_t>(t) + signed_time, shape.t, params.edge_behavior);
+                const auto sy = resolve_time(source_y, shape.h, params.edge_behavior);
+                const auto sx = resolve_time(source_x, shape.w, params.edge_behavior);
+                for (std::size_t c = 0; c < shape.c; ++c) output.at(t, y, x, c) = input.at(source_t, sy, sx, c);
+            }
+        }
+    });
+    return output;
+}
+
 VideoTensor radial_chrono_funnel(const VideoTensor& input, const RadialChronoFunnelParams& params) {
     const auto& shape = input.shape();
     VideoTensor output(shape, 0.0F, input.metadata());

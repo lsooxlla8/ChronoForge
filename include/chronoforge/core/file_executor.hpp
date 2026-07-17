@@ -29,6 +29,7 @@ enum class EffectOperation : std::int32_t {
     HorizontalSyncLoss = 14,
     ChromaCarrierDrift = 15,
     StrideError = 16,
+    BlockAddressCorruption = 17,
 };
 
 struct EffectSpec {

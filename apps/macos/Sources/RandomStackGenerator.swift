@@ -215,6 +215,14 @@ enum RandomStackGenerator {
                 RandomFloatDistribution.signedMagnitude(0.001...0.25, deadZone: 0.001).sample(using: &random),
             ]
             node.options = [weighted([0, 0, 1, 2], using: &random), Int32(random.integer(in: 0...1))]
+        case "block-address-corruption":
+            node.values = [
+                RandomFloatDistribution.logarithmic(2...128).sample(using: &random),
+                .triangular(0.08...0.9, preferred: 0.35, using: &random),
+                RandomFloatDistribution.logarithmic(0.5...120).sample(using: &random),
+                RandomFloatDistribution.logarithmic(1...90).sample(using: &random),
+            ]
+            node.options = [Int32(random.integer(in: 0...3)), Int32(random.integer(in: 0...2))]
         default:
             break
         }

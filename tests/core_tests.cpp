@@ -169,6 +169,25 @@ void test_stride_error() {
             "Stride Error safely resolves extreme deterministic addresses inside each frame");
 }
 
+void test_block_address_corruption() {
+    const auto input = numbered({5, 7, 11, 4});
+    const chronoforge::BlockAddressCorruptionParams params{
+        3, 0.8F, 2, 2, chronoforge::BlockCorruptionMapping::Cascade,
+        chronoforge::EdgeBehavior::Mirror, 0xC0FFEE};
+    const auto first = chronoforge::block_address_corruption(input, params);
+    require(first.shape() == input.shape(), "Block Address Corruption preserves the tensor shape at partial edge blocks");
+    require(first.values() == chronoforge::block_address_corruption(input, params).values(),
+            "Block Address Corruption is deterministic for a stored seed");
+    auto changed = params;
+    changed.random_seed = 7;
+    require(first.values() != chronoforge::block_address_corruption(input, changed).values(),
+            "Block Address Corruption Reseed changes the address map");
+    auto dry = params;
+    dry.corruption = 0.0F;
+    require(chronoforge::block_address_corruption(input, dry).values() == input.values(),
+            "Zero corruption is exact identity even when Time Reach is nonzero");
+}
+
 void test_sort_and_rotation() {
     chronoforge::VideoTensor input({3, 1, 1, 1});
     input.at(0, 0, 0, 0) = 0.8F;
@@ -400,6 +419,7 @@ void test_file_backed_effect_chain() {
         {chronoforge::EffectOperation::HorizontalSyncLoss, {0.4F, 2.0F, 0.5F, 0.75F}, {0, 1}, 1.0F, 0xC0FFEE},
         {chronoforge::EffectOperation::ChromaCarrierDrift, {1.0F, 0.0F, 1.0F, 2.0F}, {1, 1}},
         {chronoforge::EffectOperation::StrideError, {0.1F, 0.07F, 0.013F}, {1, 1}},
+        {chronoforge::EffectOperation::BlockAddressCorruption, {3.0F, 0.75F, 2.0F, 2.0F}, {3, 2}, 1.0F, 0xC0FFEE},
         {chronoforge::EffectOperation::RadialChronoFunnel, {0.5F, 0.5F, 0.2F, 0}, {2, 0, 0, 0}},
         {chronoforge::EffectOperation::TemporalPixelSort, {0.1F, 0, 0, 0}, {0, 0, 0, 0}},
         {chronoforge::EffectOperation::Tensor3dRotation, {5.0F, 10.0F, 0, 0}, {3, 0, 0, 0}},
@@ -436,6 +456,9 @@ void test_file_backed_effect_chain() {
     expected = chronoforge::stride_error(
         expected, {0.1F, 0.07F, 0.013F, chronoforge::StrideChannelMode::SeparateChannels,
                    chronoforge::AddressEdge::Mirror});
+    expected = chronoforge::block_address_corruption(
+        expected, {3, 0.75F, 2, 2, chronoforge::BlockCorruptionMapping::Cascade,
+                   chronoforge::EdgeBehavior::Mirror, 0xC0FFEE});
     expected = chronoforge::radial_chrono_funnel(
         expected,
         {0.5F, 0.5F, 0.2F, chronoforge::EdgeBehavior::Mirror, 0.0F, chronoforge::RadialTopology::TimeLoom});
@@ -644,6 +667,7 @@ int main() {
         test_horizontal_sync_loss();
         test_chroma_carrier_drift();
         test_stride_error();
+        test_block_address_corruption();
         test_sort_and_rotation();
         test_fft_swap();
         test_cross_tensor_and_flow_effects();

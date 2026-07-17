@@ -27,6 +27,7 @@ enum class SyncLossDriver { DeterministicNoise, Luma, Edges };
 enum class ChromaDriftMode { Together, SplitCbCr, Alternating };
 enum class StrideChannelMode { RgbTogether, SeparateChannels, AlphaIncluded };
 enum class AddressEdge { Wrap, Mirror };
+enum class BlockCorruptionMapping { Swap, Repeat, Offset, Cascade };
 
 struct LumaTimeShiftParams {
     float shift_multiplier{};
@@ -152,6 +153,16 @@ struct StrideErrorParams {
     AddressEdge address_edge{AddressEdge::Wrap};
 };
 
+struct BlockAddressCorruptionParams {
+    std::size_t block_size{16};
+    float corruption{0.3F};
+    std::size_t time_reach{};
+    std::size_t hold{1};
+    BlockCorruptionMapping mapping{BlockCorruptionMapping::Swap};
+    EdgeBehavior edge_behavior{EdgeBehavior::Clamp};
+    std::uint64_t random_seed{};
+};
+
 VideoTensor space_time_transpose(const VideoTensor& input, SpatialAxis axis);
 VideoTensor space_time_transpose(const VideoTensor& input, const SpaceTimeTransposeParams& params);
 VideoTensor luma_time_shift(const VideoTensor& input, const LumaTimeShiftParams& params);
@@ -175,5 +186,6 @@ VideoTensor rgb_time_slip(const VideoTensor& input, const RGBTimeSlipParams& par
 VideoTensor horizontal_sync_loss(const VideoTensor& input, const HorizontalSyncLossParams& params);
 VideoTensor chroma_carrier_drift(const VideoTensor& input, const ChromaCarrierDriftParams& params);
 VideoTensor stride_error(const VideoTensor& input, const StrideErrorParams& params);
+VideoTensor block_address_corruption(const VideoTensor& input, const BlockAddressCorruptionParams& params);
 
 }  // namespace chronoforge

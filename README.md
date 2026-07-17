@@ -32,6 +32,7 @@ No formulas required. If you have used an effect stack, displacement map or rend
 | **Horizontal Sync Loss** | Tear coherent row bands sideways with drifting deterministic noise, luma or edge drivers. |
 | **Chroma Carrier Drift** | Keep luma stable while Cb/Cr drift, delay and bleed together or in opposite directions. |
 | **Stride Error** | Read each frame with a deliberately wrong row stride and safe wrapped or mirrored memory addresses. |
+| **Block Address Corruption** | Replace held spatial blocks with deterministic addresses from elsewhere in space and nearby time. |
 | **Optical Flow Time Warp** | Moving objects bend time more than the static background. |
 | **Time Feedback** | Recursive past and future echoes with colour and displacement blend modes. |
 | **Axis Datamosh** | Freeze and drag image data along time, horizontal or vertical lines. |

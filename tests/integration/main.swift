@@ -128,6 +128,21 @@ struct ChronoForgeIntegration {
             throw IntegrationFailure.message("Stride Error bridge path did not preserve current alpha in RGB Together mode")
         }
 
+        let blockValues: [Float] = [3, 1, 2, 2]
+        let blockOptions: [Int32] = [3, 1]
+        func blockCorruption(seed: UInt64) -> CFEffectDescriptorV2 {
+            blockValues.withUnsafeBufferPointer { values in
+                blockOptions.withUnsafeBufferPointer { options in
+                    cf_effect_descriptor_v2_make(17, 1, seed, values.baseAddress, 4, options.baseAddress, 2)
+                }
+            }
+        }
+        let blockA = try render(blockCorruption(seed: 31))
+        guard blockA == (try render(blockCorruption(seed: 31))),
+              blockA != (try render(blockCorruption(seed: 32))) else {
+            throw IntegrationFailure.message("Block Address Corruption bridge path ignored deterministic seed semantics")
+        }
+
         var outdated = effect
         outdated.descriptor_version = 1
         do {

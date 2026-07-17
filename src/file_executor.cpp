@@ -649,6 +649,55 @@ void stride_error(const MappedTensor& input, MappedTensor& output, const EffectS
     });
 }
 
+void block_address_corruption(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
+    require_option(effect.options[0], 3, "block corruption mapping");
+    require_option(effect.options[1], 2, "block corruption edge");
+    const auto mapping = static_cast<BlockCorruptionMapping>(effect.options[0]);
+    const auto edge = static_cast<EdgeBehavior>(effect.options[1]);
+    const auto& shape = input.shape();
+    const auto block_size = static_cast<std::size_t>(std::max(2.0F, std::round(effect.values[0])));
+    const auto blocks_x = (shape.w + block_size - 1) / block_size;
+    const auto blocks_y = (shape.h + block_size - 1) / block_size;
+    const auto block_count = blocks_x * blocks_y;
+    const auto hold = static_cast<std::size_t>(std::max(1.0F, std::round(effect.values[3])));
+    const auto time_reach = static_cast<std::size_t>(std::max(0.0F, std::round(effect.values[2])));
+    const auto corruption = std::clamp(effect.values[1], 0.0F, 1.0F);
+    const auto hash_for = [&](std::size_t epoch, std::size_t block) {
+        auto hash = (epoch + 1) * 0x9E3779B185EBCA87ULL;
+        hash ^= (block + 1) * 0xC2B2AE3D27D4EB4FULL;
+        hash ^= effect.random_seed * 0xD6E8FEB86659FD93ULL;
+        hash ^= hash >> 30U; hash *= 0xBF58476D1CE4E5B9ULL; hash ^= hash >> 27U;
+        return hash;
+    };
+    auto* destination = output.mutable_data();
+    parallel_for(shape.t, progress, [&](std::size_t t) {
+        const auto epoch = t / hold;
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                const auto block = (y / block_size) * blocks_x + x / block_size;
+                const auto hash = hash_for(epoch, block);
+                const auto trigger = static_cast<float>(hash & 0xFFFFFFU) / static_cast<float>(0x1000000U);
+                const auto corrupted = trigger < corruption;
+                auto source_block = block;
+                if (corrupted && block_count > 1) {
+                    if (mapping == BlockCorruptionMapping::Swap) source_block = (block + 1 + static_cast<std::size_t>((hash >> 24U) % (block_count - 1))) % block_count;
+                    else if (mapping == BlockCorruptionMapping::Repeat) source_block = block == 0 ? block_count - 1 : block - 1;
+                    else if (mapping == BlockCorruptionMapping::Offset) source_block = (block + static_cast<std::size_t>((hash >> 32U) % block_count)) % block_count;
+                    else source_block = (block + epoch + 1 + static_cast<std::size_t>((hash >> 40U) & 3U)) % block_count;
+                }
+                const auto source_x = static_cast<std::ptrdiff_t>((source_block % blocks_x) * block_size + x % block_size);
+                const auto source_y = static_cast<std::ptrdiff_t>((source_block / blocks_x) * block_size + y % block_size);
+                const auto span = static_cast<std::int64_t>(time_reach);
+                const auto time_offset = !corrupted || span == 0 ? 0 : static_cast<std::int64_t>((hash >> 48U) % static_cast<std::uint64_t>(2 * span + 1)) - span;
+                const auto st = resolve_time(static_cast<std::ptrdiff_t>(t) + time_offset, shape.t, edge);
+                const auto sy = resolve_time(source_y, shape.h, edge);
+                const auto sx = resolve_time(source_x, shape.w, edge);
+                for (std::size_t c = 0; c < shape.c; ++c) destination[linear(t, y, x, c, shape)] = read(input, st, sy, sx, c);
+            }
+        }
+    });
+}
+
 void radial(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
     require_option(effect.options[0], 2, "edge behavior");
     require_option(effect.options[1], 2, "radial topology");
@@ -1597,6 +1646,9 @@ void apply(
         case EffectOperation::StrideError:
             stride_error(input, output, effect, progress);
             return;
+        case EffectOperation::BlockAddressCorruption:
+            block_address_corruption(input, output, effect, progress);
+            return;
         case EffectOperation::DimensionalSplicer:
         case EffectOperation::TensorDisplacement:
             throw std::invalid_argument("This effect requires a driver tensor");
@@ -1640,6 +1692,8 @@ void apply(
             return "Chroma Carrier Drift";
         case EffectOperation::StrideError:
             return "Stride Error";
+        case EffectOperation::BlockAddressCorruption:
+            return "Block Address Corruption";
     }
     return "Unknown";
 }

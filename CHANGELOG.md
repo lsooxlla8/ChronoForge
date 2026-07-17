@@ -21,6 +21,7 @@
 - Added Horizontal Sync Loss with drifting row bands, deterministic Noise/Luma/Edges drivers, Wrap/Clamp/Mirror edges, Reseed, Amount and RAM/mapped parity.
 - Added Chroma Carrier Drift with stable current-frame luma, independent Cb/Cr spatial and temporal offsets, five-tap bleed, Together/Split/Alternating modes and premultiplied-alpha parity.
 - Added Stride Error with wrong-row-length addressing, base and temporal drift, RGB/separate/alpha channel modes, safe per-frame Wrap/Mirror resolution and deterministic RAM/mapped parity.
+- Added Block Address Corruption with held deterministic block maps, spatial and temporal address replacement, four mapping modes, safe edge resolution and seed-stable RAM/mapped parity.
 
 ## 0.9.0 — seamless loops and interaction fixes
 
