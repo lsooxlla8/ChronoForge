@@ -11,11 +11,11 @@ enum FullRenderPipeline {
     ) async throws {
         let cacheRoot = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
             .appendingPathComponent("ChronoForge/Full", isDirectory: true)
-        let sourceKey = ProxyCache.key(source: source.sourceURL, input: source.tensor, effects: [])
+        let sourceKey = ProxyCache.key(source: source.mediaSource, input: source.tensor, effects: [])
         let graphDrivers = effects.compactMap { effect in
-            effect.driverMediaID.flatMap { id in mediaPool.first(where: { $0.id == id })?.sourceURL }
+            effect.driverMediaID.flatMap { id in mediaPool.first(where: { $0.id == id })?.mediaSource }
         }
-        let graphKey = ProxyCache.key(source: source.sourceURL, input: source.tensor, effects: effects, drivers: graphDrivers)
+        let graphKey = ProxyCache.key(source: source.mediaSource, input: source.tensor, effects: effects, drivers: graphDrivers)
         let sourceDirectory = cacheRoot.appendingPathComponent(sourceKey, isDirectory: true)
         let graphDirectory = cacheRoot.appendingPathComponent(graphKey, isDirectory: true)
         try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
@@ -28,8 +28,8 @@ enum FullRenderPipeline {
             try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: sourceDirectory.path)
             progress(0.15, "Using decoded source cache")
         } else {
-            decoded = try await FullVideoDecoder.decode(
-                sourceURL: source.sourceURL,
+            decoded = try await MediaSourceDecoder.decodeFull(
+                from: source.mediaSource,
                 destinationURL: sourceDirectory.appendingPathComponent("input.raw")
             ) { fraction, stage in progress(fraction * 0.15, stage) }
             try saveMetadata(decoded, to: decodedMetadataURL)
@@ -43,7 +43,7 @@ enum FullRenderPipeline {
                 decodedDrivers[driver.id] = decoded
                 continue
             }
-            let key = ProxyCache.key(source: driver.sourceURL, input: driver.tensor, effects: [])
+            let key = ProxyCache.key(source: driver.mediaSource, input: driver.tensor, effects: [])
             let directory = cacheRoot.appendingPathComponent(key, isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let metadataURL = directory.appendingPathComponent("input.json")
@@ -53,8 +53,8 @@ enum FullRenderPipeline {
                 decodedDrivers[driver.id] = cached
                 progress(start + span, "Using driver cache")
             } else {
-                let tensor = try await FullVideoDecoder.decode(
-                    sourceURL: driver.sourceURL,
+                let tensor = try await MediaSourceDecoder.decodeFull(
+                    from: driver.mediaSource,
                     destinationURL: directory.appendingPathComponent("input.raw")
                 ) { fraction, stage in progress(start + fraction * span, stage) }
                 try saveMetadata(tensor, to: metadataURL)

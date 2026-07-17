@@ -32,6 +32,35 @@ enum SelfTestRunner {
             sourceDuration: 1,
             securityScopedBookmark: nil
         )
+        let sequenceDirectory = root.appendingPathComponent("sequence", isDirectory: true)
+        try FileManager.default.createDirectory(at: sequenceDirectory, withIntermediateDirectories: true)
+        let sequenceFrameA = sequenceDirectory.appendingPathComponent("frame_1.png")
+        let sequenceFrameB = sequenceDirectory.appendingPathComponent("frame_2.png")
+        try Data([1]).write(to: sequenceFrameA)
+        try Data([2]).write(to: sequenceFrameB)
+        let sequence24 = MediaSource.frameSequence(FrameSequenceSource(
+            directoryURL: sequenceDirectory,
+            frameNames: [sequenceFrameA.lastPathComponent, sequenceFrameB.lastPathComponent],
+            framesPerSecond: 24
+        ))
+        let sequenceRoundTrip = try JSONDecoder().decode(
+            MediaSource.self,
+            from: JSONEncoder().encode(sequence24)
+        )
+        let sequenceKey24 = ProxyCache.key(source: sequence24, input: projectSource.tensor, effects: [])
+        var sequence25Source = sequence24
+        if case .frameSequence(var sequence) = sequence25Source {
+            sequence.framesPerSecond = 25
+            sequence25Source = .frameSequence(sequence)
+        }
+        let sequenceKey25 = ProxyCache.key(source: sequence25Source, input: projectSource.tensor, effects: [])
+        try Data([1, 3]).write(to: sequenceFrameA)
+        let sequenceChangedKey = ProxyCache.key(source: sequence24, input: projectSource.tensor, effects: [])
+        guard sequenceRoundTrip == sequence24,
+              sequenceKey24 != sequenceKey25,
+              sequenceKey24 != sequenceChangedKey else {
+            throw IntegrationSelfTestError.message("MediaSource sequence metadata did not round-trip or invalidate its cache fingerprint")
+        }
         let firstNode = EffectNode.make(.lumaTimeShift)
         let branchA = EffectNode.make(.radialChronoFunnel, inputNodeID: firstNode.id)
         let branchB = EffectNode.make(.temporalPixelSort, inputNodeID: firstNode.id)
@@ -47,6 +76,7 @@ enum SelfTestRunner {
         try SessionRecoveryStore.save(savedSnapshot, to: snapshotURL)
         let restoredSnapshot = try SessionRecoveryStore.load(from: snapshotURL)
         guard restoredSnapshot.effects == savedSnapshot.effects,
+              restoredSnapshot.source == projectSource.mediaSource,
               restoredSnapshot.proxyQuality == ProxyQuality.high.rawValue,
               restoredSnapshot.spatialPrefilter == PrefilterStrength.light.rawValue,
               restoredSnapshot.temporalPrefilter == PrefilterStrength.strong.rawValue,
@@ -55,6 +85,19 @@ enum SelfTestRunner {
               restoredSnapshot.effects.last?.inputNodeID == firstNode.id,
               try restoredSnapshot.sourceURL() == source else {
             throw IntegrationSelfTestError.message("Session recovery snapshot round-trip failed")
+        }
+        var legacyObject = try JSONSerialization.jsonObject(with: Data(contentsOf: snapshotURL)) as! [String: Any]
+        legacyObject["version"] = 1
+        legacyObject.removeValue(forKey: "source")
+        if var legacyMedia = legacyObject["media"] as? [[String: Any]] {
+            for index in legacyMedia.indices { legacyMedia[index].removeValue(forKey: "source") }
+            legacyObject["media"] = legacyMedia
+        }
+        let legacySnapshotURL = root.appendingPathComponent("legacy-recovery.json")
+        try JSONSerialization.data(withJSONObject: legacyObject).write(to: legacySnapshotURL)
+        let legacySnapshot = try SessionRecoveryStore.load(from: legacySnapshotURL)
+        guard legacySnapshot.source == nil, try legacySnapshot.sourceURL() == source else {
+            throw IntegrationSelfTestError.message("Legacy movie-only recovery did not remain readable")
         }
         let driverSource: DecodedProxy = {
             var value = projectSource

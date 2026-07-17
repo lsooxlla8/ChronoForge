@@ -13,6 +13,7 @@
 - Removed project commands, `.chronoforge` registration, project title/Edited UI and normal-session persistence; only crash recovery remains.
 - Added deterministic Random Stack replacement with 1–3 effects, effect-specific distributions, driver/cost/shape validation and single-operation Undo.
 - Added a real seed path and Reseed action for Axis Datamosh with matching RAM and out-of-core patterns.
+- Added a shared movie/frame-sequence `MediaSource` boundary across proxy decoding, full decoding, recovery and cache signatures; sequence fingerprints include every frame plus playback FPS.
 
 ## 0.9.0 — seamless loops and interaction fixes
 

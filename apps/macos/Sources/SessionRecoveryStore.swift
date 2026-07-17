@@ -1,9 +1,10 @@
 import Foundation
 
 struct SessionRecoverySnapshot: Codable, Sendable {
-    static let currentVersion = 1
+    static let currentVersion = 2
 
     var version: Int
+    var source: MediaSource?
     var sourceBookmark: Data?
     var sourcePath: String
     var media: [RecoveryMediaReference]?
@@ -27,6 +28,7 @@ struct SessionRecoverySnapshot: Codable, Sendable {
         audioMode: AudioMode = .none
     ) {
         version = Self.currentVersion
+        self.source = source.mediaSource
         sourceBookmark = source.securityScopedBookmark
         sourcePath = source.sourceURL.path
         let allMedia = mediaPool ?? [source]
@@ -42,6 +44,13 @@ struct SessionRecoverySnapshot: Codable, Sendable {
     }
 
     func sourceURL() throws -> URL {
+        if let source {
+            let resolved = source.resolvedFromBookmarkIfAvailable()
+            guard FileManager.default.fileExists(atPath: resolved.accessURL.path) else {
+                throw CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: resolved.accessURL.path])
+            }
+            return resolved.accessURL
+        }
         if let sourceBookmark {
             var stale = false
             if let url = try? URL(
@@ -63,28 +72,47 @@ struct SessionRecoverySnapshot: Codable, Sendable {
 
     func mediaReferences() -> [RecoveryMediaReference] {
         if let media, !media.isEmpty { return media }
-        return [RecoveryMediaReference(id: primaryMediaID ?? UUID(), bookmark: sourceBookmark, path: sourcePath)]
+        return [RecoveryMediaReference(
+            id: primaryMediaID ?? UUID(),
+            source: source,
+            bookmark: sourceBookmark,
+            path: sourcePath
+        )]
     }
 }
 
 struct RecoveryMediaReference: Codable, Sendable {
     var id: UUID
+    var source: MediaSource?
     var bookmark: Data?
     var path: String
 
     init(_ media: DecodedProxy) {
         id = media.id
+        source = media.mediaSource
         bookmark = media.securityScopedBookmark
         path = media.sourceURL.path
     }
 
-    init(id: UUID, bookmark: Data?, path: String) {
+    init(id: UUID, source: MediaSource? = nil, bookmark: Data?, path: String) {
         self.id = id
+        self.source = source
         self.bookmark = bookmark
         self.path = path
     }
 
     func url() throws -> URL {
+        try resolvedMediaSource().accessURL
+    }
+
+    func resolvedMediaSource() throws -> MediaSource {
+        if let source {
+            let resolved = source.resolvedFromBookmarkIfAvailable()
+            guard FileManager.default.fileExists(atPath: resolved.accessURL.path) else {
+                throw CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: resolved.accessURL.path])
+            }
+            return resolved
+        }
         if let bookmark {
             var stale = false
             if let url = try? URL(
@@ -92,13 +120,13 @@ struct RecoveryMediaReference: Codable, Sendable {
                 options: [.withSecurityScope],
                 relativeTo: nil,
                 bookmarkDataIsStale: &stale
-            ) { return url }
+            ) { return .movie(url: url, securityScopedBookmark: bookmark) }
         }
         let fallback = URL(fileURLWithPath: path)
         guard FileManager.default.fileExists(atPath: fallback.path) else {
             throw CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: path])
         }
-        return fallback
+        return .movie(url: fallback, securityScopedBookmark: bookmark)
     }
 }
 

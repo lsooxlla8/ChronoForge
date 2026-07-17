@@ -21,44 +21,74 @@ actor ProxyCache {
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     }
 
-    nonisolated static func key(source: URL, input: VideoTensorData, effects: [EffectNode], drivers: [URL] = []) -> String {
+    nonisolated static func key(
+        source: MediaSource,
+        input: VideoTensorData,
+        effects: [EffectNode],
+        drivers: [MediaSource] = []
+    ) -> String {
         struct FileSignature: Encodable {
             var path: String
+            var relativeName: String
             var size: UInt64
             var modified: TimeInterval
         }
+        struct SourceSignature: Encodable {
+            var kind: String
+            var rootPath: String
+            var files: [FileSignature]
+            var sequenceFramesPerSecond: Double?
+        }
         struct Signature: Encodable {
-            var sourcePath: String
-            var sourceSize: UInt64
-            var modified: TimeInterval
+            var source: SourceSignature
             var frames: Int
             var height: Int
             var width: Int
             var effects: [EffectNode]
-            var drivers: [FileSignature]
+            var drivers: [SourceSignature]
             var engineVersion: String
         }
-        let attributes = try? FileManager.default.attributesOfItem(atPath: source.path)
-        let driverSignatures = drivers.map { url -> FileSignature in
-            let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
-            return FileSignature(
-                path: url.standardizedFileURL.path,
-                size: (attributes?[.size] as? NSNumber)?.uint64Value ?? 0,
-                modified: (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)
+        func signature(for source: MediaSource) -> SourceSignature {
+            let files = source.cacheFiles().map { item -> FileSignature in
+                let attributes = try? FileManager.default.attributesOfItem(atPath: item.url.path)
+                return FileSignature(
+                    path: item.url.standardizedFileURL.path,
+                    relativeName: item.relativeName,
+                    size: (attributes?[.size] as? NSNumber)?.uint64Value ?? 0,
+                    modified: (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+                )
+            }
+            return SourceSignature(
+                kind: source.isMovie ? "movie" : "frame-sequence",
+                rootPath: source.accessURL.standardizedFileURL.path,
+                files: files,
+                sequenceFramesPerSecond: source.sequenceFramesPerSecond
+            )
         }
+        let driverSignatures = drivers.map { source in
+            signature(for: source)
+        }
+        let sourceSignature = signature(for: source)
         let signature = Signature(
-            sourcePath: source.standardizedFileURL.path,
-            sourceSize: (attributes?[.size] as? NSNumber)?.uint64Value ?? 0,
-            modified: (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0,
+            source: sourceSignature,
             frames: input.frames,
             height: input.height,
             width: input.width,
             effects: effects,
             drivers: driverSignatures,
-            engineVersion: "1.0.0-dev-descriptor2"
+            engineVersion: "1.0.0-dev-media-source"
         )
         let data = (try? JSONEncoder().encode(signature)) ?? Data()
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    nonisolated static func key(source: URL, input: VideoTensorData, effects: [EffectNode], drivers: [URL] = []) -> String {
+        key(
+            source: .movie(url: source),
+            input: input,
+            effects: effects,
+            drivers: drivers.map { .movie(url: $0) }
+        )
     }
 
     func load(key: String) -> VideoTensorData? {

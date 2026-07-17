@@ -98,13 +98,21 @@ final class SessionStore: ObservableObject {
         let accessGranted = url.startAccessingSecurityScopedResource()
         let replacementID = mediaReplacementID
         mediaReplacementID = nil
+        let mediaSource = MediaSource.movie(
+            url: url,
+            securityScopedBookmark: try? url.bookmarkData(
+                options: [.withSecurityScope],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+        )
         task = Task {
             defer {
                 if accessGranted { url.stopAccessingSecurityScopedResource() }
                 isImporting = false
             }
             do {
-                var decoded = try await VideoDecoder.decodeProxy(from: url, quality: proxyQuality)
+                var decoded = try await MediaSourceDecoder.decodeProxy(from: mediaSource, quality: proxyQuality)
                 try Task.checkCancellation()
                 if let replacementID, let index = mediaPool.firstIndex(where: { $0.id == replacementID }) {
                     decoded.id = replacementID
@@ -308,9 +316,9 @@ final class SessionStore: ObservableObject {
             do {
                 var rebuilt: [DecodedProxy] = []
                 for media in existing {
-                    let access = media.sourceURL.startAccessingSecurityScopedResource()
-                    var decoded = try await VideoDecoder.decodeProxy(from: media.sourceURL, quality: quality)
-                    if access { media.sourceURL.stopAccessingSecurityScopedResource() }
+                    let access = media.mediaSource.startAccessingSecurityScopedResource()
+                    var decoded = try await MediaSourceDecoder.decodeProxy(from: media.mediaSource, quality: quality)
+                    if access { media.mediaSource.stopAccessingSecurityScopedResource() }
                     decoded.id = media.id
                     rebuilt.append(decoded)
                 }
@@ -520,10 +528,10 @@ final class SessionStore: ObservableObject {
             do {
                 var decodedMedia: [DecodedProxy] = []
                 for reference in references {
-                    let url = try reference.url()
-                    let access = url.startAccessingSecurityScopedResource()
-                    defer { if access { url.stopAccessingSecurityScopedResource() } }
-                    var decoded = try await VideoDecoder.decodeProxy(from: url, quality: proxyQuality)
+                    let mediaSource = try reference.resolvedMediaSource()
+                    let access = mediaSource.startAccessingSecurityScopedResource()
+                    defer { if access { mediaSource.stopAccessingSecurityScopedResource() } }
+                    var decoded = try await MediaSourceDecoder.decodeProxy(from: mediaSource, quality: proxyQuality)
                     decoded.id = reference.id
                     decodedMedia.append(decoded)
                 }
@@ -560,11 +568,11 @@ final class SessionStore: ObservableObject {
             isRendering = false
             return
         }
-        let driverURLs = graph.compactMap { effect in
-            effect.driverMediaID.flatMap { id in mediaPool.first(where: { $0.id == id })?.sourceURL }
+        let driverSources = graph.compactMap { effect in
+            effect.driverMediaID.flatMap { id in mediaPool.first(where: { $0.id == id })?.mediaSource }
         }
         let selectedEffectID = selectedNodeID
-        let cacheKey = ProxyCache.key(source: source!.sourceURL, input: input, effects: graph, drivers: driverURLs)
+        let cacheKey = ProxyCache.key(source: source!.mediaSource, input: input, effects: graph, drivers: driverSources)
         previewTask = Task {
             defer {
                 if previewGeneration == generation { isRendering = false }
@@ -771,8 +779,8 @@ final class SessionStore: ObservableObject {
         progress: @escaping @Sendable (Double, String) -> Void
     ) async throws {
         let allMedia = mediaPool ?? self.mediaPool
-        let accessed = allMedia.map { ($0.sourceURL, $0.sourceURL.startAccessingSecurityScopedResource()) }
-        defer { for (url, granted) in accessed where granted { url.stopAccessingSecurityScopedResource() } }
+        let accessed = allMedia.map { ($0.mediaSource, $0.mediaSource.startAccessingSecurityScopedResource()) }
+        defer { for (mediaSource, granted) in accessed where granted { mediaSource.stopAccessingSecurityScopedResource() } }
         try await FullRenderPipeline.export(
             source: source,
             effects: effects,

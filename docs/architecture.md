@@ -17,6 +17,8 @@ Input Decode performs these operations before a tensor enters the graph:
 
 `T` is a logical sequence index, not an assumption that frames are exactly `1 / fps` apart. Full decode retains presentation timestamps; axis-changing effects deliberately establish a new uniform output timeline.
 
+`MediaSource` is the format boundary above decode. It represents either a movie or a named frame sequence and owns security-scoped access, recovery identity and cache inputs. `SessionStore` passes this value to the proxy/full decoder without inspecting file extensions. A sequence fingerprint includes the ordered frame names, each file's size and modification date, and the chosen playback FPS.
+
 ## Node and execution model
 
 ```mermaid
