@@ -71,6 +71,7 @@ void enforce_budget(const VideoTensor& tensor, uint64_t budget) {
         case CF_EFFECT_STRIDE_ERROR: return {3, 2};
         case CF_EFFECT_BLOCK_ADDRESS_CORRUPTION: return {4, 2};
         case CF_EFFECT_BITPLANE_FORGE: return {3, 2};
+        case CF_EFFECT_SIGNAL_WEAVE: return {4, 2};
     }
     throw std::invalid_argument("Unsupported effect kind");
 }
@@ -82,7 +83,7 @@ CFEffectKind validate_descriptor(const CFEffectDescriptorV2& descriptor) {
     if (!std::isfinite(descriptor.amount) || descriptor.amount < 0.0F || descriptor.amount > 1.0F) {
         throw std::invalid_argument("Effect amount must be between zero and one");
     }
-    const auto kind = checked_enum<CFEffectKind>(descriptor.kind, CF_EFFECT_BITPLANE_FORGE, "effect kind");
+    const auto kind = checked_enum<CFEffectKind>(descriptor.kind, CF_EFFECT_SIGNAL_WEAVE, "effect kind");
     const auto [values, options] = expected_parameter_counts(kind);
     if (descriptor.value_count != values || descriptor.option_count != options) {
         throw std::invalid_argument("Effect descriptor parameter counts do not match its kind");
@@ -269,6 +270,7 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptorV2& d
                 });
         case CF_EFFECT_DIMENSIONAL_SPLICER:
         case CF_EFFECT_TENSOR_DISPLACEMENT:
+        case CF_EFFECT_SIGNAL_WEAVE:
             throw std::invalid_argument("This effect requires a driver video");
     }
     throw std::invalid_argument("Unsupported effect kind");
@@ -299,6 +301,18 @@ VideoTensor apply_cross_effect(
                     checked_enum<chronoforge::ShiftSource>(descriptor.options[0], 4, "displacement source"),
                     checked_enum<chronoforge::TensorBroadcast>(descriptor.options[1], 2, "tensor broadcast"),
                     checked_enum<chronoforge::EdgeBehavior>(descriptor.options[2], 2, "displacement edge behavior"),
+                });
+        case CF_EFFECT_SIGNAL_WEAVE:
+            return chronoforge::signal_weave(
+                source,
+                driver,
+                {
+                    checked_enum<chronoforge::SignalWeavePattern>(descriptor.options[0], 3, "signal weave pattern"),
+                    static_cast<std::size_t>(std::max(1.0F, std::round(descriptor.values[0]))),
+                    descriptor.values[1], descriptor.values[2],
+                    static_cast<int>(std::clamp(std::round(descriptor.values[3]), -240.0F, 240.0F)),
+                    checked_enum<chronoforge::TensorBroadcast>(descriptor.options[1], 2, "signal weave size matching"),
+                    descriptor.random_seed,
                 });
         default:
             throw std::invalid_argument("The selected effect does not accept a driver video");

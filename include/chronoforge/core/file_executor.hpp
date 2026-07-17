@@ -31,6 +31,7 @@ enum class EffectOperation : std::int32_t {
     StrideError = 16,
     BlockAddressCorruption = 17,
     BitplaneForge = 18,
+    SignalWeave = 19,
 };
 
 struct EffectSpec {

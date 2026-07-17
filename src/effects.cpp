@@ -1076,6 +1076,75 @@ VideoTensor tensor_displacement(
     return output;
 }
 
+VideoTensor signal_weave(
+    const VideoTensor& source,
+    const VideoTensor& driver,
+    const SignalWeaveParams& params) {
+    auto output_shape = source.shape();
+    if (params.size_matching == TensorBroadcast::Crop) {
+        output_shape.t = std::min(source.shape().t, driver.shape().t);
+        output_shape.h = std::min(source.shape().h, driver.shape().h);
+        output_shape.w = std::min(source.shape().w, driver.shape().w);
+    }
+    VideoTensor output(output_shape, 0.0F, source.metadata());
+    const auto band_size = std::max<std::size_t>(1, params.band_size);
+    const auto irregularity = std::clamp(params.irregularity, 0.0F, 1.0F);
+    const auto mix = [](std::uint64_t value) {
+        value ^= value >> 30U; value *= 0xBF58476D1CE4E5B9ULL;
+        value ^= value >> 27U; value *= 0x94D049BB133111EBULL;
+        return value ^ (value >> 31U);
+    };
+    const auto driver_coordinate = [&](std::size_t coordinate, std::size_t output_extent, std::size_t driver_extent) {
+        if (params.size_matching == TensorBroadcast::Stretch) {
+            return output_extent <= 1 || driver_extent <= 1 ? std::size_t{0} : static_cast<std::size_t>(std::round(
+                static_cast<double>(coordinate) * static_cast<double>(driver_extent - 1) /
+                static_cast<double>(output_extent - 1)));
+        }
+        return std::min(coordinate, driver_extent - 1);
+    };
+    parallel_for(output_shape.t, [&](std::size_t t) {
+        const auto phase = params.phase_drift * static_cast<float>(t);
+        const auto base_driver_t = driver_coordinate(t, output_shape.t, driver.shape().t);
+        const auto driver_t = resolve_time(
+            static_cast<std::ptrdiff_t>(base_driver_t) + params.b_time_offset,
+            driver.shape().t, EdgeBehavior::Clamp);
+        for (std::size_t y = 0; y < output_shape.h; ++y) {
+            const auto driver_y = driver_coordinate(y, output_shape.h, driver.shape().h);
+            for (std::size_t x = 0; x < output_shape.w; ++x) {
+                const auto driver_x = driver_coordinate(x, output_shape.w, driver.shape().w);
+                std::int64_t pattern_index{};
+                switch (params.pattern) {
+                    case SignalWeavePattern::Lines:
+                        pattern_index = static_cast<std::int64_t>(y) + static_cast<std::int64_t>(std::floor(phase));
+                        break;
+                    case SignalWeavePattern::InterlacedFields:
+                        pattern_index = static_cast<std::int64_t>(y + t) + static_cast<std::int64_t>(std::floor(phase));
+                        break;
+                    case SignalWeavePattern::Bands:
+                        pattern_index = static_cast<std::int64_t>(std::floor(static_cast<float>(y) / static_cast<float>(band_size) + phase));
+                        break;
+                    case SignalWeavePattern::Checker:
+                        pattern_index = static_cast<std::int64_t>(x / band_size + y / band_size) + static_cast<std::int64_t>(std::floor(phase));
+                        break;
+                }
+                const auto regular_driver = (pattern_index & 1) != 0;
+                auto hash = params.random_seed ^ ((t + 1) * 0xD6E8FEB86659FD93ULL);
+                hash ^= (y / band_size + 1) * 0xA24BAED4963EE407ULL;
+                hash ^= (x / band_size + 1) * 0x9FB21C651E98DF25ULL;
+                const auto noise = static_cast<float>(mix(hash) & 0xFFFFFFU) / static_cast<float>(0x1000000U);
+                const auto driver_probability = regular_driver ? 1.0F - irregularity * 0.5F : irregularity * 0.5F;
+                const auto use_driver = noise < driver_probability;
+                for (std::size_t c = 0; c < output_shape.c; ++c) {
+                    output.at(t, y, x, c) = use_driver
+                        ? driver.at(driver_t, driver_y, driver_x, std::min(c, driver.shape().c - 1))
+                        : source.at(t, y, x, c);
+                }
+            }
+        }
+    });
+    return output;
+}
+
 VideoTensor optical_flow_time_warp(const VideoTensor& input, const OpticalFlowTimeWarpParams& params) {
     const auto& shape = input.shape();
     VideoTensor output(shape, 0.0F, input.metadata());

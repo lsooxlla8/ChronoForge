@@ -319,6 +319,24 @@ void test_cross_tensor_and_flow_effects() {
          chronoforge::EdgeBehavior::Clamp});
     require_near(displaced.at(0, 0, 0, 0), 0.5F, "Tensor displacement uses B to move A through time");
 
+    chronoforge::VideoTensor weave_a({2, 4, 3, 1}, 0.0F);
+    chronoforge::VideoTensor weave_b({2, 4, 3, 1}, 1.0F);
+    const auto woven = chronoforge::signal_weave(
+        weave_a, weave_b,
+        {chronoforge::SignalWeavePattern::Lines, 1, 0, 0, 0,
+         chronoforge::TensorBroadcast::Clamp, 9});
+    require_near(woven.at(0, 0, 0, 0), 0.0F, "Signal Weave keeps even lines from A");
+    require_near(woven.at(0, 1, 0, 0), 1.0F, "Signal Weave takes odd lines from B");
+    const auto irregular_a = chronoforge::signal_weave(
+        weave_a, weave_b,
+        {chronoforge::SignalWeavePattern::Checker, 1, 0, 1, 0,
+         chronoforge::TensorBroadcast::Clamp, 10});
+    const auto irregular_b = chronoforge::signal_weave(
+        weave_a, weave_b,
+        {chronoforge::SignalWeavePattern::Checker, 1, 0, 1, 0,
+         chronoforge::TensorBroadcast::Clamp, 11});
+    require(irregular_a.values() != irregular_b.values(), "Signal Weave irregularity responds to Reseed");
+
     chronoforge::VideoTensor still({3, 3, 3, 1}, 0.4F);
     const auto flow = chronoforge::optical_flow_time_warp(still, {});
     require(flow.values() == still.values(), "Motion time warp preserves a static tensor");
@@ -397,6 +415,21 @@ void test_file_backed_cross_tensor() {
     require(result.metadata.frame_rate_numerator == 8, "Out-of-core Splicer reports driver FPS for B Time");
     const auto output = chronoforge::MappedTensor::open(output_path, result.shape, chronoforge::MappedTensor::Access::ReadOnly);
     require_near(output.data()[((3 * 1 + 0) * 5 + 4)], source.at(1, 1, 2, 0), "Out-of-core Space-Time Map uses B RGB coordinates");
+    const auto weave_path = root / "weave.raw";
+    const chronoforge::EffectSpec weave_effect{
+        chronoforge::EffectOperation::SignalWeave, {1, 0.5F, 0.35F, 1}, {3, 2}, 1.0F, 37};
+    const auto weave_result = chronoforge::render_file_cross_tensor_effect(
+        source_path, driver_path, weave_path, source.shape(), driver.shape(),
+        source.metadata(), driver.metadata(), weave_effect, {});
+    const auto weave_expected = chronoforge::signal_weave(
+        source, driver,
+        {chronoforge::SignalWeavePattern::Checker, 1, 0.5F, 0.35F, 1,
+         chronoforge::TensorBroadcast::Crop, 37});
+    require(weave_result.shape == weave_expected.shape(), "Out-of-core Signal Weave reports cropped A/B extents");
+    const auto weave_output = chronoforge::MappedTensor::open(weave_path, weave_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
+    for (std::size_t index = 0; index < weave_expected.values().size(); ++index) {
+        require_near(weave_output.data()[index], weave_expected.values()[index], "Out-of-core Signal Weave matches RAM reference");
+    }
     std::filesystem::remove_all(root);
 }
 

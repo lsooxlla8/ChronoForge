@@ -31,6 +31,7 @@ enum class AddressEdge { Wrap, Mirror };
 enum class BlockCorruptionMapping { Swap, Repeat, Offset, Cascade };
 enum class BitplaneOperation { Shuffle, Rotate, Invert, Xor };
 enum class BitplaneChannel { Luma, RgbTogether, Red, Green, Blue, Alpha };
+enum class SignalWeavePattern { Lines, InterlacedFields, Bands, Checker };
 
 struct LumaTimeShiftParams {
     float shift_multiplier{};
@@ -175,6 +176,16 @@ struct BitplaneForgeParams {
     std::uint64_t random_seed{};
 };
 
+struct SignalWeaveParams {
+    SignalWeavePattern pattern{SignalWeavePattern::Bands};
+    std::size_t band_size{8};
+    float phase_drift{};
+    float irregularity{};
+    int b_time_offset{};
+    TensorBroadcast size_matching{TensorBroadcast::Clamp};
+    std::uint64_t random_seed{};
+};
+
 VideoTensor space_time_transpose(const VideoTensor& input, SpatialAxis axis);
 VideoTensor space_time_transpose(const VideoTensor& input, const SpaceTimeTransposeParams& params);
 VideoTensor luma_time_shift(const VideoTensor& input, const LumaTimeShiftParams& params);
@@ -200,5 +211,6 @@ VideoTensor chroma_carrier_drift(const VideoTensor& input, const ChromaCarrierDr
 VideoTensor stride_error(const VideoTensor& input, const StrideErrorParams& params);
 VideoTensor block_address_corruption(const VideoTensor& input, const BlockAddressCorruptionParams& params);
 VideoTensor bitplane_forge(const VideoTensor& input, const BitplaneForgeParams& params);
+VideoTensor signal_weave(const VideoTensor& source, const VideoTensor& driver, const SignalWeaveParams& params);
 
 }  // namespace chronoforge

@@ -230,6 +230,14 @@ enum RandomStackGenerator {
             let mask = ((1 << (highest - lowest + 1)) - 1) << lowest
             node.values = [Float(bits), Float(mask), Float(random.integer(in: -15...15))]
             node.options = [weighted([0, 1, 2, 2, 3], using: &random), Int32(random.integer(in: 0...5))]
+        case "signal-weave":
+            node.values = [
+                RandomFloatDistribution.logarithmic(1...128).sample(using: &random),
+                RandomFloatDistribution.signedMagnitude(0.02...8, deadZone: 0.02).sample(using: &random),
+                .triangular(0...0.7, preferred: 0.12, using: &random),
+                RandomFloatDistribution.signedMagnitude(1...120, deadZone: 1).sample(using: &random),
+            ]
+            node.options = [Int32(random.integer(in: 0...3)), weighted([0, 0, 1, 1, 2], using: &random)]
         default:
             break
         }

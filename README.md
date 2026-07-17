@@ -45,6 +45,7 @@ No formulas required. If you have used an effect stack, displacement map or rend
 | --- | --- |
 | **Space-Time Map** | A supplies the picture. B's red, green and blue channels choose where ChronoForge reads X, Y and Time from A. |
 | **Space-Time Displacement** | A is the target. Brightness or a channel from B pushes A through X, Y and Time. |
+| **Signal Weave** | Alternate moving lines, interlaced fields, bands or checker cells between A and B. |
 
 ## Five-minute workflow
 

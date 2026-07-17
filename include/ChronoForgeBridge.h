@@ -40,6 +40,7 @@ typedef enum CFEffectKind {
     CF_EFFECT_STRIDE_ERROR = 16,
     CF_EFFECT_BLOCK_ADDRESS_CORRUPTION = 17,
     CF_EFFECT_BITPLANE_FORGE = 18,
+    CF_EFFECT_SIGNAL_WEAVE = 19,
 } CFEffectKind;
 
 enum { CF_EFFECT_DESCRIPTOR_VERSION = 2, CF_EFFECT_PARAMETER_CAPACITY = 8 };
@@ -59,6 +60,7 @@ enum { CF_EFFECT_DESCRIPTOR_VERSION = 2, CF_EFFECT_PARAMETER_CAPACITY = 8 };
 // stride error:            values = stride delta, base offset, temporal drift; options = channel mode, address edge
 // block corruption:        values = block size, corruption, time reach, hold; options = mapping, edge
 // bitplane forge:           values = working bits, plane mask, shift; options = operation, channel
+// signal weave:             values = band size, phase drift, irregularity, B time offset; options = pattern, size matching
 typedef struct CFEffectDescriptorV2 {
     int32_t kind;
     uint32_t descriptor_version;
@@ -100,7 +102,7 @@ int32_t cf_render_effect_chain(
     uint64_t error_message_capacity);
 
 // Renders one effect that consumes both a source tensor and a driver tensor.
-// Currently accepted kinds are DIMENSIONAL_SPLICER and TENSOR_DISPLACEMENT.
+// Accepted kinds are DIMENSIONAL_SPLICER, TENSOR_DISPLACEMENT and SIGNAL_WEAVE.
 int32_t cf_render_cross_tensor_effect(
     const float* source,
     uint64_t source_frames,

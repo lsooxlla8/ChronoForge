@@ -59,6 +59,29 @@ struct ChronoForgeIntegration {
             return Array(UnsafeBufferPointer(start: values, count: tensor.values.count))
         }
 
+        func renderCross(_ requested: CFEffectDescriptorV2) throws -> [Float] {
+            let driver = [Float](repeating: 0, count: tensor.values.count)
+            var output: OpaquePointer?
+            var error = [CChar](repeating: 0, count: 1024)
+            let errorCapacity = UInt64(error.count)
+            let result = tensor.values.withUnsafeBufferPointer { source in
+                driver.withUnsafeBufferPointer { driverValues in
+                    error.withUnsafeMutableBufferPointer { errorBuffer in
+                        cf_render_cross_tensor_effect(
+                            source.baseAddress, UInt64(tensor.frames), 48, 64, 4, 8, 1,
+                            driverValues.baseAddress, UInt64(tensor.frames), 48, 64, 4,
+                            requested, 128 * 1024 * 1024, &output,
+                            errorBuffer.baseAddress, errorCapacity)
+                    }
+                }
+            }
+            guard result == 0, let output, let values = cf_video_buffer_values(output) else {
+                throw IntegrationFailure.message(String(cString: error))
+            }
+            defer { cf_video_buffer_destroy(output) }
+            return Array(UnsafeBufferPointer(start: values, count: tensor.values.count))
+        }
+
         let first = try render(effect)
         let second = try render(effect)
         guard first == second else {
@@ -156,6 +179,18 @@ struct ChronoForgeIntegration {
         guard bitplaneA == (try render(bitplane(seed: 101))),
               bitplaneA != (try render(bitplane(seed: 102))) else {
             throw IntegrationFailure.message("Bitplane Forge bridge path ignored deterministic XOR seed semantics")
+        }
+
+        let weaveValues: [Float] = [8, 0.25, 0.2, 1]
+        let weaveOptions: [Int32] = [2, 0]
+        let weave = weaveValues.withUnsafeBufferPointer { values in
+            weaveOptions.withUnsafeBufferPointer { options in
+                cf_effect_descriptor_v2_make(19, 1, 55, values.baseAddress, 4, options.baseAddress, 2)
+            }
+        }
+        let weaveOutput = try renderCross(weave)
+        guard weaveOutput != tensor.values, weaveOutput == (try renderCross(weave)) else {
+            throw IntegrationFailure.message("Signal Weave bridge path did not combine A/B deterministically")
         }
 
         var outdated = effect

@@ -1745,6 +1745,7 @@ void apply(
             return;
         case EffectOperation::DimensionalSplicer:
         case EffectOperation::TensorDisplacement:
+        case EffectOperation::SignalWeave:
             throw std::invalid_argument("This effect requires a driver tensor");
     }
     throw std::invalid_argument("Invalid effect operation");
@@ -1790,6 +1791,8 @@ void apply(
             return "Block Address Corruption";
         case EffectOperation::BitplaneForge:
             return "Bitplane Forge";
+        case EffectOperation::SignalWeave:
+            return "Signal Weave";
     }
     return "Unknown";
 }
@@ -1912,6 +1915,14 @@ FileRenderResult render_file_cross_tensor_effect(
             result_shape.h = std::min(source_shape.h, driver_shape.h);
             result_shape.w = std::min(source_shape.w, driver_shape.w);
         }
+    } else if (effect.kind == EffectOperation::SignalWeave) {
+        require_option(effect.options[0], 3, "signal weave pattern");
+        require_option(effect.options[1], 2, "signal weave size matching");
+        if (effect.options[1] == static_cast<std::int32_t>(TensorBroadcast::Crop)) {
+            result_shape.t = std::min(source_shape.t, driver_shape.t);
+            result_shape.h = std::min(source_shape.h, driver_shape.h);
+            result_shape.w = std::min(source_shape.w, driver_shape.w);
+        }
     } else {
         throw std::invalid_argument("The selected effect does not accept a driver tensor");
     }
@@ -1979,7 +1990,7 @@ FileRenderResult render_file_cross_tensor_effect(
                 }
             }
         });
-    } else {
+    } else if (effect.kind == EffectOperation::TensorDisplacement) {
         const auto broadcast = static_cast<TensorBroadcast>(effect.options[1]);
         const auto edge = static_cast<EdgeBehavior>(effect.options[2]);
         const auto source_channel = static_cast<ShiftSource>(effect.options[0]);
@@ -2005,6 +2016,53 @@ FileRenderResult render_file_cross_tensor_effect(
                             static_cast<float>(y) + effect.values[2] * amount,
                             static_cast<float>(x) + effect.values[1] * amount,
                             c, edge);
+                    }
+                }
+            }
+        });
+    } else {
+        const auto pattern = static_cast<SignalWeavePattern>(effect.options[0]);
+        const auto size_matching = static_cast<TensorBroadcast>(effect.options[1]);
+        const auto band_size = static_cast<std::size_t>(std::max(1.0F, std::round(effect.values[0])));
+        const auto irregularity = std::clamp(effect.values[2], 0.0F, 1.0F);
+        const auto time_offset = static_cast<int>(std::clamp(std::round(effect.values[3]), -240.0F, 240.0F));
+        const auto mix = [](std::uint64_t value) {
+            value ^= value >> 30U; value *= 0xBF58476D1CE4E5B9ULL;
+            value ^= value >> 27U; value *= 0x94D049BB133111EBULL;
+            return value ^ (value >> 31U);
+        };
+        const auto driver_coordinate = [&](std::size_t coordinate, std::size_t output_extent, std::size_t driver_extent) {
+            if (size_matching == TensorBroadcast::Stretch) {
+                return output_extent <= 1 || driver_extent <= 1 ? std::size_t{0} : static_cast<std::size_t>(std::round(
+                    static_cast<double>(coordinate) * static_cast<double>(driver_extent - 1) /
+                    static_cast<double>(output_extent - 1)));
+            }
+            return std::min(coordinate, driver_extent - 1);
+        };
+        parallel_for(result_shape.t, [&](double fraction) { report(progress, fraction, "Signal Weave"); }, [&](std::size_t t) {
+            const auto phase = effect.values[1] * static_cast<float>(t);
+            const auto base_driver_t = driver_coordinate(t, result_shape.t, driver_shape.t);
+            const auto driver_t = resolve_time(static_cast<std::ptrdiff_t>(base_driver_t) + time_offset, driver_shape.t, EdgeBehavior::Clamp);
+            for (std::size_t y = 0; y < result_shape.h; ++y) {
+                const auto driver_y = driver_coordinate(y, result_shape.h, driver_shape.h);
+                for (std::size_t x = 0; x < result_shape.w; ++x) {
+                    const auto driver_x = driver_coordinate(x, result_shape.w, driver_shape.w);
+                    std::int64_t pattern_index{};
+                    if (pattern == SignalWeavePattern::Lines) pattern_index = static_cast<std::int64_t>(y) + static_cast<std::int64_t>(std::floor(phase));
+                    else if (pattern == SignalWeavePattern::InterlacedFields) pattern_index = static_cast<std::int64_t>(y + t) + static_cast<std::int64_t>(std::floor(phase));
+                    else if (pattern == SignalWeavePattern::Bands) pattern_index = static_cast<std::int64_t>(std::floor(static_cast<float>(y) / static_cast<float>(band_size) + phase));
+                    else pattern_index = static_cast<std::int64_t>(x / band_size + y / band_size) + static_cast<std::int64_t>(std::floor(phase));
+                    const auto regular_driver = (pattern_index & 1) != 0;
+                    auto hash = effect.random_seed ^ ((t + 1) * 0xD6E8FEB86659FD93ULL);
+                    hash ^= (y / band_size + 1) * 0xA24BAED4963EE407ULL;
+                    hash ^= (x / band_size + 1) * 0x9FB21C651E98DF25ULL;
+                    const auto noise = static_cast<float>(mix(hash) & 0xFFFFFFU) / static_cast<float>(0x1000000U);
+                    const auto driver_probability = regular_driver ? 1.0F - irregularity * 0.5F : irregularity * 0.5F;
+                    const auto use_driver = noise < driver_probability;
+                    for (std::size_t c = 0; c < result_shape.c; ++c) {
+                        destination[linear(t, y, x, c, result_shape)] = use_driver
+                            ? read(driver, driver_t, driver_y, driver_x, std::min(c, driver_shape.c - 1))
+                            : read(source, t, y, x, c);
                     }
                 }
             }

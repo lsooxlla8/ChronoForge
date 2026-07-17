@@ -859,6 +859,17 @@ private struct EffectInspector: View {
             Text("The mask selects which bitplanes may change after temporary integer quantization. Reseed applies only to Shuffle and XOR.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        case .signalWeave:
+            driverPicker()
+            optionPicker("Pattern", value: option(0), options: ["Lines", "Interlaced Fields", "Bands", "Checker"])
+            valueSlider("Band Size", index: 0, range: 1...256, format: "%.0f px")
+            valueSlider("Phase Drift", index: 1, range: -20...20, format: "%.3f units/frame")
+            valueSlider("Irregularity", index: 2, range: 0...1, format: "%.4f")
+            valueSlider("B Time Offset", index: 3, range: -240...240, format: "%.0f frames")
+            optionPicker("Size Matching", value: option(1), options: ["Clamp", "Stretch", "Crop"])
+            Text("Alternating rows, fields, bands or checker cells come from A and B. Irregularity relaxes the regular weave with a seed-stable pattern.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
