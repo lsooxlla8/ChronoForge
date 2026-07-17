@@ -223,6 +223,13 @@ enum RandomStackGenerator {
                 RandomFloatDistribution.logarithmic(1...90).sample(using: &random),
             ]
             node.options = [Int32(random.integer(in: 0...3)), Int32(random.integer(in: 0...2))]
+        case "bitplane-forge":
+            let bits = random.integer(in: 3...16)
+            let lowest = random.integer(in: 0...(bits - 1))
+            let highest = random.integer(in: lowest...(bits - 1))
+            let mask = ((1 << (highest - lowest + 1)) - 1) << lowest
+            node.values = [Float(bits), Float(mask), Float(random.integer(in: -15...15))]
+            node.options = [weighted([0, 1, 2, 2, 3], using: &random), Int32(random.integer(in: 0...5))]
         default:
             break
         }

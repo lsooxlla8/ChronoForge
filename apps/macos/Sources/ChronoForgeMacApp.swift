@@ -680,7 +680,8 @@ private struct EffectInspector: View {
         amountControl
         if node.kind.definition.usesRandomSeed {
             Button("Reseed", systemImage: "arrow.triangle.2.circlepath", action: onReseed)
-                .disabled(node.kind == .horizontalSyncLoss && node.options[0] != 0)
+                .disabled((node.kind == .horizontalSyncLoss && node.options[0] != 0) ||
+                          (node.kind == .bitplaneForge && node.options[0] != 0 && node.options[0] != 3))
                 .help("Generate a new deterministic pattern for this effect.")
         }
         Text(node.kind.title).font(.title3.weight(.semibold))
@@ -847,6 +848,15 @@ private struct EffectInspector: View {
             optionPicker("Mapping", value: option(0), options: ["Swap", "Repeat", "Offset", "Cascade"])
             edgePicker(option(1))
             Text("Corrupted blocks retain their mapping for Hold frames. Reseed changes both spatial addresses and optional time reach.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .bitplaneForge:
+            valueSlider("Working Bits", index: 0, range: 2...16, format: "%.0f bits")
+            valueSlider("Plane Mask", index: 1, range: 0...65535, format: "%.0f")
+            valueSlider("Shift", index: 2, range: -15...15, format: "%.0f planes")
+            optionPicker("Operation", value: option(0), options: ["Shuffle", "Rotate", "Invert", "XOR"])
+            optionPicker("Channel", value: option(1), options: ["Luma", "RGB Together", "Red", "Green", "Blue", "Alpha"])
+            Text("The mask selects which bitplanes may change after temporary integer quantization. Reseed applies only to Shuffle and XOR.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

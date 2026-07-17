@@ -30,6 +30,7 @@ enum class EffectOperation : std::int32_t {
     ChromaCarrierDrift = 15,
     StrideError = 16,
     BlockAddressCorruption = 17,
+    BitplaneForge = 18,
 };
 
 struct EffectSpec {

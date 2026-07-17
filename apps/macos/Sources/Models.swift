@@ -58,6 +58,7 @@ enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
     case chromaCarrierDrift = 15
     case strideError = 16
     case blockAddressCorruption = 17
+    case bitplaneForge = 18
 
     var id: Int32 { rawValue }
 
@@ -163,6 +164,7 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
         case .chromaCarrierDrift: ["Together", "Split Cb–Cr", "Alternating"][min(max(Int(options[0]), 0), 2)]
         case .strideError: ["RGB Together", "Separate Channels", "Alpha Included"][min(max(Int(options[0]), 0), 2)]
         case .blockAddressCorruption: ["Swap", "Repeat", "Offset", "Cascade"][min(max(Int(options[0]), 0), 3)]
+        case .bitplaneForge: ["Shuffle", "Rotate", "Invert", "XOR"][min(max(Int(options[0]), 0), 3)]
         }
     }
 }

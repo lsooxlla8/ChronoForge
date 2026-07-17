@@ -3,6 +3,7 @@
 #include "chronoforge/core/video_tensor.hpp"
 
 #include <cstddef>
+#include <cstdint>
 
 namespace chronoforge {
 
@@ -28,6 +29,8 @@ enum class ChromaDriftMode { Together, SplitCbCr, Alternating };
 enum class StrideChannelMode { RgbTogether, SeparateChannels, AlphaIncluded };
 enum class AddressEdge { Wrap, Mirror };
 enum class BlockCorruptionMapping { Swap, Repeat, Offset, Cascade };
+enum class BitplaneOperation { Shuffle, Rotate, Invert, Xor };
+enum class BitplaneChannel { Luma, RgbTogether, Red, Green, Blue, Alpha };
 
 struct LumaTimeShiftParams {
     float shift_multiplier{};
@@ -163,6 +166,15 @@ struct BlockAddressCorruptionParams {
     std::uint64_t random_seed{};
 };
 
+struct BitplaneForgeParams {
+    std::size_t working_bits{8};
+    std::uint16_t plane_mask{0x00FF};
+    int shift{};
+    BitplaneOperation operation{BitplaneOperation::Invert};
+    BitplaneChannel channel{BitplaneChannel::RgbTogether};
+    std::uint64_t random_seed{};
+};
+
 VideoTensor space_time_transpose(const VideoTensor& input, SpatialAxis axis);
 VideoTensor space_time_transpose(const VideoTensor& input, const SpaceTimeTransposeParams& params);
 VideoTensor luma_time_shift(const VideoTensor& input, const LumaTimeShiftParams& params);
@@ -187,5 +199,6 @@ VideoTensor horizontal_sync_loss(const VideoTensor& input, const HorizontalSyncL
 VideoTensor chroma_carrier_drift(const VideoTensor& input, const ChromaCarrierDriftParams& params);
 VideoTensor stride_error(const VideoTensor& input, const StrideErrorParams& params);
 VideoTensor block_address_corruption(const VideoTensor& input, const BlockAddressCorruptionParams& params);
+VideoTensor bitplane_forge(const VideoTensor& input, const BitplaneForgeParams& params);
 
 }  // namespace chronoforge

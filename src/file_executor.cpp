@@ -5,6 +5,7 @@
 #include "chronoforge/core/spectral.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <complex>
@@ -693,6 +694,96 @@ void block_address_corruption(const MappedTensor& input, MappedTensor& output, c
                 const auto sy = resolve_time(source_y, shape.h, edge);
                 const auto sx = resolve_time(source_x, shape.w, edge);
                 for (std::size_t c = 0; c < shape.c; ++c) destination[linear(t, y, x, c, shape)] = read(input, st, sy, sx, c);
+            }
+        }
+    });
+}
+
+void bitplane_forge(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
+    require_option(effect.options[0], 3, "bitplane operation");
+    require_option(effect.options[1], 5, "bitplane channel");
+    const auto operation = static_cast<BitplaneOperation>(effect.options[0]);
+    const auto channel = static_cast<BitplaneChannel>(effect.options[1]);
+    const auto bits = static_cast<std::size_t>(std::clamp(std::round(effect.values[0]), 2.0F, 16.0F));
+    const auto maximum = bits == 16 ? 0xFFFFU : (1U << bits) - 1U;
+    const auto mask = static_cast<std::uint32_t>(std::clamp(std::round(effect.values[1]), 0.0F, 65535.0F)) & maximum;
+    const auto raw_shift = static_cast<int>(std::clamp(std::round(effect.values[2]), -15.0F, 15.0F));
+    const auto normalized_shift = static_cast<unsigned>((raw_shift % static_cast<int>(bits) + static_cast<int>(bits)) % static_cast<int>(bits));
+    const auto mix = [](std::uint64_t value) {
+        value ^= value >> 30U; value *= 0xBF58476D1CE4E5B9ULL;
+        value ^= value >> 27U; value *= 0x94D049BB133111EBULL;
+        return value ^ (value >> 31U);
+    };
+    const auto greatest_common_divisor = [](std::size_t left, std::size_t right) {
+        while (right != 0) { const auto next = left % right; left = right; right = next; }
+        return left;
+    };
+    std::array<std::array<std::size_t, 16>, 5> permutations{};
+    for (std::size_t stream = 0; stream < permutations.size(); ++stream) {
+        const auto stream_hash = mix(effect.random_seed ^ ((stream + 1) * 0x9E3779B185EBCA87ULL));
+        auto multiplier = static_cast<std::size_t>((stream_hash | 1U) % bits);
+        if (multiplier == 0) multiplier = 1;
+        while (greatest_common_divisor(multiplier, bits) != 1) multiplier = (multiplier + 2) % bits;
+        const auto offset = static_cast<std::size_t>((stream_hash >> 32U) % bits);
+        for (std::size_t bit = 0; bit < bits; ++bit) permutations[stream][bit] = (bit * multiplier + offset) % bits;
+    }
+    const auto forge = [&](float value, std::size_t t, std::size_t y, std::size_t x, std::size_t stream) {
+        const auto quantized = static_cast<std::uint32_t>(std::llround(
+            static_cast<double>(std::clamp(value, 0.0F, 1.0F)) * static_cast<double>(maximum)));
+        std::uint32_t transformed = quantized;
+        if (operation == BitplaneOperation::Shuffle) {
+            transformed = 0;
+            for (std::size_t bit = 0; bit < bits; ++bit) {
+                if ((quantized & (1U << bit)) != 0) transformed |= 1U << permutations[stream][bit];
+            }
+            transformed = (quantized & ~mask) | (transformed & mask);
+        } else if (operation == BitplaneOperation::Rotate) {
+            if (normalized_shift != 0) transformed = ((quantized << normalized_shift) | (quantized >> (bits - normalized_shift))) & maximum;
+            transformed = (quantized & ~mask) | (transformed & mask);
+        } else if (operation == BitplaneOperation::Invert) {
+            transformed = quantized ^ mask;
+        } else {
+            auto hash = effect.random_seed ^ ((t + 1) * 0xD6E8FEB86659FD93ULL);
+            hash ^= (y + 1) * 0xA24BAED4963EE407ULL;
+            hash ^= (x + 1) * 0x9FB21C651E98DF25ULL;
+            hash ^= (stream + 1) * 0xC2B2AE3D27D4EB4FULL;
+            transformed = quantized ^ (static_cast<std::uint32_t>(mix(hash)) & mask);
+        }
+        return static_cast<float>(transformed & maximum) / static_cast<float>(maximum);
+    };
+    const auto& shape = input.shape();
+    auto* destination = output.mutable_data();
+    parallel_for(shape.t, progress, [&](std::size_t t) {
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                if (shape.c == 1) {
+                    const auto value = channel == BitplaneChannel::Alpha ? read(input, t, y, x, 0) : forge(read(input, t, y, x, 0), t, y, x, 0);
+                    destination[linear(t, y, x, 0, shape)] = value;
+                    continue;
+                }
+                const auto current_alpha = shape.c >= 4 ? std::clamp(read(input, t, y, x, 3), 0.0F, 1.0F) : 1.0F;
+                std::array<float, 3> straight{};
+                for (std::size_t c = 0; c < std::min<std::size_t>(3, shape.c); ++c) {
+                    straight[c] = shape.c >= 4 && current_alpha > 0.00001F
+                        ? read(input, t, y, x, c) / current_alpha : (shape.c >= 4 ? 0.0F : read(input, t, y, x, c));
+                }
+                auto output_alpha = current_alpha;
+                if (channel == BitplaneChannel::Luma) {
+                    const auto luminance = shape.c >= 3
+                        ? 0.2126F * straight[0] + 0.7152F * straight[1] + 0.0722F * straight[2] : straight[0];
+                    const auto delta = forge(luminance, t, y, x, 0) - luminance;
+                    for (std::size_t c = 0; c < std::min<std::size_t>(3, shape.c); ++c) straight[c] = std::clamp(straight[c] + delta, 0.0F, 1.0F);
+                } else if (channel == BitplaneChannel::RgbTogether) {
+                    for (std::size_t c = 0; c < std::min<std::size_t>(3, shape.c); ++c) straight[c] = forge(straight[c], t, y, x, 0);
+                } else if (channel >= BitplaneChannel::Red && channel <= BitplaneChannel::Blue) {
+                    const auto c = static_cast<std::size_t>(channel) - static_cast<std::size_t>(BitplaneChannel::Red);
+                    if (c < std::min<std::size_t>(3, shape.c)) straight[c] = forge(straight[c], t, y, x, c + 1);
+                } else if (channel == BitplaneChannel::Alpha && shape.c >= 4) {
+                    output_alpha = forge(current_alpha, t, y, x, 4);
+                }
+                for (std::size_t c = 0; c < std::min<std::size_t>(3, shape.c); ++c) destination[linear(t, y, x, c, shape)] = straight[c] * output_alpha;
+                if (shape.c >= 4) destination[linear(t, y, x, 3, shape)] = output_alpha;
+                for (std::size_t c = 4; c < shape.c; ++c) destination[linear(t, y, x, c, shape)] = read(input, t, y, x, c);
             }
         }
     });
@@ -1649,6 +1740,9 @@ void apply(
         case EffectOperation::BlockAddressCorruption:
             block_address_corruption(input, output, effect, progress);
             return;
+        case EffectOperation::BitplaneForge:
+            bitplane_forge(input, output, effect, progress);
+            return;
         case EffectOperation::DimensionalSplicer:
         case EffectOperation::TensorDisplacement:
             throw std::invalid_argument("This effect requires a driver tensor");
@@ -1694,6 +1788,8 @@ void apply(
             return "Stride Error";
         case EffectOperation::BlockAddressCorruption:
             return "Block Address Corruption";
+        case EffectOperation::BitplaneForge:
+            return "Bitplane Forge";
     }
     return "Unknown";
 }

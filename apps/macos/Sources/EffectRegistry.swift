@@ -133,6 +133,9 @@ enum EffectRegistry {
         definition(.blockAddressCorruption, "Block Address Corruption", "square.grid.3x3.topleft.filled", .red, .memoryAndCompression,
                    cost: .temporal, usesRandomSeed: true, values: [24, 0.35, 8, 4], options: [0, 1],
                    randomization: .init(identifier: "block-address-corruption", amount: .triangular(0.3...1, preferred: 0.75))),
+        definition(.bitplaneForge, "Bitplane Forge", "circle.hexagongrid.fill", .indigo, .dataAndChannels,
+                   usesRandomSeed: true, values: [8, 255, 1], options: [2, 1],
+                   randomization: .init(identifier: "bitplane-forge", amount: .triangular(0.2...0.9, preferred: 0.55))),
     ]
 
     private static let byKind = Dictionary(uniqueKeysWithValues: definitions.map { ($0.kind, $0) })

@@ -188,6 +188,39 @@ void test_block_address_corruption() {
             "Zero corruption is exact identity even when Time Reach is nonzero");
 }
 
+void test_bitplane_forge() {
+    chronoforge::VideoTensor impulse({1, 1, 1, 1}, 1.0F / 255.0F);
+    const auto rotated = chronoforge::bitplane_forge(
+        impulse, {8, 0x00FF, 1, chronoforge::BitplaneOperation::Rotate,
+                  chronoforge::BitplaneChannel::Luma, 0});
+    require_near(rotated.at(0, 0, 0, 0), 2.0F / 255.0F, "Bitplane Forge rotates the working integer planes");
+
+    chronoforge::VideoTensor premultiplied({2, 2, 3, 4}, 0.0F);
+    for (std::size_t t = 0; t < 2; ++t) for (std::size_t y = 0; y < 2; ++y) for (std::size_t x = 0; x < 3; ++x) {
+        const auto alpha = 0.2F + 0.1F * static_cast<float>(t + y + x);
+        premultiplied.at(t, y, x, 0) = 0.8F * alpha;
+        premultiplied.at(t, y, x, 1) = 0.4F * alpha;
+        premultiplied.at(t, y, x, 2) = 0.1F * alpha;
+        premultiplied.at(t, y, x, 3) = alpha;
+    }
+    const chronoforge::BitplaneForgeParams xor_params{
+        10, 0x03FF, 0, chronoforge::BitplaneOperation::Xor,
+        chronoforge::BitplaneChannel::RgbTogether, 41};
+    const auto first = chronoforge::bitplane_forge(premultiplied, xor_params);
+    require(first.values() == chronoforge::bitplane_forge(premultiplied, xor_params).values(),
+            "Bitplane XOR is deterministic for a stored seed");
+    auto changed = xor_params;
+    changed.random_seed = 42;
+    require(first.values() != chronoforge::bitplane_forge(premultiplied, changed).values(),
+            "Bitplane XOR responds to Reseed");
+    for (std::size_t index = 0; index < first.values().size(); index += 4) {
+        require(first.values()[index] <= first.values()[index + 3] &&
+                first.values()[index + 1] <= first.values()[index + 3] &&
+                first.values()[index + 2] <= first.values()[index + 3],
+                "Bitplane colour operations preserve premultiplied alpha");
+    }
+}
+
 void test_sort_and_rotation() {
     chronoforge::VideoTensor input({3, 1, 1, 1});
     input.at(0, 0, 0, 0) = 0.8F;
@@ -420,6 +453,7 @@ void test_file_backed_effect_chain() {
         {chronoforge::EffectOperation::ChromaCarrierDrift, {1.0F, 0.0F, 1.0F, 2.0F}, {1, 1}},
         {chronoforge::EffectOperation::StrideError, {0.1F, 0.07F, 0.013F}, {1, 1}},
         {chronoforge::EffectOperation::BlockAddressCorruption, {3.0F, 0.75F, 2.0F, 2.0F}, {3, 2}, 1.0F, 0xC0FFEE},
+        {chronoforge::EffectOperation::BitplaneForge, {8.0F, 255.0F, 1.0F}, {3, 1}, 1.0F, 0xC0FFEE},
         {chronoforge::EffectOperation::RadialChronoFunnel, {0.5F, 0.5F, 0.2F, 0}, {2, 0, 0, 0}},
         {chronoforge::EffectOperation::TemporalPixelSort, {0.1F, 0, 0, 0}, {0, 0, 0, 0}},
         {chronoforge::EffectOperation::Tensor3dRotation, {5.0F, 10.0F, 0, 0}, {3, 0, 0, 0}},
@@ -459,6 +493,9 @@ void test_file_backed_effect_chain() {
     expected = chronoforge::block_address_corruption(
         expected, {3, 0.75F, 2, 2, chronoforge::BlockCorruptionMapping::Cascade,
                    chronoforge::EdgeBehavior::Mirror, 0xC0FFEE});
+    expected = chronoforge::bitplane_forge(
+        expected, {8, 255, 1, chronoforge::BitplaneOperation::Xor,
+                   chronoforge::BitplaneChannel::RgbTogether, 0xC0FFEE});
     expected = chronoforge::radial_chrono_funnel(
         expected,
         {0.5F, 0.5F, 0.2F, chronoforge::EdgeBehavior::Mirror, 0.0F, chronoforge::RadialTopology::TimeLoom});
@@ -668,6 +705,7 @@ int main() {
         test_chroma_carrier_drift();
         test_stride_error();
         test_block_address_corruption();
+        test_bitplane_forge();
         test_sort_and_rotation();
         test_fft_swap();
         test_cross_tensor_and_flow_effects();

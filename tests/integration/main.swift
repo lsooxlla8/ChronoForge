@@ -143,6 +143,21 @@ struct ChronoForgeIntegration {
             throw IntegrationFailure.message("Block Address Corruption bridge path ignored deterministic seed semantics")
         }
 
+        let bitplaneValues: [Float] = [8, 255, 1]
+        let bitplaneOptions: [Int32] = [3, 1]
+        func bitplane(seed: UInt64) -> CFEffectDescriptorV2 {
+            bitplaneValues.withUnsafeBufferPointer { values in
+                bitplaneOptions.withUnsafeBufferPointer { options in
+                    cf_effect_descriptor_v2_make(18, 1, seed, values.baseAddress, 3, options.baseAddress, 2)
+                }
+            }
+        }
+        let bitplaneA = try render(bitplane(seed: 101))
+        guard bitplaneA == (try render(bitplane(seed: 101))),
+              bitplaneA != (try render(bitplane(seed: 102))) else {
+            throw IntegrationFailure.message("Bitplane Forge bridge path ignored deterministic XOR seed semantics")
+        }
+
         var outdated = effect
         outdated.descriptor_version = 1
         do {

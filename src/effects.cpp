@@ -705,6 +705,102 @@ VideoTensor block_address_corruption(const VideoTensor& input, const BlockAddres
     return output;
 }
 
+VideoTensor bitplane_forge(const VideoTensor& input, const BitplaneForgeParams& params) {
+    const auto& shape = input.shape();
+    VideoTensor output(shape, 0.0F, input.metadata());
+    const auto bits = std::clamp<std::size_t>(params.working_bits, 2, 16);
+    const auto maximum = bits == 16 ? 0xFFFFU : (1U << bits) - 1U;
+    const auto mask = static_cast<std::uint32_t>(params.plane_mask) & maximum;
+    const auto normalized_shift = static_cast<unsigned>((params.shift % static_cast<int>(bits) + static_cast<int>(bits)) % static_cast<int>(bits));
+    const auto mix = [](std::uint64_t value) {
+        value ^= value >> 30U; value *= 0xBF58476D1CE4E5B9ULL;
+        value ^= value >> 27U; value *= 0x94D049BB133111EBULL;
+        return value ^ (value >> 31U);
+    };
+    const auto greatest_common_divisor = [](std::size_t left, std::size_t right) {
+        while (right != 0) { const auto next = left % right; left = right; right = next; }
+        return left;
+    };
+    std::array<std::array<std::size_t, 16>, 5> permutations{};
+    for (std::size_t stream = 0; stream < permutations.size(); ++stream) {
+        const auto stream_hash = mix(params.random_seed ^ ((stream + 1) * 0x9E3779B185EBCA87ULL));
+        auto multiplier = static_cast<std::size_t>((stream_hash | 1U) % bits);
+        if (multiplier == 0) multiplier = 1;
+        while (greatest_common_divisor(multiplier, bits) != 1) multiplier = (multiplier + 2) % bits;
+        const auto offset = static_cast<std::size_t>((stream_hash >> 32U) % bits);
+        for (std::size_t bit = 0; bit < bits; ++bit) permutations[stream][bit] = (bit * multiplier + offset) % bits;
+    }
+    const auto forge = [&](float value, std::size_t t, std::size_t y, std::size_t x, std::size_t stream) {
+        const auto quantized = static_cast<std::uint32_t>(std::llround(
+            static_cast<double>(std::clamp(value, 0.0F, 1.0F)) * static_cast<double>(maximum)));
+        std::uint32_t transformed = quantized;
+        switch (params.operation) {
+            case BitplaneOperation::Shuffle:
+                transformed = 0;
+                for (std::size_t bit = 0; bit < bits; ++bit) {
+                    if ((quantized & (1U << bit)) != 0) transformed |= 1U << permutations[stream][bit];
+                }
+                transformed = (quantized & ~mask) | (transformed & mask);
+                break;
+            case BitplaneOperation::Rotate:
+                if (normalized_shift != 0) {
+                    transformed = ((quantized << normalized_shift) | (quantized >> (bits - normalized_shift))) & maximum;
+                }
+                transformed = (quantized & ~mask) | (transformed & mask);
+                break;
+            case BitplaneOperation::Invert:
+                transformed = quantized ^ mask;
+                break;
+            case BitplaneOperation::Xor: {
+                auto hash = params.random_seed ^ ((t + 1) * 0xD6E8FEB86659FD93ULL);
+                hash ^= (y + 1) * 0xA24BAED4963EE407ULL;
+                hash ^= (x + 1) * 0x9FB21C651E98DF25ULL;
+                hash ^= (stream + 1) * 0xC2B2AE3D27D4EB4FULL;
+                transformed = quantized ^ (static_cast<std::uint32_t>(mix(hash)) & mask);
+                break;
+            }
+        }
+        return static_cast<float>(transformed & maximum) / static_cast<float>(maximum);
+    };
+    parallel_for(shape.t, [&](std::size_t t) {
+        for (std::size_t y = 0; y < shape.h; ++y) {
+            for (std::size_t x = 0; x < shape.w; ++x) {
+                if (shape.c == 1) {
+                    const auto selected = params.channel != BitplaneChannel::Alpha;
+                    output.at(t, y, x, 0) = selected ? forge(input.at(t, y, x, 0), t, y, x, 0) : input.at(t, y, x, 0);
+                    continue;
+                }
+                const auto current_alpha = shape.c >= 4 ? std::clamp(input.at(t, y, x, 3), 0.0F, 1.0F) : 1.0F;
+                std::array<float, 3> straight{};
+                for (std::size_t c = 0; c < std::min<std::size_t>(3, shape.c); ++c) {
+                    straight[c] = shape.c >= 4 && current_alpha > 0.00001F
+                        ? input.at(t, y, x, c) / current_alpha : (shape.c >= 4 ? 0.0F : input.at(t, y, x, c));
+                }
+                auto output_alpha = current_alpha;
+                if (params.channel == BitplaneChannel::Luma) {
+                    const auto luminance = shape.c >= 3
+                        ? 0.2126F * straight[0] + 0.7152F * straight[1] + 0.0722F * straight[2] : straight[0];
+                    const auto delta = forge(luminance, t, y, x, 0) - luminance;
+                    for (std::size_t c = 0; c < std::min<std::size_t>(3, shape.c); ++c) straight[c] = std::clamp(straight[c] + delta, 0.0F, 1.0F);
+                } else if (params.channel == BitplaneChannel::RgbTogether) {
+                    for (std::size_t c = 0; c < std::min<std::size_t>(3, shape.c); ++c) straight[c] = forge(straight[c], t, y, x, 0);
+                } else if (params.channel >= BitplaneChannel::Red && params.channel <= BitplaneChannel::Blue) {
+                    const auto c = static_cast<std::size_t>(params.channel) - static_cast<std::size_t>(BitplaneChannel::Red);
+                    if (c < std::min<std::size_t>(3, shape.c)) straight[c] = forge(straight[c], t, y, x, c + 1);
+                } else if (params.channel == BitplaneChannel::Alpha && shape.c >= 4) {
+                    output_alpha = forge(current_alpha, t, y, x, 4);
+                }
+                for (std::size_t c = 0; c < std::min<std::size_t>(3, shape.c); ++c) {
+                    output.at(t, y, x, c) = straight[c] * output_alpha;
+                }
+                if (shape.c >= 4) output.at(t, y, x, 3) = output_alpha;
+                for (std::size_t c = 4; c < shape.c; ++c) output.at(t, y, x, c) = input.at(t, y, x, c);
+            }
+        }
+    });
+    return output;
+}
+
 VideoTensor radial_chrono_funnel(const VideoTensor& input, const RadialChronoFunnelParams& params) {
     const auto& shape = input.shape();
     VideoTensor output(shape, 0.0F, input.metadata());

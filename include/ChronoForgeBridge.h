@@ -39,6 +39,7 @@ typedef enum CFEffectKind {
     CF_EFFECT_CHROMA_CARRIER_DRIFT = 15,
     CF_EFFECT_STRIDE_ERROR = 16,
     CF_EFFECT_BLOCK_ADDRESS_CORRUPTION = 17,
+    CF_EFFECT_BITPLANE_FORGE = 18,
 } CFEffectKind;
 
 enum { CF_EFFECT_DESCRIPTOR_VERSION = 2, CF_EFFECT_PARAMETER_CAPACITY = 8 };
@@ -57,6 +58,7 @@ enum { CF_EFFECT_DESCRIPTOR_VERSION = 2, CF_EFFECT_PARAMETER_CAPACITY = 8 };
 // chroma carrier drift:    values = X/Y/time offsets, bleed; options = mode, edge
 // stride error:            values = stride delta, base offset, temporal drift; options = channel mode, address edge
 // block corruption:        values = block size, corruption, time reach, hold; options = mapping, edge
+// bitplane forge:           values = working bits, plane mask, shift; options = operation, channel
 typedef struct CFEffectDescriptorV2 {
     int32_t kind;
     uint32_t descriptor_version;
