@@ -12,6 +12,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 using chronoforge::VideoTensor;
@@ -49,8 +50,63 @@ void enforce_budget(const VideoTensor& tensor, uint64_t budget) {
     }
 }
 
-VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptor& descriptor, uint64_t budget) {
+[[nodiscard]] std::pair<uint32_t, uint32_t> expected_parameter_counts(CFEffectKind kind) {
+    switch (kind) {
+        case CF_EFFECT_SPACE_TIME_TRANSPOSE: return {0, 2};
+        case CF_EFFECT_LUMA_TIME_SHIFT: return {1, 2};
+        case CF_EFFECT_RADIAL_CHRONO_FUNNEL: return {4, 2};
+        case CF_EFFECT_TEMPORAL_PIXEL_SORT: return {1, 2};
+        case CF_EFFECT_TENSOR_3D_ROTATION: return {3, 1};
+        case CF_EFFECT_SPECTRAL_FFT_SWAP: return {1, 4};
+        case CF_EFFECT_SELECTIVE_PREFILTER: return {0, 2};
+        case CF_EFFECT_DIMENSIONAL_SPLICER: return {0, 4};
+        case CF_EFFECT_TENSOR_DISPLACEMENT: return {3, 3};
+        case CF_EFFECT_OPTICAL_FLOW_TIME_WARP: return {4, 1};
+        case CF_EFFECT_CHRONO_FEEDBACK: return {4, 1};
+        case CF_EFFECT_STRUCTURAL_DATAMOSH: return {3, 2};
+        case CF_EFFECT_SEAMLESS_LOOP: return {2, 1};
+    }
+    throw std::invalid_argument("Unsupported effect kind");
+}
+
+CFEffectKind validate_descriptor(const CFEffectDescriptorV2& descriptor) {
+    if (descriptor.descriptor_version != CF_EFFECT_DESCRIPTOR_VERSION) {
+        throw std::invalid_argument("Unsupported effect descriptor version");
+    }
+    if (!std::isfinite(descriptor.amount) || descriptor.amount < 0.0F || descriptor.amount > 1.0F) {
+        throw std::invalid_argument("Effect amount must be between zero and one");
+    }
     const auto kind = checked_enum<CFEffectKind>(descriptor.kind, CF_EFFECT_SEAMLESS_LOOP, "effect kind");
+    const auto [values, options] = expected_parameter_counts(kind);
+    if (descriptor.value_count != values || descriptor.option_count != options) {
+        throw std::invalid_argument("Effect descriptor parameter counts do not match its kind");
+    }
+    for (uint32_t index = descriptor.value_count; index < CF_EFFECT_PARAMETER_CAPACITY; ++index) {
+        if (descriptor.values[index] != 0.0F) {
+            throw std::invalid_argument("Unused effect value slots must be zero");
+        }
+    }
+    for (uint32_t index = descriptor.option_count; index < CF_EFFECT_PARAMETER_CAPACITY; ++index) {
+        if (descriptor.options[index] != 0) {
+            throw std::invalid_argument("Unused effect option slots must be zero");
+        }
+    }
+    return kind;
+}
+
+void blend_amount(const VideoTensor& input, VideoTensor& effected, float amount) {
+    if (input.shape() != effected.shape()) {
+        throw std::invalid_argument("Partial Amount requires an effect that preserves tensor shape");
+    }
+    auto& output = effected.values();
+    const auto& source = input.values();
+    for (std::size_t index = 0; index < output.size(); ++index) {
+        output[index] = source[index] + (output[index] - source[index]) * amount;
+    }
+}
+
+VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptorV2& descriptor, uint64_t budget) {
+    const auto kind = validate_descriptor(descriptor);
     switch (kind) {
         case CF_EFFECT_SPACE_TIME_TRANSPOSE:
             return chronoforge::space_time_transpose(
@@ -156,8 +212,8 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptor& des
 VideoTensor apply_cross_effect(
     const VideoTensor& source,
     const VideoTensor& driver,
-    const CFEffectDescriptor& descriptor) {
-    const auto kind = checked_enum<CFEffectKind>(descriptor.kind, CF_EFFECT_SEAMLESS_LOOP, "effect kind");
+    const CFEffectDescriptorV2& descriptor) {
+    const auto kind = validate_descriptor(descriptor);
     switch (kind) {
         case CF_EFFECT_DIMENSIONAL_SPLICER:
             return chronoforge::dimensional_splicer(
@@ -188,20 +244,31 @@ VideoTensor apply_cross_effect(
 
 extern "C" {
 
-CFEffectDescriptor cf_effect_descriptor_make(
+CFEffectDescriptorV2 cf_effect_descriptor_v2_make(
     int32_t kind,
-    float value0,
-    float value1,
-    float value2,
-    float value3,
-    int32_t option0,
-    int32_t option1,
-    int32_t option2,
-    int32_t option3) {
-    return {kind, {value0, value1, value2, value3}, {option0, option1, option2, option3}};
+    float amount,
+    uint64_t random_seed,
+    const float* values,
+    uint32_t value_count,
+    const int32_t* options,
+    uint32_t option_count) {
+    CFEffectDescriptorV2 descriptor{};
+    descriptor.kind = kind;
+    descriptor.descriptor_version = CF_EFFECT_DESCRIPTOR_VERSION;
+    descriptor.amount = amount;
+    descriptor.random_seed = random_seed;
+    descriptor.value_count = value_count;
+    descriptor.option_count = option_count;
+    if (values != nullptr && value_count <= CF_EFFECT_PARAMETER_CAPACITY) {
+        std::copy_n(values, value_count, descriptor.values);
+    }
+    if (options != nullptr && option_count <= CF_EFFECT_PARAMETER_CAPACITY) {
+        std::copy_n(options, option_count, descriptor.options);
+    }
+    return descriptor;
 }
 
-const char* cf_core_version(void) { return "0.9.0"; }
+const char* cf_core_version(void) { return "1.0.0-dev"; }
 
 int32_t cf_render_effect_chain(
     const float* input,
@@ -211,7 +278,7 @@ int32_t cf_render_effect_chain(
     uint64_t channels,
     uint32_t frame_rate_numerator,
     uint32_t frame_rate_denominator,
-    const CFEffectDescriptor* effects,
+    const CFEffectDescriptorV2* effects,
     uint64_t effect_count,
     uint64_t max_working_set_bytes,
     CFVideoBuffer** output,
@@ -247,7 +314,16 @@ int32_t cf_render_effect_chain(
         enforce_budget(current, max_working_set_bytes);
 
         for (uint64_t index = 0; index < effect_count; ++index) {
-            current = apply_effect(current, effects[index], max_working_set_bytes);
+            const auto& descriptor = effects[index];
+            validate_descriptor(descriptor);
+            if (descriptor.amount == 0.0F) {
+                continue;
+            }
+            auto effected = apply_effect(current, descriptor, max_working_set_bytes);
+            if (descriptor.amount < 1.0F) {
+                blend_amount(current, effected, descriptor.amount);
+            }
+            current = std::move(effected);
             enforce_budget(current, max_working_set_bytes);
         }
         *output = new CFVideoBuffer(std::move(current));
@@ -275,7 +351,7 @@ int32_t cf_render_cross_tensor_effect(
     uint64_t driver_height,
     uint64_t driver_width,
     uint64_t driver_channels,
-    CFEffectDescriptor effect,
+    CFEffectDescriptorV2 effect,
     uint64_t max_working_set_bytes,
     CFVideoBuffer** output,
     char* error_message,
@@ -311,7 +387,16 @@ int32_t cf_render_cross_tensor_effect(
         if (max_working_set_bytes == 0 || source_shape.byte_count() + driver_shape.byte_count() > max_working_set_bytes) {
             throw std::runtime_error("Proxy tensors exceed the configured working memory budget");
         }
+        validate_descriptor(effect);
+        if (effect.amount == 0.0F) {
+            *output = new CFVideoBuffer(std::move(source_tensor));
+            set_error(error_message, error_message_capacity, "");
+            return 0;
+        }
         auto result = apply_cross_effect(source_tensor, driver_tensor, effect);
+        if (effect.amount < 1.0F) {
+            blend_amount(source_tensor, result, effect.amount);
+        }
         *output = new CFVideoBuffer(std::move(result));
         set_error(error_message, error_message_capacity, "");
         return 0;
@@ -329,7 +414,7 @@ int32_t cf_render_file_effect_chain(
     const char* output_path,
     const char* scratch_directory,
     CFFileTensorInfo input_info,
-    const CFEffectDescriptor* effects,
+    const CFEffectDescriptorV2* effects,
     uint64_t effect_count,
     uint64_t max_working_set_bytes,
     CFRenderProgressCallback progress,
@@ -357,12 +442,16 @@ int32_t cf_render_file_effect_chain(
         std::vector<chronoforge::EffectSpec> specifications;
         specifications.reserve(static_cast<std::size_t>(effect_count));
         for (uint64_t index = 0; index < effect_count; ++index) {
-            const auto kind = checked_enum<chronoforge::EffectOperation>(
-                effects[index].kind, static_cast<int32_t>(chronoforge::EffectOperation::SeamlessLoop), "effect kind");
+            validate_descriptor(effects[index]);
+            const auto kind = static_cast<chronoforge::EffectOperation>(effects[index].kind);
             specifications.push_back({
                 kind,
-                {effects[index].values[0], effects[index].values[1], effects[index].values[2], effects[index].values[3]},
-                {effects[index].options[0], effects[index].options[1], effects[index].options[2], effects[index].options[3]},
+                {effects[index].values[0], effects[index].values[1], effects[index].values[2], effects[index].values[3],
+                 effects[index].values[4], effects[index].values[5], effects[index].values[6], effects[index].values[7]},
+                {effects[index].options[0], effects[index].options[1], effects[index].options[2], effects[index].options[3],
+                 effects[index].options[4], effects[index].options[5], effects[index].options[6], effects[index].options[7]},
+                effects[index].amount,
+                effects[index].random_seed,
             });
         }
         const chronoforge::VideoTensorMetadata metadata{
@@ -413,7 +502,7 @@ int32_t cf_render_file_cross_tensor_effect(
     const char* driver_path,
     CFFileTensorInfo driver_info,
     const char* output_path,
-    CFEffectDescriptor effect,
+    CFEffectDescriptorV2 effect,
     CFRenderProgressCallback progress,
     void* progress_context,
     CFFileTensorInfo* output_info,
@@ -431,12 +520,16 @@ int32_t cf_render_file_cross_tensor_effect(
             static_cast<std::size_t>(driver_info.frames), static_cast<std::size_t>(driver_info.height),
             static_cast<std::size_t>(driver_info.width), static_cast<std::size_t>(driver_info.channels),
         };
-        const auto kind = checked_enum<chronoforge::EffectOperation>(
-            effect.kind, static_cast<int32_t>(chronoforge::EffectOperation::SeamlessLoop), "effect kind");
+        validate_descriptor(effect);
+        const auto kind = static_cast<chronoforge::EffectOperation>(effect.kind);
         const chronoforge::EffectSpec specification{
             kind,
-            {effect.values[0], effect.values[1], effect.values[2], effect.values[3]},
-            {effect.options[0], effect.options[1], effect.options[2], effect.options[3]},
+            {effect.values[0], effect.values[1], effect.values[2], effect.values[3],
+             effect.values[4], effect.values[5], effect.values[6], effect.values[7]},
+            {effect.options[0], effect.options[1], effect.options[2], effect.options[3],
+             effect.options[4], effect.options[5], effect.options[6], effect.options[7]},
+            effect.amount,
+            effect.random_seed,
         };
         const chronoforge::VideoTensorMetadata metadata{
             source_info.frame_rate_numerator, source_info.frame_rate_denominator,

@@ -44,13 +44,7 @@ enum CoreRenderer {
         }
         return try await Task.detached(priority: .userInitiated) {
             try Task.checkCancellation()
-            let descriptors = effects.filter(\.enabled).map { effect in
-                cf_effect_descriptor_make(
-                    effect.kind.rawValue,
-                    effect.values[0], effect.values[1], effect.values[2], effect.values[3],
-                    effect.options[0], effect.options[1], effect.options[2], effect.options[3]
-                )
-            }
+            let descriptors = effects.filter(\.enabled).map { $0.coreDescriptor() }
             var output: OpaquePointer?
             var error = [CChar](repeating: 0, count: 1024)
             let errorCapacity = UInt64(error.count)
@@ -107,11 +101,7 @@ enum CoreRenderer {
         budget: UInt64
     ) async throws -> VideoTensorData {
         try await Task.detached(priority: .userInitiated) {
-            let descriptor = cf_effect_descriptor_make(
-                effect.kind.rawValue,
-                effect.values[0], effect.values[1], effect.values[2], effect.values[3],
-                effect.options[0], effect.options[1], effect.options[2], effect.options[3]
-            )
+            let descriptor = effect.coreDescriptor()
             var output: OpaquePointer?
             var error = [CChar](repeating: 0, count: 1024)
             let errorCapacity = UInt64(error.count)

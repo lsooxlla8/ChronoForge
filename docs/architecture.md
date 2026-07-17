@@ -37,6 +37,10 @@ Every node declares:
 - deterministic backend capability: CPU reference, Metal kernel, or global FFT;
 - cacheability and cache version.
 
+Product metadata is centralized in the Swift `EffectRegistry`. Each `EffectDefinition` owns the title, symbol, category, input arity, cost class, shape behavior, logical parameter counts and default node. The Add Effect menu and render descriptor construction consume this registry instead of maintaining parallel switch blocks.
+
+The internal C boundary uses `CFEffectDescriptorV2`: a versioned packet with eight value slots, eight option slots, logical counts, `Amount` and a 64-bit random seed. The boundary validates the version, counts and zeroed padding before dispatch. `Amount = 0` is a bit-exact identity; partial Amount is accepted only when the node preserves tensor shape. Proxy rendering blends in linear premultiplied tensor space, while full rendering blends directly into the mapped output after the effect pass and does not allocate a third full-size tensor.
+
 The editor presents one ordered effect stack and automatically reconnects every A input after insertion, duplication, deletion or drag reordering. Cross-tensor effects also store an independent media-pool B identifier. The core retains explicit validated edges and cycle rejection. Proxy and full caches include fingerprints for A and every referenced B source.
 
 ## Out-of-core strategy
@@ -46,6 +50,7 @@ Proxy cache files use an atomic versioned container. Full renders use mapped lin
 ```text
 engine/cache format version
 node type + canonical parameters
+amount + random seed
 ordered upstream cache keys
 input source fingerprint
 proxy scale + output timeline + colour policy

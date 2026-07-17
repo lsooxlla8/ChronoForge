@@ -36,7 +36,9 @@ typedef enum CFEffectKind {
     CF_EFFECT_SEAMLESS_LOOP = 12,
 } CFEffectKind;
 
-// Generic ABI-stable parameter packet. Its interpretation is defined by kind:
+enum { CF_EFFECT_DESCRIPTOR_VERSION = 2, CF_EFFECT_PARAMETER_CAPACITY = 8 };
+
+// Versioned internal parameter packet. Its interpretation is defined by kind:
 // transpose:              options = X(0) / Y(1), Native(0) / Fit source canvas(1)
 // luma-time shift:        values[0] = multiplier, options = source, edge
 // radial time loom:       values = centerX, centerY, intensity, twist; options = edge, topology
@@ -45,22 +47,25 @@ typedef enum CFEffectKind {
 // spectral transform:     values[0] = angle; options = axis/plane, normalize, Native/Fit Source Size, Swap/Rotate
 // selective prefilter:    options = spatial strength, temporal strength (Off/Light/Strong)
 // seamless loop:          values = transition frames, weave softness; options[0] = Crossfade/Luma Weave/Ping-Pong
-typedef struct CFEffectDescriptor {
+typedef struct CFEffectDescriptorV2 {
     int32_t kind;
-    float values[4];
-    int32_t options[4];
-} CFEffectDescriptor;
+    uint32_t descriptor_version;
+    float amount;
+    uint64_t random_seed;
+    uint32_t value_count;
+    uint32_t option_count;
+    float values[CF_EFFECT_PARAMETER_CAPACITY];
+    int32_t options[CF_EFFECT_PARAMETER_CAPACITY];
+} CFEffectDescriptorV2;
 
-CFEffectDescriptor cf_effect_descriptor_make(
+CFEffectDescriptorV2 cf_effect_descriptor_v2_make(
     int32_t kind,
-    float value0,
-    float value1,
-    float value2,
-    float value3,
-    int32_t option0,
-    int32_t option1,
-    int32_t option2,
-    int32_t option3);
+    float amount,
+    uint64_t random_seed,
+    const float* values,
+    uint32_t value_count,
+    const int32_t* options,
+    uint32_t option_count);
 
 const char* cf_core_version(void);
 
@@ -75,7 +80,7 @@ int32_t cf_render_effect_chain(
     uint64_t channels,
     uint32_t frame_rate_numerator,
     uint32_t frame_rate_denominator,
-    const CFEffectDescriptor* effects,
+    const CFEffectDescriptorV2* effects,
     uint64_t effect_count,
     uint64_t max_working_set_bytes,
     CFVideoBuffer** output,
@@ -97,7 +102,7 @@ int32_t cf_render_cross_tensor_effect(
     uint64_t driver_height,
     uint64_t driver_width,
     uint64_t driver_channels,
-    CFEffectDescriptor effect,
+    CFEffectDescriptorV2 effect,
     uint64_t max_working_set_bytes,
     CFVideoBuffer** output,
     char* error_message,
@@ -111,7 +116,7 @@ int32_t cf_render_file_effect_chain(
     const char* output_path,
     const char* scratch_directory,
     CFFileTensorInfo input_info,
-    const CFEffectDescriptor* effects,
+    const CFEffectDescriptorV2* effects,
     uint64_t effect_count,
     uint64_t max_working_set_bytes,
     CFRenderProgressCallback progress,
@@ -126,7 +131,7 @@ int32_t cf_render_file_cross_tensor_effect(
     const char* driver_path,
     CFFileTensorInfo driver_info,
     const char* output_path,
-    CFEffectDescriptor effect,
+    CFEffectDescriptorV2 effect,
     CFRenderProgressCallback progress,
     void* progress_context,
     CFFileTensorInfo* output_info,

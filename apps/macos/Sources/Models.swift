@@ -56,65 +56,20 @@ enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
 
     var id: Int32 { rawValue }
 
-    var title: String {
-        switch self {
-        case .spaceTimeTranspose, .tensor3DRotation: "Space-Time Transform"
-        case .lumaTimeShift: "Self Time Displacement"
-        case .radialChronoFunnel: "Polar Time Warp"
-        case .temporalPixelSort: "Pixel Sort (Time)"
-        case .spectralFFTSwap: "3D FFT Transform"
-        case .selectivePrefilter: "Output Prefilter"
-        case .dimensionalSplicer: "Space-Time Map"
-        case .tensorDisplacement: "Space-Time Displacement"
-        case .opticalFlowTimeWarp: "Optical Flow Time Warp"
-        case .chronoFeedback: "Time Feedback"
-        case .structuralDatamosh: "Axis Datamosh"
-        case .seamlessLoop: "Seamless Loop"
-        }
-    }
+    var definition: EffectDefinition { EffectRegistry.definition(for: self) }
+    var title: String { definition.title }
+    var symbol: String { definition.symbol }
+    var tintName: String { definition.tint.rawValue }
 
-    var symbol: String {
-        switch self {
-        case .spaceTimeTranspose, .tensor3DRotation: "rotate.3d"
-        case .lumaTimeShift: "sun.max.trianglebadge.exclamationmark"
-        case .radialChronoFunnel: "hurricane"
-        case .temporalPixelSort: "arrow.up.arrow.down.square"
-        case .spectralFFTSwap: "waveform.path.ecg.rectangle"
-        case .selectivePrefilter: "camera.filters"
-        case .dimensionalSplicer: "arrow.triangle.branch"
-        case .tensorDisplacement: "move.3d"
-        case .opticalFlowTimeWarp: "wind"
-        case .chronoFeedback: "arrow.triangle.2.circlepath.circle"
-        case .structuralDatamosh: "waveform.path.badge.minus"
-        case .seamlessLoop: "repeat.circle"
-        }
-    }
+    static let singleInputKinds = EffectRegistry.definitions
+        .filter { $0.isAddable && $0.inputArity == .one }
+        .map(\.kind)
+    static let twoInputKinds = EffectRegistry.definitions
+        .filter { $0.isAddable && $0.inputArity == .two }
+        .map(\.kind)
+    static let addableKinds = EffectRegistry.definitions.filter(\.isAddable).map(\.kind)
 
-    var tintName: String {
-        switch self {
-        case .spaceTimeTranspose, .tensor3DRotation: "orange"
-        case .lumaTimeShift: "yellow"
-        case .radialChronoFunnel: "cyan"
-        case .temporalPixelSort: "purple"
-        case .spectralFFTSwap: "indigo"
-        case .selectivePrefilter: "gray"
-        case .dimensionalSplicer: "mint"
-        case .tensorDisplacement: "blue"
-        case .opticalFlowTimeWarp: "green"
-        case .chronoFeedback: "pink"
-        case .structuralDatamosh: "red"
-        case .seamlessLoop: "teal"
-        }
-    }
-
-    static let singleInputKinds: [EffectKind] = [
-        .spaceTimeTranspose, .lumaTimeShift, .radialChronoFunnel, .temporalPixelSort, .spectralFFTSwap,
-        .opticalFlowTimeWarp, .chronoFeedback, .structuralDatamosh, .seamlessLoop,
-    ]
-    static let twoInputKinds: [EffectKind] = [.dimensionalSplicer, .tensorDisplacement]
-    static let addableKinds: [EffectKind] = singleInputKinds + twoInputKinds
-
-    var requiresDriver: Bool { self == .dimensionalSplicer || self == .tensorDisplacement }
+    var requiresDriver: Bool { definition.inputArity == .two }
 }
 
 struct EffectNode: Identifiable, Codable, Equatable, Sendable {
@@ -123,46 +78,64 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
     var enabled = true
     var inputNodeID: UUID?
     var driverMediaID: UUID? = nil
+    var amount: Float = 1
+    var randomSeed: UInt64
     var values: [Float]
     var options: [Int32]
 
+    init(
+        id: UUID = UUID(),
+        kind: EffectKind,
+        enabled: Bool = true,
+        inputNodeID: UUID? = nil,
+        driverMediaID: UUID? = nil,
+        amount: Float = 1,
+        randomSeed: UInt64 = .random(in: UInt64.min...UInt64.max),
+        values: [Float],
+        options: [Int32]
+    ) {
+        self.id = id
+        self.kind = kind
+        self.enabled = enabled
+        self.inputNodeID = inputNodeID
+        self.driverMediaID = driverMediaID
+        self.amount = amount
+        self.randomSeed = randomSeed
+        self.values = values
+        self.options = options
+    }
+
     static func make(_ kind: EffectKind, inputNodeID: UUID? = nil) -> EffectNode {
-        switch kind {
-        case .spaceTimeTranspose:
-            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 1, 0, 0])
-        case .lumaTimeShift:
-            return .init(kind: kind, inputNodeID: inputNodeID, values: [20, 0, 0, 0], options: [0, 0, 0, 0])
-        case .radialChronoFunnel:
-            return .init(kind: kind, inputNodeID: inputNodeID, values: [0.5, 0.5, 0.08, 0.75], options: [1, 0, 0, 0])
-        case .temporalPixelSort:
-            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 0, 0, 0])
-        case .tensor3DRotation:
-            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 15, 0, 0], options: [3, 0, 0, 0])
-        case .spectralFFTSwap:
-            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 1, 1, 0])
-        case .selectivePrefilter:
-            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 0, 0, 0])
-        case .dimensionalSplicer:
-            return .init(kind: kind, inputNodeID: inputNodeID, values: [0, 0, 0, 0], options: [0, 1, 2, 1])
-        case .tensorDisplacement:
-            return .init(kind: kind, inputNodeID: inputNodeID, values: [12, 24, 24, 0], options: [0, 1, 0, 0])
-        case .opticalFlowTimeWarp:
-            return .init(kind: kind, inputNodeID: inputNodeID, values: [0.02, 4, 0, 180], options: [0, 0, 0, 0])
-        case .chronoFeedback:
-            return .init(kind: kind, inputNodeID: inputNodeID, values: [2, 0.35, 2, 0.15], options: [1, 0, 0, 0])
-        case .structuralDatamosh:
-            return .init(kind: kind, inputNodeID: inputNodeID, values: [0.2, 8, 0.05, 0], options: [0, 0, 0, 0])
-        case .seamlessLoop:
-            return .init(kind: kind, inputNodeID: inputNodeID, values: [15, 0.12, 0, 0], options: [0, 0, 0, 0])
-        }
+        var node = kind.definition.defaultNode()
+        node.inputNodeID = inputNodeID
+        return node
     }
 
     static func makePrefilter(spatial: PrefilterStrength, temporal: PrefilterStrength) -> EffectNode {
         .init(
             kind: .selectivePrefilter,
-            values: [0, 0, 0, 0],
-            options: [spatial.rawValue, temporal.rawValue, 0, 0]
+            values: [],
+            options: [spatial.rawValue, temporal.rawValue]
         )
+    }
+
+    var supportsAmount: Bool { kind.definition.shapeBehavior.supportsAmount(for: self) }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, enabled, inputNodeID, driverMediaID, amount, randomSeed, values, options
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        kind = try values.decode(EffectKind.self, forKey: .kind)
+        enabled = try values.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        inputNodeID = try values.decodeIfPresent(UUID.self, forKey: .inputNodeID)
+        driverMediaID = try values.decodeIfPresent(UUID.self, forKey: .driverMediaID)
+        amount = try values.decodeIfPresent(Float.self, forKey: .amount) ?? 1
+        randomSeed = try values.decodeIfPresent(UInt64.self, forKey: .randomSeed) ?? 0
+        self.values = try values.decodeIfPresent([Float].self, forKey: .values) ?? []
+        options = try values.decodeIfPresent([Int32].self, forKey: .options) ?? []
     }
 
     var modeTitle: String {

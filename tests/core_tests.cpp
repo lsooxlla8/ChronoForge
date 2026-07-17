@@ -446,6 +446,50 @@ void test_file_backed_effect_chain() {
         require_near(loop_output.data()[i], loop_expected.values()[i], "Out-of-core Seamless Loop matches proxy processing");
     }
 
+    const auto half_path = root / "amount-half.raw";
+    const std::vector<chronoforge::EffectSpec> half_effects{
+        {chronoforge::EffectOperation::LumaTimeShift, {2.0F}, {0, 1}, 0.5F, 42},
+    };
+    const auto half_result = chronoforge::render_file_effect_chain(
+        input_path, half_path, root / "amount-half-scratch", input.shape(), input.metadata(),
+        half_effects, 64 * 1024 * 1024, {});
+    const auto fully_shifted = chronoforge::luma_time_shift(
+        input, {2.0F, chronoforge::ShiftSource::Luma, chronoforge::EdgeBehavior::Wrap});
+    const auto half_output = chronoforge::MappedTensor::open(
+        half_path, half_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
+    for (std::size_t i = 0; i < input.values().size(); ++i) {
+        require_near(
+            half_output.data()[i],
+            input.values()[i] + (fully_shifted.values()[i] - input.values()[i]) * 0.5F,
+            "Out-of-core Amount blends in-place in linear tensor space");
+    }
+
+    const auto dry_path = root / "amount-zero.raw";
+    const std::vector<chronoforge::EffectSpec> dry_effects{
+        {chronoforge::EffectOperation::LumaTimeShift, {200.0F}, {0, 1}, 0.0F, 99},
+    };
+    const auto dry_result = chronoforge::render_file_effect_chain(
+        input_path, dry_path, root / "amount-zero-scratch", input.shape(), input.metadata(),
+        dry_effects, 64 * 1024 * 1024, {});
+    const auto dry_output = chronoforge::MappedTensor::open(
+        dry_path, dry_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
+    require(
+        std::equal(input.values().begin(), input.values().end(), dry_output.data()),
+        "Amount zero is a bit-exact identity and skips effect evaluation");
+
+    bool partial_shape_change_rejected = false;
+    try {
+        const std::vector<chronoforge::EffectSpec> invalid_amount{
+            {chronoforge::EffectOperation::SeamlessLoop, {3}, {0}, 0.5F, 0},
+        };
+        static_cast<void>(chronoforge::render_file_effect_chain(
+            loop_input_path, root / "invalid-amount.raw", root / "invalid-amount-scratch",
+            loop_input.shape(), loop_input.metadata(), invalid_amount, 64 * 1024 * 1024, {}));
+    } catch (const std::invalid_argument&) {
+        partial_shape_change_rejected = true;
+    }
+    require(partial_shape_change_rejected, "Partial Amount rejects shape-changing effects");
+
     bool cancelled = false;
     try {
         const std::vector<chronoforge::EffectSpec> cancellable{

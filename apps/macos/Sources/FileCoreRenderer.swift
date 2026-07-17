@@ -38,13 +38,7 @@ enum FileCoreRenderer {
         let context = FileProgressContext(handler: progress)
         return try await withTaskCancellationHandler {
             try await Task.detached(priority: .userInitiated) {
-                let descriptors = effects.filter(\.enabled).map { effect in
-                    cf_effect_descriptor_make(
-                        effect.kind.rawValue,
-                        effect.values[0], effect.values[1], effect.values[2], effect.values[3],
-                        effect.options[0], effect.options[1], effect.options[2], effect.options[3]
-                    )
-                }
+                let descriptors = effects.filter(\.enabled).map { $0.coreDescriptor() }
                 let fpsNumerator = UInt32(max(1, Int((input.framesPerSecond * 1000).rounded())))
                 let inputInfo = CFFileTensorInfo(
                     frames: UInt64(input.frames),
@@ -151,10 +145,7 @@ enum FileCoreRenderer {
         let context = FileProgressContext(handler: progress)
         return try await withTaskCancellationHandler {
             try await Task.detached(priority: .userInitiated) {
-                let descriptor = cf_effect_descriptor_make(
-                    effect.kind.rawValue,
-                    effect.values[0], effect.values[1], effect.values[2], effect.values[3],
-                    effect.options[0], effect.options[1], effect.options[2], effect.options[3])
+                let descriptor = effect.coreDescriptor()
                 let info: (DiskTensorData) -> CFFileTensorInfo = { tensor in
                     CFFileTensorInfo(
                         frames: UInt64(tensor.frames), height: UInt64(tensor.height),

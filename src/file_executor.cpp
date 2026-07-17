@@ -286,6 +286,29 @@ void require_option(std::int32_t value, std::int32_t maximum, const char* name) 
     }
 }
 
+void require_amount(float amount) {
+    if (!std::isfinite(amount) || amount < 0.0F || amount > 1.0F) {
+        throw std::invalid_argument("Effect amount must be between zero and one");
+    }
+}
+
+void blend_amount(const MappedTensor& input, MappedTensor& output, float amount) {
+    if (input.shape() != output.shape()) {
+        throw std::invalid_argument("Partial Amount requires an effect that preserves tensor shape");
+    }
+    const auto& shape = input.shape();
+    const auto frame_values = shape.h * shape.w * shape.c;
+    const auto* source = input.data();
+    auto* destination = output.mutable_data();
+    parallel_for(shape.t, [](double) {}, [&](std::size_t t) {
+        const auto start = t * frame_values;
+        const auto end = start + frame_values;
+        for (auto index = start; index < end; ++index) {
+            destination[index] = source[index] + (destination[index] - source[index]) * amount;
+        }
+    });
+}
+
 void report(const FileRenderProgress& progress, double fraction, std::string_view stage) {
     if (progress && !progress(std::clamp(fraction, 0.0, 1.0), stage)) {
         throw std::runtime_error("Render cancelled");
@@ -1404,7 +1427,15 @@ FileRenderResult render_file_effect_chain(
     try {
         for (std::size_t index = 0; index < effects.size(); ++index) {
             const auto& effect = effects[index];
+            require_amount(effect.amount);
             const auto next_shape = output_shape(current_shape, effect);
+            if (effect.amount < 1.0F && next_shape != current_shape) {
+                throw std::invalid_argument("Partial Amount requires an effect that preserves tensor shape");
+            }
+            if (effect.amount == 0.0F) {
+                report(progress, static_cast<double>(index + 1) / static_cast<double>(effects.size() + 1), stage_name(effect.kind));
+                continue;
+            }
             const auto next_path = scratch_directory / ("node-" + std::to_string(index) + ".raw");
             ensure_disk_space(scratch_directory, next_shape.byte_count());
             report(progress, static_cast<double>(index) / static_cast<double>(effects.size() + 1), stage_name(effect.kind));
@@ -1417,6 +1448,9 @@ FileRenderResult render_file_effect_chain(
                     report(progress, (static_cast<double>(index) + fraction) / denominator, stage);
                 };
                 apply(input, output, effect, max_working_set_bytes, metadata, local_progress);
+                if (effect.amount < 1.0F) {
+                    blend_amount(input, output, effect.amount);
+                }
                 output.sync();
             }
             scratch_files.push_back(next_path);
@@ -1459,6 +1493,7 @@ FileRenderResult render_file_cross_tensor_effect(
     const EffectSpec& effect,
     const FileRenderProgress& progress) {
     TensorShape result_shape = source_shape;
+    require_amount(effect.amount);
     if (effect.kind == EffectOperation::DimensionalSplicer) {
         require_option(effect.options[0], 5, "output X axis source");
         require_option(effect.options[1], 5, "output Y axis source");
@@ -1483,6 +1518,16 @@ FileRenderResult render_file_cross_tensor_effect(
         }
     } else {
         throw std::invalid_argument("The selected effect does not accept a driver tensor");
+    }
+
+    if (effect.amount < 1.0F && result_shape != source_shape) {
+        throw std::invalid_argument("Partial Amount requires an effect that preserves tensor shape");
+    }
+    if (effect.amount == 0.0F) {
+        std::filesystem::create_directories(output_path.parent_path());
+        std::filesystem::copy_file(source_path, output_path, std::filesystem::copy_options::overwrite_existing);
+        report(progress, 1.0, stage_name(effect.kind));
+        return {source_shape, metadata};
     }
 
     std::filesystem::create_directories(output_path.parent_path());
@@ -1568,6 +1613,9 @@ FileRenderResult render_file_cross_tensor_effect(
                 }
             }
         });
+    }
+    if (effect.amount < 1.0F) {
+        blend_amount(source, output, effect.amount);
     }
     output.sync();
     report(progress, 1.0, stage_name(effect.kind));

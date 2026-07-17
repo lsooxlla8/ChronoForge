@@ -16,38 +16,75 @@ struct ChronoForgeIntegration {
         try await makeMovie(at: url)
         let tensor = try await decode(url)
 
-        let effect = cf_effect_descriptor_make(1, 2, 0, 0, 0, 0, 1, 0, 0)
-        var descriptor = effect
-        var output: OpaquePointer?
-        var error = [CChar](repeating: 0, count: 1024)
-        let errorCapacity = UInt64(error.count)
-        let result = tensor.values.withUnsafeBufferPointer { values in
-            withUnsafePointer(to: &descriptor) { effectPointer in
-                error.withUnsafeMutableBufferPointer { errorBuffer in
-                    cf_render_effect_chain(
-                        values.baseAddress,
-                        UInt64(tensor.frames), 48, 64, 4,
-                        8, 1,
-                        effectPointer, 1,
-                        128 * 1024 * 1024,
-                        &output,
-                        errorBuffer.baseAddress,
-                        errorCapacity
-                    )
-                }
+        let effectValues: [Float] = [2]
+        let effectOptions: [Int32] = [0, 1]
+        let effect = effectValues.withUnsafeBufferPointer { values in
+            effectOptions.withUnsafeBufferPointer { options in
+                cf_effect_descriptor_v2_make(1, 1, 0, values.baseAddress, 1, options.baseAddress, 2)
             }
         }
-        guard result == 0, let output else {
-            throw IntegrationFailure.message(String(cString: error))
+
+        func render(_ requested: CFEffectDescriptorV2) throws -> [Float] {
+            var descriptor = requested
+            var output: OpaquePointer?
+            var error = [CChar](repeating: 0, count: 1024)
+            let errorCapacity = UInt64(error.count)
+            let result = tensor.values.withUnsafeBufferPointer { values in
+                withUnsafePointer(to: &descriptor) { effectPointer in
+                    error.withUnsafeMutableBufferPointer { errorBuffer in
+                        cf_render_effect_chain(
+                            values.baseAddress,
+                            UInt64(tensor.frames), 48, 64, 4,
+                            8, 1,
+                            effectPointer, 1,
+                            128 * 1024 * 1024,
+                            &output,
+                            errorBuffer.baseAddress,
+                            errorCapacity
+                        )
+                    }
+                }
+            }
+            guard result == 0, let output else {
+                throw IntegrationFailure.message(String(cString: error))
+            }
+            defer { cf_video_buffer_destroy(output) }
+            guard cf_video_buffer_frames(output) == UInt64(tensor.frames),
+                  cf_video_buffer_width(output) == 64,
+                  cf_video_buffer_height(output) == 48,
+                  cf_video_buffer_value_count(output) == UInt64(tensor.values.count),
+                  let values = cf_video_buffer_values(output) else {
+                throw IntegrationFailure.message("Core returned an unexpected output tensor")
+            }
+            return Array(UnsafeBufferPointer(start: values, count: tensor.values.count))
         }
-        defer { cf_video_buffer_destroy(output) }
-        guard cf_video_buffer_frames(output) == UInt64(tensor.frames),
-              cf_video_buffer_width(output) == 64,
-              cf_video_buffer_height(output) == 48,
-              cf_video_buffer_value_count(output) == UInt64(tensor.values.count) else {
-            throw IntegrationFailure.message("Core returned an unexpected output tensor")
+
+        let first = try render(effect)
+        let second = try render(effect)
+        guard first == second else {
+            throw IntegrationFailure.message("Identical descriptor and seed must render deterministically")
         }
-        print("ChronoForge integration passed: AVFoundation decode -> C++ effect -> tensor output")
+
+        let dryEffect = effectValues.withUnsafeBufferPointer { values in
+            effectOptions.withUnsafeBufferPointer { options in
+                cf_effect_descriptor_v2_make(1, 0, 123, values.baseAddress, 1, options.baseAddress, 2)
+            }
+        }
+        guard try render(dryEffect) == tensor.values else {
+            throw IntegrationFailure.message("Amount zero must be a bit-exact identity")
+        }
+
+        var outdated = effect
+        outdated.descriptor_version = 1
+        do {
+            _ = try render(outdated)
+            throw IntegrationFailure.message("Core accepted an outdated descriptor version")
+        } catch IntegrationFailure.message(let message) {
+            guard message == "Unsupported effect descriptor version" else {
+                throw IntegrationFailure.message(message)
+            }
+        }
+        print("ChronoForge integration passed: descriptor V2 validation, deterministic render and Amount identity")
     }
 
     private static func makeMovie(at url: URL) async throws {

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0 — in development
+
+- Added the centralized EffectDefinition registry and categorized Add Effect menu.
+- Introduced the versioned eight-slot effect descriptor with validated logical parameter counts, Amount and deterministic seed fields.
+- Added per-effect Amount controls with bit-exact zero, linear wet/dry blending in proxy and mapped full renders, and explicit rejection for shape-changing modes.
+- Added core and AVFoundation integration coverage for Amount identity, mapped blending and deterministic repeated renders.
+
 ## 0.9.0 — seamless loops and interaction fixes
 
 - Added Seamless Loop with Crossfade, detail-driven Luma Weave and guaranteed Ping-Pong modes in both proxy and out-of-core full rendering.

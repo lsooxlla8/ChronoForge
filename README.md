@@ -42,7 +42,7 @@ No formulas required. If you have used an effect stack, displacement map or rend
 
 1. Click **Import Video**. This becomes the primary clip, **A**.
 2. Add effects from the sidebar. They run from top to bottom.
-3. Click **Update Preview**. Preview is always a smaller proxy so experimentation stays responsive.
+3. Adjust **Amount** to blend any shape-compatible effect with its input, then click **Update Preview**. Preview is always a smaller proxy so experimentation stays responsive.
 4. For a two-video effect, add another clip to Media and choose it as **Driver video (B)**.
 5. Click **Export MP4** for one full-quality render, or **Add to Queue** for a batch. Press **Shift–Command–R** to start the queue.
 
@@ -53,6 +53,8 @@ Useful shortcuts: **Space** plays or pauses the preview, and **Shift–S** hides
 Most video tools treat time as a playhead. ChronoForge treats time like another direction you can swap, rotate, sort, map and displace. The result is closer to a playable glitch instrument than a conventional editor.
 
 Large videos are processed through temporary SSD files instead of being loaded into RAM all at once. Preview always uses proxy media; export always goes back to the original files. The render cache trims itself automatically.
+
+The 1.0 development line groups effects by Time, Space, Signal, Memory, Data, Multi-Source and Output families. Its implementation plan is tracked in [docs/next-development-phase.md](docs/next-development-phase.md).
 
 ## Download and requirements
 

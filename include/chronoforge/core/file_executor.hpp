@@ -29,8 +29,10 @@ enum class EffectOperation : std::int32_t {
 
 struct EffectSpec {
     EffectOperation kind;
-    std::array<float, 4> values{};
-    std::array<std::int32_t, 4> options{};
+    std::array<float, 8> values{};
+    std::array<std::int32_t, 8> options{};
+    float amount{1.0F};
+    std::uint64_t random_seed{};
 };
 
 struct FileRenderResult {

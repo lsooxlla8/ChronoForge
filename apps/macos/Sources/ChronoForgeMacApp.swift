@@ -247,14 +247,16 @@ private struct WorkspaceView: View {
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 7) {
                 Menu("Add effect", systemImage: "plus") {
-                    Section("ONE VIDEO · A") {
-                        ForEach(EffectKind.singleInputKinds) { kind in
-                            Button(kind.title, systemImage: kind.symbol) { project.addEffect(kind) }
-                        }
-                    }
-                    Section("TWO VIDEOS · A + B") {
-                        ForEach(EffectKind.twoInputKinds) { kind in
-                            Button(kind.title, systemImage: kind.symbol) { project.addEffect(kind) }
+                    ForEach(EffectCategory.allCases) { category in
+                        let definitions = EffectRegistry.definitions(in: category)
+                        if !definitions.isEmpty {
+                            Section(category.title) {
+                                ForEach(definitions, id: \.kind) { definition in
+                                    Button(definition.title, systemImage: definition.symbol) {
+                                        project.addEffect(definition.kind)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -467,6 +469,7 @@ private struct EffectInspector: View {
 
     var body: some View {
         Toggle("Enabled", isOn: $node.enabled)
+        amountControl
         Text(node.kind.title).font(.title3.weight(.semibold))
         Divider()
         switch node.kind {
@@ -596,13 +599,41 @@ private struct EffectInspector: View {
                 var replacement = EffectNode.make(kind, inputNodeID: node.inputNodeID)
                 replacement.id = node.id
                 replacement.enabled = node.enabled
+                replacement.amount = node.amount
+                replacement.randomSeed = node.randomSeed
+                if !replacement.supportsAmount { replacement.amount = 1 }
                 node = replacement
             }
         )
     }
 
     private func option(_ index: Int) -> Binding<Int32> {
-        Binding(get: { node.options[index] }, set: { node.options[index] = $0 })
+        Binding(get: { node.options[index] }, set: {
+            node.options[index] = $0
+            if !node.supportsAmount { node.amount = 1 }
+        })
+    }
+
+    private var amountControl: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text("Amount")
+                Spacer()
+                Text(String(format: "%.0f%%", node.amount * 100))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            Slider(value: $node.amount, in: 0...1)
+                .disabled(!node.supportsAmount)
+                .contextMenu {
+                    Button("Reset to 100%") { node.amount = 1 }
+                }
+            if !node.supportsAmount {
+                Text("Partial Amount requires an output with the same tensor shape as the input.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private func valueSlider(_ title: String, index: Int, range: ClosedRange<Float>, format: String) -> some View {
