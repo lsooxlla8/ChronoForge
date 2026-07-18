@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0 — in development
+## 1.0.0 — 2026-07-18
 
 - Clear proxy and full-render caches automatically after a normal app termination while retaining crash recovery after abnormal exits.
 - Reduced Chroma Carrier Drift sampling work by sharing each interpolated alpha lookup across RGB channels in both proxy and full-render paths.

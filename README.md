@@ -2,7 +2,7 @@
 
 **Break video across space and time.**
 
-ChronoForge is a native macOS video-effects app for VJs, glitch artists and motion designers. Import movies or PNG image sequences, stack strange time-based effects, watch a fast proxy preview, then export the result at full resolution.
+ChronoForge 1.0 is a native offline macOS app for glitch artists, experimental filmmakers and motion designers. Import movies or PNG image sequences, stack strange time-based effects, watch a fast proxy preview, then export the result at full resolution.
 
 The 1.0 workflow is deliberately session-based: every normal launch starts empty, and a clean quit discards media, effect settings and the render queue. ChronoForge keeps only a hidden crash-recovery snapshot while the app is running; finished videos remain the thing you save.
 
@@ -16,6 +16,10 @@ No formulas required. If you have used an effect stack, displacement map or rend
 - Use a second clip as an RGB coordinate map or a space-time displacement map.
 - Build recursive past/future feedback, spectral FFT glitches and directional datamosh trails.
 - Queue several full-quality renders and let ChronoForge process them one after another.
+
+## Why it exists
+
+ChronoForge began with one idea: treat a video as a three-dimensional volume and exchange a spatial axis with time. The original inspiration was foo52ru ТехноШаман's video [«Меняем пространство и время местами»](https://www.youtube.com/watch?v=n4tbdFD18vs). That experiment became **Space-Time Transform**, then grew into an offline multitool for tearing apart time, memory, colour channels, signal structure and relationships between two videos.
 
 ## Effects
 
@@ -37,7 +41,7 @@ No formulas required. If you have used an effect stack, displacement map or rend
 | **Optical Flow Time Warp** | Moving objects bend time more than the static background. |
 | **Time Feedback** | Recursive past and future echoes with colour and displacement blend modes. |
 | **Axis Datamosh** | Freeze and drag image data along time, horizontal or vertical lines, including bright- or dark-side luma triggering. |
-| **Seamless Loop** | Close a clip with crossfade, luma/difference weave, FFT phase-aware spectral morph or a guaranteed ping-pong pass. |
+| **Seamless Loop** | Close a clip with start/end crossfade, luma/difference weave, controllable FFT spectral morph or a guaranteed ping-pong pass. |
 
 ### Two videos
 
@@ -64,9 +68,9 @@ Useful shortcuts: **Space** plays or pauses Preview, **Command–Z** / **Shift�
 
 Most video tools treat time as a playhead. ChronoForge treats time like another direction you can swap, rotate, sort, map and displace. The result is closer to a playable glitch instrument than a conventional editor.
 
-Large movies and image sequences are processed through temporary SSD files instead of being loaded into RAM all at once. Preview always uses proxy media; export always goes back to the original files. The render cache trims itself automatically.
+Large movies and image sequences are processed through temporary SSD files instead of being loaded into RAM all at once. Preview always uses proxy media; export always goes back to the original files. Proxy and full-render caches are reused during the session and removed after a normal quit.
 
-The 1.0 development line groups effects by Time, Space, Signal, Memory, Data, Multi-Source and Output families. Its implementation plan is tracked in [docs/next-development-phase.md](docs/next-development-phase.md).
+The completed 1.0 scope is recorded in [docs/done.md](docs/done.md). The smaller post-1.0 backlog lives in [docs/todo.md](docs/todo.md).
 
 ## Download and requirements
 
