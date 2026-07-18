@@ -86,6 +86,31 @@ void test_time_shift_and_funnel() {
             require(wrapped.shape() == proxy.shape(), "Wrapped polar warp stays inside a small proxy tensor");
         }
     }
+
+    chronoforge::VideoTensor seam_source({16, 101, 101, 1});
+    for (std::size_t t = 0; t < seam_source.shape().t; ++t) {
+        for (std::size_t y = 0; y < seam_source.shape().h; ++y) {
+            for (std::size_t x = 0; x < seam_source.shape().w; ++x) {
+                seam_source.at(t, y, x, 0) = static_cast<float>(t) / 15.0F;
+            }
+        }
+    }
+    const chronoforge::RadialChronoFunnelParams seamless_params{
+        0.5F, 0.5F, 0.18F, chronoforge::EdgeBehavior::Wrap, 1.0F,
+        chronoforge::RadialTopology::TimeLoom, 0.0F, chronoforge::RadialSeamMode::Periodic};
+    const auto seamless = chronoforge::radial_chrono_funnel(seam_source, seamless_params);
+    const auto seam_delta = std::abs(seamless.at(4, 49, 0, 0) - seamless.at(4, 51, 0, 0));
+    auto open_params = seamless_params;
+    open_params.seam_mode = chronoforge::RadialSeamMode::Open;
+    const auto open = chronoforge::radial_chrono_funnel(seam_source, open_params);
+    const auto open_delta = std::abs(open.at(4, 49, 0, 0) - open.at(4, 51, 0, 0));
+    require(seam_delta < open_delta * 0.25F, "Periodic Polar Time Warp removes the atan2 branch-cut seam");
+    auto full_rotation = seamless_params;
+    full_rotation.rotation_degrees = 360.0F;
+    const auto rotated_full_turn = chronoforge::radial_chrono_funnel(seam_source, full_rotation);
+    for (std::size_t index = 0; index < seamless.values().size(); ++index) {
+        require_near(rotated_full_turn.values()[index], seamless.values()[index], "Polar rotation is periodic over 360 degrees");
+    }
 }
 
 void test_rgb_time_slip() {
@@ -435,6 +460,30 @@ void test_cross_tensor_and_flow_effects() {
         loop_source, {3, 0.12F, chronoforge::SeamlessLoopMode::PingPong});
     require(ping_pong.shape() == chronoforge::TensorShape{14, 1, 1, 1}, "Ping-Pong loop appends the reverse pass without duplicate endpoints");
     require_near(ping_pong.at(13, 0, 0, 0), loop_source.at(1, 0, 0, 0), "Ping-Pong ends one frame before its loop start");
+
+    chronoforge::VideoTensor textured({8, 2, 2, 4}, 0.0F);
+    for (std::size_t t = 0; t < 8; ++t) {
+        for (std::size_t y = 0; y < 2; ++y) {
+            for (std::size_t x = 0; x < 2; ++x) {
+                const auto value = static_cast<float>((t + 2 * y + 3 * x) % 8) / 7.0F;
+                textured.at(t, y, x, 0) = value;
+                textured.at(t, y, x, 1) = 1.0F - value;
+                textured.at(t, y, x, 2) = 0.5F * value;
+                textured.at(t, y, x, 3) = 1.0F;
+            }
+        }
+    }
+    const auto spectral_loop = chronoforge::seamless_loop(
+        textured, {4, 0.12F, chronoforge::SeamlessLoopMode::SpectralMorph});
+    const auto difference_loop = chronoforge::seamless_loop(
+        textured, {4, 0.18F, chronoforge::SeamlessLoopMode::DifferenceWeave});
+    require(spectral_loop.shape() == chronoforge::TensorShape{4, 2, 2, 4}, "Spectral Morph uses the overlap loop duration");
+    require(difference_loop.shape() == spectral_loop.shape(), "Difference Weave uses the overlap loop duration");
+    for (const auto* candidate : {&spectral_loop, &difference_loop}) {
+        require_near(candidate->at(0, 0, 0, 0), textured.at(4, 0, 0, 0), "Advanced loop preserves the tail-side boundary");
+        require_near(candidate->at(3, 0, 0, 0), textured.at(3, 0, 0, 0), "Advanced loop preserves the head-side boundary");
+        for (const auto value : candidate->values()) require(std::isfinite(value), "Advanced loop output stays finite");
+    }
 }
 
 void test_file_backed_cross_tensor() {
@@ -567,7 +616,7 @@ void test_file_backed_effect_chain() {
         {chronoforge::EffectOperation::StrideError, {0.1F, 0.07F, 0.013F}, {1, 1}},
         {chronoforge::EffectOperation::BlockAddressCorruption, {0.3F, 0.75F, 2.0F, 2.0F}, {3, 2}, 1.0F, 0xC0FFEE},
         {chronoforge::EffectOperation::BitplaneForge, {8.0F, 255.0F, 1.0F}, {3, 1}, 1.0F, 0xC0FFEE},
-        {chronoforge::EffectOperation::RadialChronoFunnel, {0.5F, 0.5F, 0.2F, 0}, {2, 0, 0, 0}},
+        {chronoforge::EffectOperation::RadialChronoFunnel, {0.5F, 0.5F, 0.2F, 0, 37.0F}, {2, 0, 1}},
         {chronoforge::EffectOperation::TemporalPixelSort, {0.1F, 0, 0, 0}, {0, 0, 0, 0}},
         {chronoforge::EffectOperation::Tensor3dRotation, {5.0F, 10.0F, 0, 0}, {3, 0, 0, 0}},
         {chronoforge::EffectOperation::SpaceTimeTranspose, {0, 0, 0, 0}, {0, 0, 0, 0}},
@@ -611,7 +660,8 @@ void test_file_backed_effect_chain() {
                    chronoforge::BitplaneChannel::RgbTogether, 0xC0FFEE});
     expected = chronoforge::radial_chrono_funnel(
         expected,
-        {0.5F, 0.5F, 0.2F, chronoforge::EdgeBehavior::Mirror, 0.0F, chronoforge::RadialTopology::TimeLoom});
+        {0.5F, 0.5F, 0.2F, chronoforge::EdgeBehavior::Mirror, 0.0F,
+         chronoforge::RadialTopology::TimeLoom, 37.0F, chronoforge::RadialSeamMode::Periodic});
     expected = chronoforge::temporal_pixel_sort(expected, {chronoforge::SortCriterion::Luma, chronoforge::SortDirection::Ascending, 0.1F});
     expected = chronoforge::tensor_3d_rotation(expected, {5.0F, 10.0F, 0, chronoforge::FillMode::Fit});
     expected = chronoforge::space_time_transpose(expected, chronoforge::SpatialAxis::X);
@@ -713,6 +763,23 @@ void test_file_backed_effect_chain() {
     const auto loop_output = chronoforge::MappedTensor::open(loop_path, loop_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
     for (std::size_t i = 0; i < loop_expected.values().size(); ++i) {
         require_near(loop_output.data()[i], loop_expected.values()[i], "Out-of-core Seamless Loop matches proxy processing");
+    }
+    for (const auto mode : {chronoforge::SeamlessLoopMode::SpectralMorph, chronoforge::SeamlessLoopMode::DifferenceWeave}) {
+        const auto mode_index = static_cast<std::int32_t>(mode);
+        const auto mode_path = root / ("loop-mode-" + std::to_string(mode_index) + ".raw");
+        const std::vector<chronoforge::EffectSpec> mode_effects{
+            {chronoforge::EffectOperation::SeamlessLoop, {3, 0.15F}, {mode_index}},
+        };
+        const auto mode_result = chronoforge::render_file_effect_chain(
+            loop_input_path, mode_path, root / ("loop-mode-scratch-" + std::to_string(mode_index)),
+            loop_input.shape(), loop_input.metadata(), mode_effects, 64 * 1024 * 1024, {});
+        const auto mode_expected = chronoforge::seamless_loop(loop_input, {3, 0.15F, mode});
+        const auto mode_output = chronoforge::MappedTensor::open(
+            mode_path, mode_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
+        require(mode_result.shape == mode_expected.shape(), "Advanced out-of-core loop reports the expected duration");
+        for (std::size_t i = 0; i < mode_expected.values().size(); ++i) {
+            require_near(mode_output.data()[i], mode_expected.values()[i], "Advanced out-of-core loop matches preview");
+        }
     }
 
     const auto half_path = root / "amount-half.raw";

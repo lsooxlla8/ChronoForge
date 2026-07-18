@@ -61,7 +61,7 @@ void enforce_budget(const VideoTensor& tensor, uint64_t budget) {
     switch (kind) {
         case CF_EFFECT_SPACE_TIME_TRANSPOSE: return {0, 2};
         case CF_EFFECT_LUMA_TIME_SHIFT: return {1, 2};
-        case CF_EFFECT_RADIAL_CHRONO_FUNNEL: return {4, 2};
+        case CF_EFFECT_RADIAL_CHRONO_FUNNEL: return {5, 3};
         case CF_EFFECT_TEMPORAL_PIXEL_SORT: return {2, 2};
         case CF_EFFECT_TENSOR_3D_ROTATION: return {3, 1};
         case CF_EFFECT_SPECTRAL_FFT_SWAP: return {1, 4};
@@ -197,6 +197,8 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptorV2& d
                     checked_enum<chronoforge::EdgeBehavior>(descriptor.options[0], 2, "edge behavior"),
                     descriptor.values[3],
                     checked_enum<chronoforge::RadialTopology>(descriptor.options[1], 2, "radial topology"),
+                    descriptor.values[4],
+                    checked_enum<chronoforge::RadialSeamMode>(descriptor.options[2], 1, "radial seam mode"),
                 });
         case CF_EFFECT_TEMPORAL_PIXEL_SORT:
             return chronoforge::temporal_pixel_sort(
@@ -267,7 +269,7 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptorV2& d
                 {
                     static_cast<std::size_t>(std::max(1.0F, std::round(descriptor.values[0]))),
                     descriptor.values[1],
-                    checked_enum<chronoforge::SeamlessLoopMode>(descriptor.options[0], 2, "seamless loop mode"),
+                    checked_enum<chronoforge::SeamlessLoopMode>(descriptor.options[0], 4, "seamless loop mode"),
                 });
         case CF_EFFECT_RGB_TIME_SLIP:
             return chronoforge::rgb_time_slip(

@@ -78,13 +78,13 @@ struct EffectDefinition: Sendable {
 enum EffectRegistry {
     static let definitions: [EffectDefinition] = [
         definition(.spaceTimeTranspose, "Space-Time Transform", "rotate.3d", .orange, .spaceAndGeometry,
-                   shape: .preservingForOptions(index: 1, values: [1]), values: [], options: [0, 1],
+                   shape: .changing, values: [], options: [0, 1],
                    randomization: .init(identifier: "tensor-swap", amount: .triangular(0.25...1, preferred: 0.8))),
         definition(.lumaTimeShift, "Self Time Displacement", "sun.max.trianglebadge.exclamationmark", .yellow,
                    .timeAndMotion, cost: .temporal, values: [20], options: [0, 0],
                    randomization: .init(identifier: "time-shift", amount: .triangular(0.25...1, preferred: 0.7))),
         definition(.radialChronoFunnel, "Polar Time Warp", "hurricane", .cyan, .spaceAndGeometry,
-                   cost: .temporal, values: [0.5, 0.5, 0.08, 0.75], options: [1, 0],
+                   cost: .temporal, values: [0.5, 0.5, 0.08, 0.75, 0], options: [1, 0, 0],
                    randomization: .init(identifier: "polar", amount: .triangular(0.3...1, preferred: 0.75))),
         definition(.temporalPixelSort, "Pixel Sort (Time)", "arrow.up.arrow.down.square", .purple,
                    .timeAndMotion, cost: .temporal, values: [0, 0], options: [0, 0],

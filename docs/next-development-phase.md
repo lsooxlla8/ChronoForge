@@ -276,7 +276,7 @@ output = input × (1 - amount) + effected × amount
 - Если output shape отличается от input shape, частичное Amount недоступно.
 - Inspector показывает Amount = 100% disabled и короткое пояснение.
 - При выборе Fit Source Size Amount снова становится доступным.
-- Random Stack обязан выбирать shape-preserving/Fit варианты для всех узлов с Amount меньше 100%.
+- Random Stack обязан выбирать только действительно shape-preserving варианты для всех узлов с Amount меньше 100%; сохранение spatial canvas недостаточно, если меняется `T`.
 
 ### 8.5. Реализация full render
 

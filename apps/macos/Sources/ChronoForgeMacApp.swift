@@ -704,8 +704,15 @@ private struct EffectInspector: View {
             valueSlider("Center Y", index: 1, range: 0...1, format: "%.3f")
             valueSlider("Intensity", index: 2, range: -1...1, format: "%.4f")
             valueSlider("Angular twist", index: 3, range: -3...3, format: "%.3f turns")
+            valueSlider("Polar rotation", index: 4, range: -180...180, format: "%.2f°")
+            if node.options[1] == 0 {
+                Toggle("Close angular seam", isOn: Binding(
+                    get: { node.options[2] != 0 },
+                    set: { node.options[2] = $0 ? 1 : 0 }
+                ))
+            }
             edgePicker(option(0))
-            Text("Time Loom deforms radius, angle and fractional time into moving double braids. Kaleido Fold creates animated spatial sectors; Event Horizon pulls the image into orbiting temporal echoes.")
+            Text("Polar rotation offsets the coordinate system without rotating the canvas. Close angular seam replaces the branch-cut time ramp with a periodic mapping, removing the radial join line. Time Loom deforms radius, angle and fractional time into moving double braids; Kaleido Fold creates animated sectors; Event Horizon pulls the image into temporal echoes.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .temporalPixelSort:
@@ -785,12 +792,17 @@ private struct EffectInspector: View {
                 valueSlider("Random probability", index: 2, range: 0...1, format: "%.5f")
             }
         case .seamlessLoop:
-            optionPicker("Loop method", value: option(0), options: ["Crossfade", "Luma Weave", "Ping-Pong"])
+            optionPicker("Loop method", value: option(0), options: ["Crossfade", "Luma Weave", "Ping-Pong", "Spectral Morph", "Difference Weave"])
             if node.options[0] != 2 {
                 valueSlider("Transition", index: 0, range: 2...600, format: "%.0f frames")
-                if node.options[0] == 1 {
+                if node.options[0] == 1 || node.options[0] == 4 {
                     valueSlider("Weave softness", index: 1, range: 0.01...0.5, format: "%.4f")
-                    Text("Luma Weave lets different image details cross the seam at different moments, hiding the full-frame dissolve of a normal crossfade.")
+                    Text(node.options[0] == 1
+                         ? "Luma Weave lets different image details cross the seam at different moments, hiding the full-frame dissolve of a normal crossfade."
+                         : "Difference Weave finds the least-visible crossover moment independently for every pixel, then controls its transition width with Weave Softness.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else if node.options[0] == 3 {
+                    Text("Spectral Morph interpolates spatial FFT magnitude and shortest phase through the overlap. It creates a texture morph rather than a transparent dissolve while retaining the exact loop boundary.")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
                     Text("Overlaps the end with the beginning and shortens the result by the transition length.")

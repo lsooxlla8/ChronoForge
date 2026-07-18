@@ -23,6 +23,7 @@ let package = Package(
                 "src/node_graph.cpp",
                 "src/resource_planner.cpp",
                 "src/spectral.cpp",
+                "src/spectral_morph.cpp",
                 "bridge/ChronoForgeBridge.cpp",
             ],
             publicHeadersPath: "include",

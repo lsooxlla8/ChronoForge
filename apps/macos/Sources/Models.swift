@@ -172,7 +172,7 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
         case .opticalFlowTimeWarp: "Motion-driven time"
         case .chronoFeedback: "Past + future echo"
         case .structuralDatamosh: ["Time", "Horizontal", "Vertical"][min(max(Int(options[0]), 0), 2)]
-        case .seamlessLoop: ["Crossfade", "Luma Weave", "Ping-Pong"][min(max(Int(options[0]), 0), 2)]
+        case .seamlessLoop: ["Crossfade", "Luma Weave", "Ping-Pong", "Spectral Morph", "Difference Weave"][min(max(Int(options[0]), 0), 4)]
         case .rgbTimeSlip: ["Horizontal", "Vertical", "Radial"][min(max(Int(options[0]), 0), 2)]
         case .horizontalSyncLoss: ["Horizontal", "Vertical"][min(max(Int(options[2]), 0), 1)]
         case .chromaCarrierDrift: ["Together", "Split Cb–Cr", "Alternating"][min(max(Int(options[0]), 0), 2)]

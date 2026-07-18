@@ -16,6 +16,7 @@ add_library(chronoforge_core
     src/node_graph.cpp
     src/resource_planner.cpp
     src/spectral.cpp
+    src/spectral_morph.cpp
 )
 
 target_include_directories(chronoforge_core

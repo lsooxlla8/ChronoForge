@@ -2,6 +2,9 @@
 
 ## 1.0.0 — in development
 
+- Added Polar Time Warp coordinate rotation and an optional periodic angular time field that removes the Time Loom branch-cut seam.
+- Added Spectral Morph and Difference Weave to Seamless Loop with matching in-memory and SSD-backed rendering.
+- Fixed Random Stack assigning Partial Amount to Fit Source Size Space-Time Transform, which preserves the canvas but still changes timeline extent.
 - Stabilized the workspace with a fixed-width scrolling Inspector and adaptive Preview controls; compacted the sidebar actions to one row, fixed startup focus styling, removed the viewer-background option, and moved queue/export beside the appearance control.
 - Added the standard backslash Before/After toggle and shortened the audio option to Original.
 - Made Preview automatic and non-optional, removed the manual Update Preview control and stale badge, defaulted new sessions to High Preview, and compacted the toolbar around a top-left appearance button.

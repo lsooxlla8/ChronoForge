@@ -209,12 +209,16 @@ enum SelfTestRunner {
         }
         var lengthCounts = [0, 0, 0, 0]
         var rgbTimeSlipSamples = 0
+        var spaceTimeTransformSamples = 0
+        var spaceTimeBitplaneSamples = 0
+        var seamlessLoopModes = Set<Int32>()
         var sampledKinds = Set<EffectKind>()
         for seed in 0..<10_000 {
             let stack = try RandomStackGenerator.generate(
                 mediaPool: [projectSource, driverSource], primaryMediaID: projectSource.id, seed: UInt64(seed))
             lengthCounts[stack.count] += 1
             sampledKinds.formUnion(stack.map(\.kind))
+            seamlessLoopModes.formUnion(stack.filter { $0.kind == .seamlessLoop }.map { $0.options[0] })
             for node in stack where node.kind == .rgbTimeSlip {
                 rgbTimeSlipSamples += 1
                 let offsets = Array(node.values.prefix(3))
@@ -223,6 +227,16 @@ enum SelfTestRunner {
                       offsets.contains(where: { $0 > 3.9 }) else {
                     throw IntegrationSelfTestError.message("RGB Time Slip randomization did not anchor one channel and separate the other two")
                 }
+            }
+            for node in stack where node.kind == .spaceTimeTranspose {
+                spaceTimeTransformSamples += 1
+                guard node.amount == 1, !node.supportsAmount else {
+                    throw IntegrationSelfTestError.message("Random Stack assigned Partial Amount to a shape-changing Space-Time Transform")
+                }
+            }
+            if stack.contains(where: { $0.kind == .spaceTimeTranspose }),
+               stack.contains(where: { $0.kind == .bitplaneForge }) {
+                spaceTimeBitplaneSamples += 1
             }
             guard stack.filter({ $0.kind.definition.costClass == .global }).count <= 1,
                   stack.dropLast().allSatisfy({ $0.kind != .seamlessLoop }),
@@ -234,6 +248,9 @@ enum SelfTestRunner {
               (4_300...4_700).contains(lengthCounts[2]),
               (1_800...2_200).contains(lengthCounts[3]),
               rgbTimeSlipSamples > 400,
+              spaceTimeTransformSamples > 400,
+              spaceTimeBitplaneSamples > 0,
+              seamlessLoopModes == Set(0...4),
               sampledKinds == Set(EffectKind.addableKinds) else {
             throw IntegrationSelfTestError.message("Random Stack length weights drifted outside their expected ranges")
         }

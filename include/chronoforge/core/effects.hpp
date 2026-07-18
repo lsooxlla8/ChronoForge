@@ -16,6 +16,7 @@ enum class SortCriterion { Luma, Hue, Saturation };
 enum class SortDirection { Ascending, Descending, Zigzag, CenterOut };
 enum class FillMode { Black, Transparent, Repeat, Fit };
 enum class RadialTopology { TimeLoom, KaleidoFold, EventHorizon };
+enum class RadialSeamMode { Open, Periodic };
 enum class PrefilterStrength { Off, Light, Strong };
 enum class TensorAxisSource { AX, AY, AT, BX, BY, BT };
 enum class TensorInterpolation { Nearest, Linear, Cubic };
@@ -23,7 +24,7 @@ enum class TensorBroadcast { Clamp, Stretch, Crop };
 enum class FeedbackBlendMode { Add, Screen, Multiply, Lighten, Difference, Displace };
 enum class FreezeAxis { Time, Horizontal, Vertical };
 enum class FreezeTrigger { Edge, Luma, Random };
-enum class SeamlessLoopMode { Crossfade, LumaWeave, PingPong };
+enum class SeamlessLoopMode { Crossfade, LumaWeave, PingPong, SpectralMorph, DifferenceWeave };
 enum class SplitAxis { Horizontal, Vertical, Radial };
 enum class SyncLossDriver { DeterministicNoise, Luma, Edges };
 enum class SyncLossAxis { Horizontal, Vertical };
@@ -56,6 +57,10 @@ struct RadialChronoFunnelParams {
     EdgeBehavior edge_behavior{EdgeBehavior::Wrap};
     float twist{0.75F};
     RadialTopology topology{RadialTopology::TimeLoom};
+    // Rotates the polar coordinate system without rotating the output canvas.
+    float rotation_degrees{};
+    // Periodic removes the atan2 branch-cut discontinuity from time mapping.
+    RadialSeamMode seam_mode{RadialSeamMode::Open};
 };
 
 struct TemporalPixelSortParams {

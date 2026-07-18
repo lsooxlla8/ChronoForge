@@ -3,6 +3,7 @@
 #include "chronoforge/core/effects.hpp"
 #include "chronoforge/core/mapped_tensor.hpp"
 #include "chronoforge/core/spectral.hpp"
+#include "chronoforge/core/spectral_morph.hpp"
 
 #include <algorithm>
 #include <array>
@@ -384,7 +385,7 @@ void report(const FileRenderProgress& progress, double fraction, std::string_vie
             }
             return {input.h, input.w, input.t, input.c};
         case EffectOperation::SeamlessLoop: {
-            require_option(effect.options[0], 2, "seamless loop mode");
+            require_option(effect.options[0], 4, "seamless loop mode");
             if (effect.options[0] == static_cast<std::int32_t>(SeamlessLoopMode::PingPong)) {
                 return {input.t <= 1 ? 1 : input.t * 2 - 2, input.h, input.w, input.c};
             }
@@ -844,8 +845,10 @@ void bitplane_forge(const MappedTensor& input, MappedTensor& output, const Effec
 void radial(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
     require_option(effect.options[0], 2, "edge behavior");
     require_option(effect.options[1], 2, "radial topology");
+    require_option(effect.options[2], 1, "radial seam mode");
     const auto edge = static_cast<EdgeBehavior>(effect.options[0]);
     const auto topology = static_cast<RadialTopology>(effect.options[1]);
+    const auto seam_mode = static_cast<RadialSeamMode>(effect.options[2]);
     const auto& s = input.shape();
     const auto center_x = effect.values[0] * static_cast<float>(s.w - 1);
     const auto center_y = effect.values[1] * static_cast<float>(s.h - 1);
@@ -859,25 +862,31 @@ void radial(const MappedTensor& input, MappedTensor& output, const EffectSpec& e
                 const auto dx = (static_cast<float>(x) - center_x) / width;
                 const auto dy = (static_cast<float>(y) - center_y) / height;
                 const auto radius = std::sqrt(dx * dx + dy * dy);
-                const auto turns = std::atan2(dy, dx) / (2.0F * std::numbers::pi_v<float>);
                 const auto tau = 2.0F * std::numbers::pi_v<float>;
+                const auto raw_turns = std::atan2(dy, dx) / tau;
+                const auto rotation_turns = effect.values[4] / 360.0F;
+                const auto turns = std::remainder(raw_turns - rotation_turns, 1.0F);
+                const auto angular_time = seam_mode == RadialSeamMode::Periodic
+                    ? 0.5F * std::cos(tau * turns)
+                    : turns;
                 const auto warp_gain = std::clamp(std::abs(effect.values[2]) * 5.0F, 0.0F, 1.25F);
                 float weave{};
                 float source_radius = radius;
-                float source_turns = turns;
+                float source_turns = raw_turns;
                 switch (topology) {
                     case RadialTopology::TimeLoom: {
                         const auto strand_a = std::sin(tau * (3.0F * turns + 2.0F * radius - 2.0F * phase));
                         const auto strand_b = std::cos(tau * (5.0F * radius - turns + 3.0F * phase));
                         source_turns += effect.values[3] * (0.055F + 0.10F * radius) * strand_a + 0.045F * warp_gain * strand_b;
                         source_radius = std::max(0.0F, radius * (1.0F + 0.22F * warp_gain * strand_b) + 0.035F * warp_gain * strand_a);
-                        weave = radius + effect.values[3] * turns + 0.34F * strand_a + 0.18F * strand_b;
+                        weave = radius + effect.values[3] * angular_time + 0.34F * strand_a + 0.18F * strand_b;
                         break;
                     }
                     case RadialTopology::KaleidoFold: {
                         const auto segment = std::fmod(turns * 7.0F + 1000.0F, 1.0F);
                         const auto folded = std::abs(segment - 0.5F) * 2.0F;
-                        source_turns = (std::floor(turns * 7.0F) + folded + 0.18F * std::sin(tau * (phase + radius))) / 7.0F;
+                        source_turns = rotation_turns +
+                            (std::floor(turns * 7.0F) + folded + 0.18F * std::sin(tau * (phase + radius))) / 7.0F;
                         source_radius = std::max(0.0F, radius + 0.08F * warp_gain * std::sin(tau * (14.0F * turns - 2.0F * phase)));
                         weave = 1.4F * folded + radius + effect.values[3] * std::sin(tau * (7.0F * turns + phase));
                         break;
@@ -1654,7 +1663,7 @@ void feedback(const MappedTensor& input, MappedTensor& output, const EffectSpec&
 }
 
 void seamless_loop(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
-    require_option(effect.options[0], 2, "seamless loop mode");
+    require_option(effect.options[0], 4, "seamless loop mode");
     const auto mode = static_cast<SeamlessLoopMode>(effect.options[0]);
     const auto& source_shape = input.shape();
     const auto& result_shape = output.shape();
@@ -1678,6 +1687,49 @@ void seamless_loop(const MappedTensor& input, MappedTensor& output, const Effect
         const auto normalized = std::clamp((value - edge0) / std::max(0.0001F, edge1 - edge0), 0.0F, 1.0F);
         return normalized * normalized * (3.0F - 2.0F * normalized);
     };
+    if (mode == SeamlessLoopMode::SpectralMorph) {
+        const auto frame_values = source_shape.h * source_shape.w * source_shape.c;
+        parallel_for(result_shape.t, progress, [&](std::size_t t) {
+            auto* frame_destination = destination + t * frame_values;
+            if (t >= transition) {
+                std::copy_n(input.data() + t * frame_values, frame_values, frame_destination);
+                return;
+            }
+            const auto tail_t = t + result_shape.t;
+            const auto fraction = transition <= 1 ? 0.5F : static_cast<float>(t) / static_cast<float>(transition - 1);
+            if (t == 0 || t + 1 == transition) {
+                const auto source_t = t == 0 ? tail_t : t;
+                std::copy_n(input.data() + source_t * frame_values, frame_values, frame_destination);
+                return;
+            }
+            const auto morphed = spectral_morph_frames(
+                std::span<const float>(input.data() + tail_t * frame_values, frame_values),
+                std::span<const float>(input.data() + t * frame_values, frame_values),
+                source_shape.h, source_shape.w, source_shape.c, smoothstep(0.0F, 1.0F, fraction));
+            std::copy(morphed.begin(), morphed.end(), frame_destination);
+        });
+        return;
+    }
+
+    std::vector<std::size_t> best_difference_frame;
+    if (mode == SeamlessLoopMode::DifferenceWeave) {
+        best_difference_frame.resize(source_shape.h * source_shape.w);
+        parallel_for(source_shape.h, [](double) {}, [&](std::size_t y) {
+            for (std::size_t x = 0; x < source_shape.w; ++x) {
+                auto best = std::numeric_limits<float>::max();
+                std::size_t best_t = 0;
+                for (std::size_t candidate = 0; candidate < transition; ++candidate) {
+                    const auto tail_t = candidate + result_shape.t;
+                    float difference{};
+                    for (std::size_t c = 0; c < std::min<std::size_t>(3, source_shape.c); ++c) {
+                        difference += std::abs(read(input, candidate, y, x, c) - read(input, tail_t, y, x, c));
+                    }
+                    if (difference < best) { best = difference; best_t = candidate; }
+                }
+                best_difference_frame[y * source_shape.w + x] = best_t;
+            }
+        });
+    }
     parallel_for(result_shape.t, progress, [&](std::size_t t) {
         for (std::size_t y = 0; y < source_shape.h; ++y) {
             for (std::size_t x = 0; x < source_shape.w; ++x) {
@@ -1699,6 +1751,14 @@ void seamless_loop(const MappedTensor& input, MappedTensor& output, const Effect
                         const auto threshold = std::clamp(
                             0.5F * (luma(input, t, y, x) + luma(input, tail_t, y, x)), 0.0F, 1.0F);
                         mix = smoothstep(threshold - softness, threshold + softness, fraction);
+                    }
+                } else if (mode == SeamlessLoopMode::DifferenceWeave && transition > 1) {
+                    if (t == 0) mix = 0.0F;
+                    else if (t + 1 == transition) mix = 1.0F;
+                    else {
+                        const auto center = static_cast<float>(best_difference_frame[y * source_shape.w + x]) /
+                                            static_cast<float>(transition - 1);
+                        mix = smoothstep(center - softness, center + softness, fraction);
                     }
                 }
                 for (std::size_t c = 0; c < source_shape.c; ++c) {

@@ -128,7 +128,7 @@ struct ChronoForgeIntegration {
         // Preview menu while file rendering still works.
         let singleInputPreviewDescriptors: [(Int32, CFEffectDescriptorV2)] = [
             (0, descriptor(kind: 0, values: [], options: [0, 1])),
-            (2, descriptor(kind: 2, values: [0.5, 0.5, 0.08, 0.75], options: [1, 0])),
+            (2, descriptor(kind: 2, values: [0.5, 0.5, 0.08, 0.75, 0], options: [1, 0, 0])),
             (3, descriptor(kind: 3, values: [0, 0], options: [0, 0])),
             (4, descriptor(kind: 4, values: [0, 15, 0], options: [3])),
             (5, descriptor(kind: 5, values: [0], options: [0, 1, 1, 0])),
@@ -137,6 +137,8 @@ struct ChronoForgeIntegration {
             (10, descriptor(kind: 10, values: [2, 0.35, 2, 0.15], options: [1])),
             (11, descriptor(kind: 11, values: [0.2, 8, 0.05], options: [0, 0, 0], seed: 42)),
             (12, descriptor(kind: 12, values: [2, 0.12], options: [0])),
+            (12, descriptor(kind: 12, values: [3, 0.12], options: [3])),
+            (12, descriptor(kind: 12, values: [3, 0.18], options: [4])),
         ]
         for (kind, requested) in singleInputPreviewDescriptors {
             let output = try renderAny(requested)

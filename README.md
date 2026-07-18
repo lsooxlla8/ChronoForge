@@ -25,7 +25,7 @@ No formulas required. If you have used an effect stack, displacement map or rend
 | --- | --- |
 | **Space-Time Transform** | Swap width or height with time, or rotate the video volume in 3D. |
 | **Self Time Displacement** | Bright or coloured parts of the same clip jump forward or backward in time. |
-| **Polar Time Warp** | Braided, folded and orbiting time structures around a movable centre. |
+| **Polar Time Warp** | Braided, folded and orbiting time structures with a rotatable polar field and optional seamless angle. |
 | **Pixel Sort (Time)** | Sort through frames by luma, saturation or a shifted hue key using ascending, descending, zigzag or center-out order. |
 | **3D FFT Transform** | Swap or rotate spatial and temporal frequencies for spectral textures. |
 | **RGB Time Slip** | Pull red, green and blue from independent frames and split them horizontally, vertically or radially. |
@@ -37,7 +37,7 @@ No formulas required. If you have used an effect stack, displacement map or rend
 | **Optical Flow Time Warp** | Moving objects bend time more than the static background. |
 | **Time Feedback** | Recursive past and future echoes with colour and displacement blend modes. |
 | **Axis Datamosh** | Freeze and drag image data along time, horizontal or vertical lines, including bright- or dark-side luma triggering. |
-| **Seamless Loop** | Close a non-looping clip with a crossfade, a detail-driven luma weave or a guaranteed ping-pong pass. |
+| **Seamless Loop** | Close a clip with crossfade, luma/difference weave, FFT phase-aware spectral morph or a guaranteed ping-pong pass. |
 
 ### Two videos
 

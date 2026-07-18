@@ -130,8 +130,13 @@ enum RandomStackGenerator {
                 .triangular(0.15...0.85, preferred: 0.5, using: &random),
                 RandomFloatDistribution.signedMagnitude(0.03...0.65, deadZone: 0.03).sample(using: &random),
                 RandomFloatDistribution.signedMagnitude(0.1...2.5, deadZone: 0.1).sample(using: &random),
+                RandomFloatDistribution.uniform(-180...180).sample(using: &random),
             ]
-            node.options = [Int32(random.integer(in: 0...2)), Int32(random.integer(in: 0...2))]
+            node.options = [
+                Int32(random.integer(in: 0...2)),
+                Int32(random.integer(in: 0...2)),
+                random.chance(0.65) ? 1 : 0,
+            ]
         case "pixel-sort":
             node.values[0] = .triangular(0.05...0.9, preferred: 0.35, using: &random)
             node.values[1] = RandomFloatDistribution.uniform(-180...180).sample(using: &random)
@@ -182,7 +187,7 @@ enum RandomStackGenerator {
             let sourceFrames = mediaPool.first?.tensor.frames ?? 30
             node.values = [Float(random.integer(in: 2...max(2, min(60, sourceFrames / 2)))),
                            .triangular(0.03...0.3, preferred: 0.12, using: &random)]
-            node.options = [weighted([0, 0, 1, 1, 2], using: &random)]
+            node.options = [weighted([0, 0, 1, 1, 2, 3, 4, 4], using: &random)]
         case "rgb-time-slip":
             let stationary = random.integer(in: 0...2)
             var offsets = [Float](repeating: 0, count: 3)
