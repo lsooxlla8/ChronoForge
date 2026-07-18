@@ -782,6 +782,29 @@ effectiveAmount(t, y, x) = amount × mask(t, y, x)
 - UI остаётся отзывчивым, отмена Preview не отменяет export, а fallback проверяется принудительно;
 - Metal-specific код находится за backend boundary, чтобы будущий Windows backend мог использовать Direct3D 12, Vulkan или другую реализацию без переписывания effect semantics.
 
+### 14.5. Экспорт текущего кадра в PNG — отложенный контракт
+
+Добавить рядом с основным Export отдельное действие `Export Current Frame…`, которое сохраняет выбранный во Viewer кадр как один PNG в максимальном доступном разрешении результата.
+
+Требуемое поведение:
+
+- экспортируется текущая позиция итогового output после всего effect stack, а не proxy bitmap из Viewer;
+- позиция Viewer нормализованно отображается на timeline full-resolution результата после всех shape-changing эффектов;
+- «максимальное разрешение» означает настоящий full-resolution render текущего graph без искусственного upscale выше его output shape;
+- первая версия сохраняет PNG 8-bit RGBA с той же premultiplied-linear → PNG conversion и alpha policy, что и PNG Sequence export;
+- действие открывает обычный Save Panel, предлагает имя вида `ChronoForge_Frame_000123.png` и никогда молча не перезаписывает существующий файл;
+- экспорт одного кадра не меняет session state, current frame, Undo/Redo или render queue;
+- готовый full-render cache переиспользуется; если нужного результата нет, UI показывает progress и позволяет отменить только этот export.
+
+Оптимизация одного кадра не должна менять результат. Для local/spatial эффектов renderer может вычислять только нужный frame/tile. Для temporal, recursive, FFT, sorting и shape-changing эффектов dependency planner определяет необходимый диапазон; если корректный кадр требует предыдущих кадров либо полного tensor, приложение честно выполняет необходимую часть full render вместо приблизительного single-frame preview.
+
+Критерии приёмки:
+
+- экспортированный PNG совпадает с тем же кадром PNG Sequence/full render в установленном tolerance;
+- mapping первого, среднего и последнего Viewer frame корректен после эффектов, меняющих T;
+- alpha и полупрозрачные цветные края сохраняются без fringe;
+- повторный экспорт из валидного cache заметно быстрее первого и не запускает лишний полный render.
+
 ---
 
 ## 15. Кэш, детерминизм и совместимость рендера
@@ -1026,4 +1049,4 @@ swift run ChronoForgeMac --self-test
 - смена FPS в первой версии переинтерпретирует кадры, не конвертирует их;
 - MP4 всегда непрозрачный и композитится на чёрный;
 - ProRes import остаётся возможностью AVFoundation, ProRes export не добавляется;
-- keyframes, Apply To masks, Temporal Brush, встроенная Help, Metal/GPU backend и Wave B отложены.
+- keyframes, Apply To masks, Temporal Brush, встроенная Help, Metal/GPU backend, экспорт текущего кадра в PNG и Wave B отложены.
