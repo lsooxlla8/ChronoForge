@@ -2,9 +2,10 @@
 
 **Break video across space and time.**
 
-ChronoForge 1.0 is a native offline macOS app for glitch artists, experimental filmmakers and motion designers. Import movies or PNG image sequences, stack strange time-based effects, watch a fast proxy preview, then export the result at full resolution.
+ChronoForge 1.0 is a native offline macOS app for glitch art.
+Import movies or PNG image sequences, stack strange time-based effects, watch a fast proxy preview, then export the result at full resolution.
 
-The 1.0 workflow is deliberately session-based: every normal launch starts empty, and a clean quit discards media, effect settings and the render queue. ChronoForge keeps only a hidden crash-recovery snapshot while the app is running; finished videos remain the thing you save.
+The 1.0 workflow is deliberately session-based: every normal launch starts empty, and a clean quit discards media, effect settings and the render queue. Only finished videos remain the thing you save.
 
 No formulas required. If you have used an effect stack, displacement map or render queue before, you already know the workflow.
 
@@ -19,7 +20,7 @@ No formulas required. If you have used an effect stack, displacement map or rend
 
 ## Why it exists
 
-ChronoForge began with one idea: treat a video as a three-dimensional volume and exchange a spatial axis with time. The original inspiration was foo52ru ТехноШаман's video [«Меняем пространство и время местами»](https://www.youtube.com/watch?v=n4tbdFD18vs). That experiment became **Space-Time Transform**, then grew into an offline multitool for tearing apart time, memory, colour channels, signal structure and relationships between two videos.
+ChronoForge began with one idea: treat a video as a three-dimensional volume and exchange a spatial axis with time. The original inspiration was foo52ru ТехноШаман's video [«Меняем пространство и время местами»](https://www.youtube.com/watch?v=n4tbdFD18vs). That experiment became **Space-Time Transform**, then grew into an offline multitool for tearing apart time, memory, colour channels, signal structure and relationships between one or more videos.
 
 ## Effects
 
@@ -63,14 +64,6 @@ ChronoForge began with one idea: treat a video as a three-dimensional volume and
 6. Use **Export** for an H.264 MP4 or alpha-preserving PNG sequence. Choose FPS to reinterpret the finished frames without resampling them. **Add to Queue** remains available for MP4 batches; press **Shift–Command–R** to start the queue.
 
 Useful shortcuts: **Space** plays or pauses Preview, **Command–Z** / **Shift–Command–Z** undo and redo, **\\** toggles Before/After, **Shift–S** toggles the sidebar, **Shift–R** generates a random stack, **Shift–Delete** clears it, **Shift–Command–I** imports a PNG sequence, and **Option–Command–R** adds the current render to the queue.
-
-## Why it is different
-
-Most video tools treat time as a playhead. ChronoForge treats time like another direction you can swap, rotate, sort, map and displace. The result is closer to a playable glitch instrument than a conventional editor.
-
-Large movies and image sequences are processed through temporary SSD files instead of being loaded into RAM all at once. Preview always uses proxy media; export always goes back to the original files. Proxy and full-render caches are reused during the session and removed after a normal quit.
-
-The completed 1.0 scope is recorded in [docs/done.md](docs/done.md). The smaller post-1.0 backlog lives in [docs/todo.md](docs/todo.md).
 
 ## Download and requirements
 
