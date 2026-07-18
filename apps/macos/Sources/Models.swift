@@ -315,7 +315,7 @@ enum AudioMode: String, CaseIterable, Identifiable, Codable, Sendable {
     case preserveOriginal
 
     var id: String { rawValue }
-    var title: String { self == .none ? "No audio" : "Preserve original" }
+    var title: String { self == .none ? "No audio" : "Original" }
 }
 
 enum PlaybackFPSPreset: String, CaseIterable, Identifiable, Codable, Sendable {
@@ -364,12 +364,4 @@ enum PlaybackFPSPreset: String, CaseIterable, Identifiable, Codable, Sendable {
         case .fps60: 60
         }
     }
-}
-
-enum ViewerBackground: String, CaseIterable, Identifiable {
-    case black
-    case checkerboard
-
-    var id: String { rawValue }
-    var title: String { self == .black ? "Black" : "Checkerboard" }
 }

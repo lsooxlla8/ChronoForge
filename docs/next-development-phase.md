@@ -488,14 +488,14 @@ typedef struct CFEffectDescriptorV2 {
 - Добавить output setting `FPS`: Result либо перечисленные стандартные/custom значения.
 - В 1.1 FPS только переинтерпретирует готовые кадры: frame count не меняется, duration изменяется.
 - UI сразу показывает итоговую duration.
-- При FPS, отличном от source/effect result, Preserve Original Audio отключается с пояснением о рассинхронизации.
+- При FPS, отличном от source/effect result, Audio: Original отключается с пояснением о рассинхронизации.
 - Frame duplication, dropping, optical interpolation и time-stretch audio не входят в 1.1.
 - Output FPS входит в cache/export signature, но не меняет cache вычисленного пиксельного tensor, если меняется только metadata.
 
 ### 11.5. Alpha
 
 - Все новые эффекты обязаны сохранять premultiplied alpha осмысленно.
-- Viewer получает переключатель Black / Checkerboard.
+- Viewer всегда использует чёрный фон.
 - PNG sequence по умолчанию сохраняет alpha.
 - H.264 MP4 не заявляет поддержку прозрачности и композитит результат на чёрный фон.
 - Если effect Fill = Transparent, preview и PNG обязаны показывать/сохранять прозрачную область.
@@ -763,14 +763,14 @@ effectiveAmount(t, y, x) = amount × mask(t, y, x)
 
 Рекомендуемое размещение:
 
-- Sidebar bottom: Add Effect, Random, Clear.
-- Viewer toolbar: hold-to-compare, background Black/Checkerboard; тема — отдельной кнопкой в левом верхнем углу над разделителем.
-- Main toolbar: Export и Add to Queue; project controls удалены.
-- Inspector: Enabled, Amount, effect-specific controls, Driver B при необходимости, Reseed только для stochastic effects.
+- Sidebar bottom: Add Effect и icon-only Random/Clear в одной строке.
+- Main toolbar: тема слева, Export и Add to Queue справа; строка с названием приложения удалена.
+- Viewer controls: Before/After и output settings; фон всегда чёрный.
+- Inspector: фиксированная ширина, вертикальный scroll, Enabled, Amount, effect-specific controls, Driver B при необходимости, Reseed только для stochastic effects.
 - Output settings: Preview Quality, Image AA, Time AA, FPS, Audio.
 - Add Effect menu: только категории и эффекты, без поиска, presets и favorites.
 
-Если ширины toolbar не хватает, output settings переносятся в компактный popover `Output`, а не во второй постоянно видимый ряд новых controls.
+Если ширины toolbar не хватает, output settings адаптивно переносятся на следующую строку без обрезки подписей; выбор эффекта не меняет геометрию toolbar или Inspector.
 
 ---
 

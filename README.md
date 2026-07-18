@@ -58,7 +58,7 @@ No formulas required. If you have used an effect stack, displacement map or rend
 5. For a two-video effect, add another clip to Media and choose it as **Driver video (B)**.
 6. Use **Export** for an H.264 MP4 or alpha-preserving PNG sequence. Choose FPS to reinterpret the finished frames without resampling them. **Add to Queue** remains available for MP4 batches; press **Shift–Command–R** to start the queue.
 
-Useful shortcuts: **Space** plays or pauses Preview, **Command–Z** / **Shift–Command–Z** undo and redo, **\\** holds Before, **Shift–S** toggles the sidebar, **Shift–R** creates a Random Stack, **Shift–Delete** clears it, **Shift–Command–I** imports a PNG sequence, and **Option–Command–R** adds the current render to the queue.
+Useful shortcuts: **Space** plays or pauses Preview, **Command–Z** / **Shift–Command–Z** undo and redo, **\\** toggles Before/After, **Shift–S** toggles the sidebar, **Shift–R** generates a random stack, **Shift–Delete** clears it, **Shift–Command–I** imports a PNG sequence, and **Option–Command–R** adds the current render to the queue.
 
 ## Why it is different
 

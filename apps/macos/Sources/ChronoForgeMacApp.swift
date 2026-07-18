@@ -22,16 +22,6 @@ struct ChronoForgeMacApp: App {
                 let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
                 guard !event.isARepeat else { return event }
 
-                if event.charactersIgnoringModifiers == "\\",
-                   modifiers.intersection([.command, .option, .control, .shift]).isEmpty {
-                    NotificationCenter.default.post(
-                        name: .compareSourceChanged,
-                        object: nil,
-                        userInfo: ["pressed": event.type == .keyDown]
-                    )
-                    return nil
-                }
-
                 guard event.type == .keyDown else { return event }
 
                 if event.keyCode == 49,
@@ -74,6 +64,7 @@ struct ChronoForgeMacApp: App {
                 .frame(minWidth: 1120, minHeight: 720)
         }
         .defaultSize(width: 1480, height: 920)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .undoRedo) {
                 Button("Undo") { project.undo() }
@@ -115,6 +106,10 @@ struct ChronoForgeMacApp: App {
                     NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
                 }
                 .keyboardShortcut("s", modifiers: [.shift])
+                Button("Before / After") {
+                    NotificationCenter.default.post(name: .toggleSourceComparison, object: nil)
+                }
+                .keyboardShortcut("\\", modifiers: [])
             }
         }
     }
@@ -123,7 +118,6 @@ struct ChronoForgeMacApp: App {
 private struct WorkspaceView: View {
     @EnvironmentObject private var project: SessionStore
     @AppStorage("ChronoForge.darkAppearance") private var darkAppearance = false
-    @AppStorage("ChronoForge.viewerBackground") private var viewerBackgroundRaw = ViewerBackground.black.rawValue
     @State private var isComparingSource = false
     @State private var isComparingSelectedEffect = false
     @State private var isShowingSelectedEffectInput = false
@@ -136,7 +130,7 @@ private struct WorkspaceView: View {
                 toolbar
                 HSplitView {
                     preview
-                    inspector.frame(minWidth: 280, idealWidth: 310, maxWidth: 360)
+                    inspector.frame(width: 340)
                 }
                 Divider()
                 timeline
@@ -145,8 +139,8 @@ private struct WorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: .togglePreviewPlayback)) { _ in
             project.togglePlayback()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .compareSourceChanged)) { notification in
-            isComparingSource = notification.userInfo?["pressed"] as? Bool ?? false
+        .onReceive(NotificationCenter.default.publisher(for: .toggleSourceComparison)) { _ in
+            isComparingSource.toggle()
         }
         .onChange(of: project.selectedNodeID) { _, _ in
             isComparingSelectedEffect = false
@@ -159,6 +153,45 @@ private struct WorkspaceView: View {
             }
         }
         .preferredColorScheme(darkAppearance ? .dark : .light)
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    darkAppearance.toggle()
+                } label: {
+                    Image(systemName: darkAppearance ? "moon.fill" : "sun.max.fill")
+                }
+                .focusable(false)
+                .accessibilityLabel(darkAppearance ? "Switch to light appearance" : "Switch to dark appearance")
+                .help(darkAppearance ? "Switch to light appearance" : "Switch to dark appearance")
+            }
+            ToolbarItem(placement: .principal) {
+                Spacer()
+            }
+            ToolbarItemGroup(placement: .confirmationAction) {
+                if project.isRendering || project.isImporting || project.isExporting {
+                    if let progress = project.renderProgress {
+                        ProgressView(value: progress).frame(width: 72)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                    Button("Cancel") { project.cancelWork() }
+                }
+                Button { project.addCurrentRenderToQueue() } label: {
+                    Label("Add to Queue", systemImage: "text.badge.plus")
+                        .labelStyle(.titleAndIcon)
+                }
+                    .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
+                Menu {
+                    Button("MP4 Video…", systemImage: "film") { project.chooseExportLocation() }
+                    Button("PNG Sequence…", systemImage: "photo.stack") { project.choosePNGSequenceExportLocation() }
+                } label: {
+                    Label("Export…", systemImage: "square.and.arrow.up")
+                        .labelStyle(.titleAndIcon)
+                }
+                .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
+                .help("Render the current effect stack from the original media at full quality.")
+            }
+        }
         .fileImporter(
             isPresented: $project.showsImporter,
             allowedContentTypes: [.movie, .mpeg4Movie, .quickTimeMovie],
@@ -296,7 +329,8 @@ private struct WorkspaceView: View {
         }
         .safeAreaInset(edge: .bottom) {
             VStack(alignment: .leading, spacing: 7) {
-                Menu("Add effect", systemImage: "plus") {
+                HStack(spacing: 6) {
+                    Menu("Add effect", systemImage: "plus") {
                         ForEach(EffectCategory.allCases) { category in
                             let definitions = EffectRegistry.definitions(in: category)
                             if !definitions.isEmpty {
@@ -309,17 +343,19 @@ private struct WorkspaceView: View {
                                 }
                             }
                         }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("Random", systemImage: "dice") { project.replaceWithRandomStack() }
+                        .labelStyle(.iconOnly)
+                        .disabled(project.source == nil)
+                        .help("Random: replace the stack with 1–3 compatible effects. Undo restores the previous stack.")
+                    Button("Clear", systemImage: "trash", role: .destructive) {
+                        project.clearEffectStack()
+                    }
+                    .labelStyle(.iconOnly)
+                    .disabled(project.effects.isEmpty)
+                    .help("Clear the effect stack")
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Button("Random", systemImage: "dice") { project.replaceWithRandomStack() }
-                    .fixedSize(horizontal: true, vertical: false)
-                    .disabled(project.source == nil)
-                    .help("Replace the current stack with 1–3 compatible randomized effects. Undo restores the previous stack.")
-                Button("Clear", systemImage: "trash", role: .destructive) {
-                    project.clearEffectStack()
-                }
-                .disabled(project.effects.isEmpty)
-                .frame(maxWidth: .infinity, alignment: .leading)
                 Divider()
                 Text("Cache: \(project.cacheSizeDescription) · auto limit 8 GB")
                     .font(.caption2)
@@ -333,147 +369,115 @@ private struct WorkspaceView: View {
 
     private var toolbar: some View {
         VStack(spacing: 7) {
-            HStack(spacing: 12) {
-                Button {
-                    darkAppearance.toggle()
-                } label: {
-                    Image(systemName: darkAppearance ? "moon.fill" : "sun.max.fill")
-                        .frame(width: 18, height: 18)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    beforeAfterControl
+                    imageSettingsControls
+                    outputSettingsControls
+                    Spacer(minLength: 0)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel(darkAppearance ? "Switch to light appearance" : "Switch to dark appearance")
-                .help(darkAppearance ? "Switch to light appearance" : "Switch to dark appearance")
-                Divider().frame(height: 18)
-                Label("ChronoForge", systemImage: "cube.transparent")
-                    .font(.headline)
-                Text(project.statusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer()
-                ZStack(alignment: .trailing) {
-                    Color.clear
-                    if project.isRendering || project.isImporting || project.isExporting {
-                        HStack(spacing: 8) {
-                            if let progress = project.renderProgress {
-                                ProgressView(value: progress).frame(width: 72)
-                            } else {
-                                ProgressView().controlSize(.small)
-                            }
-                            Button("Cancel") { project.cancelWork() }
-                        }
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(spacing: 12) {
+                        beforeAfterControl
+                        imageSettingsControls
+                        Spacer(minLength: 0)
+                    }
+                    HStack(spacing: 12) {
+                        outputSettingsControls
+                        Spacer(minLength: 0)
                     }
                 }
-                .frame(width: 142, height: 24)
-            }
-            Divider()
-            HStack(spacing: 12) {
-                Button("Before / After", systemImage: "rectangle.on.rectangle") {}
-                    .simultaneousGesture(
-                        DragGesture(minimumDistance: 0)
-                            .onChanged { _ in isComparingSource = true }
-                            .onEnded { _ in isComparingSource = false }
-                    )
-                    .disabled(project.source == nil || project.output == nil)
-                    .help("Hold to show Before (Source A); release for After (the latest result). Keyboard: hold \\")
-                Button("Add to Queue", systemImage: "text.badge.plus") { project.addCurrentRenderToQueue() }
-                    .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
-                Menu("Export…", systemImage: "square.and.arrow.up") {
-                    Button("MP4 Video…", systemImage: "film") { project.chooseExportLocation() }
-                    Button("PNG Sequence…", systemImage: "photo.stack") { project.choosePNGSequenceExportLocation() }
-                }
-                    .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
-                    .help("Render the current effect stack from the original media at full quality.")
-                Picker("Viewer background", selection: Binding(
-                    get: { ViewerBackground(rawValue: viewerBackgroundRaw) ?? .black },
-                    set: { viewerBackgroundRaw = $0.rawValue }
-                )) {
-                    ForEach(ViewerBackground.allCases) { background in Text(background.title).tag(background) }
-                }
-                .labelsHidden()
-                .frame(width: 125)
-                .help("Viewer-only background behind transparent pixels. Checkerboard makes alpha visible; Black previews opaque delivery. It does not change PNG pixels, and MP4 always flattens transparency onto black.")
-                Spacer()
-            }
-            HStack(spacing: 12) {
-                Picker("Preview", selection: Binding(
-                    get: { project.proxyQuality },
-                    set: { project.changeProxyQuality(to: $0) }
-                )) {
-                    ForEach(ProxyQuality.allCases) { quality in Text(quality.title).tag(quality) }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 205)
-                .fixedSize(horizontal: true, vertical: false)
-                .help(project.proxyQuality.detail)
-                Picker("Image AA", selection: Binding(
-                    get: { project.spatialPrefilter },
-                    set: { project.setSpatialPrefilter($0) }
-                )) {
-                    ForEach(PrefilterStrength.allCases) { strength in Text(strength.title).tag(strength) }
-                }
-                .frame(width: 145)
-                .fixedSize(horizontal: true, vertical: false)
-                .help("Reduces jagged spatial edges and shimmer after geometric resampling. Light is a subtle axial low-pass; Strong is smoother.")
-                Picker("Time AA", selection: Binding(
-                    get: { project.temporalPrefilter },
-                    set: { project.setTemporalPrefilter($0) }
-                )) {
-                    ForEach(PrefilterStrength.allCases) { strength in Text(strength.title).tag(strength) }
-                }
-                .frame(width: 145)
-                .fixedSize(horizontal: true, vertical: false)
-                .help("Blends adjacent output frames to reduce temporal aliasing and flicker. It can soften deliberately abrupt motion.")
-                Picker("Audio", selection: Binding(
-                    get: { project.audioMode },
-                    set: { project.setAudioMode($0) }
-                )) {
-                    ForEach(AudioMode.allCases) { mode in
-                        Text(mode.title)
-                            .tag(mode)
-                            .disabled(mode == .preserveOriginal && !project.canPreserveOriginalAudio)
-                    }
-                }
-                .frame(width: 190)
-                .fixedSize(horizontal: true, vertical: false)
-                .help(project.canPreserveOriginalAudio
-                    ? "Preserve the original movie audio without re-timing it."
-                    : "Original audio is unavailable for image sequences or reinterpreted playback FPS.")
-                Picker("FPS", selection: Binding(
-                    get: { project.playbackFPSPreset },
-                    set: { project.setPlaybackFPSPreset($0) }
-                )) {
-                    ForEach(PlaybackFPSPreset.allCases) { preset in Text(preset.title).tag(preset) }
-                }
-                .frame(width: 125)
-                .fixedSize(horizontal: true, vertical: false)
-                if project.playbackFPSPreset == .custom {
-                    TextField("FPS", value: Binding(
-                        get: { project.customPlaybackFPS },
-                        set: { project.setCustomPlaybackFPS($0) }
-                    ), format: .number.precision(.fractionLength(0...3)))
-                    .frame(width: 65)
-                    .textFieldStyle(.roundedBorder)
-                }
-                if let duration = project.outputDuration {
-                    Text("\(duration, format: .number.precision(.fractionLength(2))) s output")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
             }
         }
         .padding(12)
     }
 
+    private var beforeAfterControl: some View {
+        Button("Before / After", systemImage: "rectangle.on.rectangle") {}
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in isComparingSource = true }
+                    .onEnded { _ in isComparingSource = false }
+            )
+            .disabled(project.source == nil || project.output == nil)
+            .help("Hold to show Before; release for After. Keyboard: \\ toggles Before / After.")
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var imageSettingsControls: some View {
+        HStack(spacing: 12) {
+            Picker("Preview", selection: Binding(
+                get: { project.proxyQuality },
+                set: { project.changeProxyQuality(to: $0) }
+            )) {
+                ForEach(ProxyQuality.allCases) { quality in Text(quality.title).tag(quality) }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 205)
+            .help(project.proxyQuality.detail)
+            Picker("Image AA", selection: Binding(
+                get: { project.spatialPrefilter },
+                set: { project.setSpatialPrefilter($0) }
+            )) {
+                ForEach(PrefilterStrength.allCases) { strength in Text(strength.title).tag(strength) }
+            }
+            .frame(width: 145)
+            .help("Reduces jagged spatial edges and shimmer after geometric resampling. Light is a subtle axial low-pass; Strong is smoother.")
+            Picker("Time AA", selection: Binding(
+                get: { project.temporalPrefilter },
+                set: { project.setTemporalPrefilter($0) }
+            )) {
+                ForEach(PrefilterStrength.allCases) { strength in Text(strength.title).tag(strength) }
+            }
+            .frame(width: 145)
+            .help("Blends adjacent output frames to reduce temporal aliasing and flicker. It can soften deliberately abrupt motion.")
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var outputSettingsControls: some View {
+        HStack(spacing: 12) {
+            Picker("Audio", selection: Binding(
+                get: { project.audioMode },
+                set: { project.setAudioMode($0) }
+            )) {
+                ForEach(AudioMode.allCases) { mode in
+                    Text(mode.title)
+                        .tag(mode)
+                        .disabled(mode == .preserveOriginal && !project.canPreserveOriginalAudio)
+                }
+            }
+            .frame(width: 150)
+            .help(project.canPreserveOriginalAudio
+                ? "Keep the original movie audio without re-timing it."
+                : "Original audio is unavailable for image sequences or reinterpreted playback FPS.")
+            Picker("FPS", selection: Binding(
+                get: { project.playbackFPSPreset },
+                set: { project.setPlaybackFPSPreset($0) }
+            )) {
+                ForEach(PlaybackFPSPreset.allCases) { preset in Text(preset.title).tag(preset) }
+            }
+            .frame(width: 125)
+            if project.playbackFPSPreset == .custom {
+                TextField("FPS", value: Binding(
+                    get: { project.customPlaybackFPS },
+                    set: { project.setCustomPlaybackFPS($0) }
+                ), format: .number.precision(.fractionLength(0...3)))
+                .frame(width: 65)
+                .textFieldStyle(.roundedBorder)
+            }
+            if let duration = project.outputDuration {
+                Text("\(duration, format: .number.precision(.fractionLength(2))) s output")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
     private var preview: some View {
         ZStack {
-            if (ViewerBackground(rawValue: viewerBackgroundRaw) ?? .black) == .checkerboard {
-                CheckerboardView()
-            } else {
-                Color.black.opacity(0.94)
-            }
+            Color.black.opacity(0.94)
             if let presentation = previewPresentation,
                let image = TensorImage.make(from: presentation.tensor, frame: presentation.frame) {
                 Image(decorative: image, scale: 1)
@@ -554,31 +558,34 @@ private struct WorkspaceView: View {
 
     @ViewBuilder
     private var inspector: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Inspector").font(.headline)
-            if let nodeID = project.selectedNodeID, let selectedNode = project.effect(withID: nodeID) {
-                LabeledContent("Input", value: project.nodeName(selectedNode.inputNodeID))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                selectedEffectCompareControls
-                EffectInspector(node: Binding(
-                    get: { project.effect(withID: nodeID) ?? selectedNode },
-                    set: { project.updateEffect($0) }
-                ), mediaPool: project.mediaPool) { editing in
-                    if editing {
-                        project.beginContinuousEffectEdit()
-                    } else {
-                        project.endContinuousEffectEdit()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Inspector").font(.headline)
+                if let nodeID = project.selectedNodeID, let selectedNode = project.effect(withID: nodeID) {
+                    LabeledContent("Input", value: project.nodeName(selectedNode.inputNodeID))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    selectedEffectCompareControls
+                    EffectInspector(node: Binding(
+                        get: { project.effect(withID: nodeID) ?? selectedNode },
+                        set: { project.updateEffect($0) }
+                    ), mediaPool: project.mediaPool) { editing in
+                        if editing {
+                            project.beginContinuousEffectEdit()
+                        } else {
+                            project.endContinuousEffectEdit()
+                        }
+                    } onReseed: {
+                        project.reseedEffect(nodeID)
                     }
-                } onReseed: {
-                    project.reseedEffect(nodeID)
+                } else {
+                    ContentUnavailableView("Select an effect", systemImage: "slider.horizontal.3")
                 }
-            } else {
-                ContentUnavailableView("Select an effect", systemImage: "slider.horizontal.3")
+                Spacer()
             }
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
         }
-        .padding(16)
     }
 
     @ViewBuilder
@@ -641,28 +648,9 @@ private struct WorkspaceView: View {
     }
 }
 
-private struct CheckerboardView: View {
-    var body: some View {
-        Canvas { context, size in
-            let square: CGFloat = 14
-            let columns = Int(ceil(size.width / square))
-            let rows = Int(ceil(size.height / square))
-            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(white: 0.28)))
-            for row in 0..<rows {
-                for column in 0..<columns where (row + column).isMultiple(of: 2) {
-                    context.fill(
-                        Path(CGRect(x: CGFloat(column) * square, y: CGFloat(row) * square, width: square, height: square)),
-                        with: .color(Color(white: 0.42))
-                    )
-                }
-            }
-        }
-    }
-}
-
 private extension Notification.Name {
     static let togglePreviewPlayback = Notification.Name("ChronoForge.togglePreviewPlayback")
-    static let compareSourceChanged = Notification.Name("ChronoForge.compareSourceChanged")
+    static let toggleSourceComparison = Notification.Name("ChronoForge.toggleSourceComparison")
 }
 
 private struct EffectInspector: View {

@@ -293,7 +293,7 @@ enum SelfTestRunner {
             outputSettings.setPlaybackFPSPreset(.result)
             outputSettings.setAudioMode(.preserveOriginal)
             guard outputSettings.audioMode == .none else {
-                throw IntegrationSelfTestError.message("Image sequence incorrectly allowed Preserve Original Audio")
+                throw IntegrationSelfTestError.message("Image sequence incorrectly allowed Original audio")
             }
             let store = SessionStore()
             guard EffectKind.addableKinds.count == 20,

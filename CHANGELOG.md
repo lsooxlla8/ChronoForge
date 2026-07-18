@@ -2,6 +2,8 @@
 
 ## 1.0.0 — in development
 
+- Stabilized the workspace with a fixed-width scrolling Inspector and adaptive Preview controls; compacted the sidebar actions to one row, fixed startup focus styling, removed the viewer-background option, and moved queue/export beside the appearance control.
+- Added the standard backslash Before/After toggle and shortened the audio option to Original.
 - Made Preview automatic and non-optional, removed the manual Update Preview control and stale badge, defaulted new sessions to High Preview, and compacted the toolbar around a top-left appearance button.
 - Fixed the sidebar cache-label overlap and shortened its contextual controls to Add effect, Random and Clear.
 - Refined Preview toolbar labels and layout, added stable progress geometry, automatic rerender after quality changes, and shortcuts for sequence import, queueing, Random Stack and stack clearing.
@@ -23,7 +25,7 @@
 - Added a shared movie/frame-sequence `MediaSource` boundary across proxy decoding, full decoding, recovery and cache signatures; sequence fingerprints include every frame plus playback FPS.
 - Added numbered PNG sequence import with natural sorting, dimension validation, gap warnings, selectable/custom FPS, premultiplied-alpha proxy decoding and one-frame-at-a-time full decoding.
 - Added streaming 8-bit RGBA PNG sequence export with six-digit names, non-empty-folder protection and alpha-preserving round-trip coverage.
-- Added Result/preset/custom Playback FPS reinterpretation, output-duration feedback, audio sync restrictions, Black/Checkerboard viewer backgrounds and explicit black compositing for H.264.
+- Added Result/preset/custom Playback FPS reinterpretation, output-duration feedback, audio sync restrictions and explicit black viewer compositing.
 - Added RGB Time Slip with independent R/G/B frame offsets, horizontal/vertical/radial spatial separation, current-frame premultiplied alpha, Amount, effect-aware randomization and matching RAM/mapped render paths.
 - Added Horizontal Sync Loss with drifting row bands, deterministic Noise/Luma/Edges drivers, Wrap/Clamp/Mirror edges, Reseed, Amount and RAM/mapped parity.
 - Added Chroma Carrier Drift with stable current-frame luma, independent Cb/Cr spatial and temporal offsets, five-tap bleed, Together/Split/Alternating modes and premultiplied-alpha parity.
