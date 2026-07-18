@@ -588,22 +588,24 @@ void chroma_carrier_drift(const MappedTensor& input, MappedTensor& output, const
     const auto edge = static_cast<EdgeBehavior>(effect.options[1]);
     const auto& shape = input.shape();
     if (shape.c < 3) throw std::invalid_argument("Chroma Carrier Drift requires RGB input");
-    const auto straight_rgb = [&](float t, float y, float x, std::size_t channel) {
-        auto value = sample_mapped(input, t, y, x, channel, edge);
-        if (shape.c >= 4) {
-            const auto alpha = sample_mapped(input, t, y, x, 3, edge);
-            value = alpha > 0.00001F ? value / alpha : 0.0F;
+    const auto bleed = std::clamp(effect.values[3], 0.0F, 100.0F);
+    const auto straight_rgb = [&](float t, float y, float x) {
+        std::array<float, 3> rgb{};
+        const auto alpha = shape.c >= 4 ? sample_mapped(input, t, y, x, 3, edge) : 1.0F;
+        for (std::size_t channel = 0; channel < rgb.size(); ++channel) {
+            const auto value = sample_mapped(input, t, y, x, channel, edge);
+            rgb[channel] = alpha > 0.00001F ? value / alpha : 0.0F;
         }
-        return value;
+        return rgb;
     };
     const auto chroma = [&](float t, float y, float x, bool cb) {
         float total = 0.0F;
         constexpr std::array<float, 5> taps{-1.0F, -0.5F, 0.0F, 0.5F, 1.0F};
         for (const auto tap : taps) {
-            const auto sample_x = x + tap * std::clamp(effect.values[3], 0.0F, 100.0F);
-            const auto r = straight_rgb(t, y, sample_x, 0);
-            const auto g = straight_rgb(t, y, sample_x, 1);
-            const auto b = straight_rgb(t, y, sample_x, 2);
+            const auto rgb = straight_rgb(t, y, x + tap * bleed);
+            const auto r = rgb[0];
+            const auto g = rgb[1];
+            const auto b = rgb[2];
             const auto yy = 0.2126F * r + 0.7152F * g + 0.0722F * b;
             total += cb ? (b - yy) / 1.8556F : (r - yy) / 1.5748F;
         }

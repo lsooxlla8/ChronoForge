@@ -2,6 +2,8 @@
 
 ## 1.0.0 — in development
 
+- Clear proxy and full-render caches automatically after a normal app termination while retaining crash recovery after abnormal exits.
+- Reduced Chroma Carrier Drift sampling work by sharing each interpolated alpha lookup across RGB channels in both proxy and full-render paths.
 - Made the backslash Before/After shortcut a latched toggle by ignoring key-repeat events while the key is held.
 - Expanded Seamless Loop with start/end transition placement plus Spectral Amount, Frequency Blur and phase-timing controls for Spectral Morph.
 - Raised High Preview to 30 fps, kept proxy rate at or below the source rate, and moved playback to monotonic deadlines with overdue-frame catch-up.

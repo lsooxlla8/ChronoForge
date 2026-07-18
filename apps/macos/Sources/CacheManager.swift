@@ -4,6 +4,20 @@ actor CacheManager {
     static let shared = CacheManager()
     static let automaticLimit: Int64 = 8 * 1024 * 1024 * 1024
 
+    nonisolated static var defaultRoot: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("ChronoForge", isDirectory: true)
+    }
+
+    /// App termination is synchronous, so it cannot await the actor-isolated
+    /// `clear()`. Removing the root is sufficient; the next launch recreates it.
+    nonisolated static func clearOnTermination(root: URL? = nil) throws {
+        let root = root ?? defaultRoot
+        if FileManager.default.fileExists(atPath: root.path) {
+            try FileManager.default.removeItem(at: root)
+        }
+    }
+
     private struct Candidate {
         let url: URL
         let bytes: Int64
@@ -13,8 +27,7 @@ actor CacheManager {
     private let root: URL
 
     init(root: URL? = nil) {
-        self.root = root ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("ChronoForge", isDirectory: true)
+        self.root = root ?? Self.defaultRoot
     }
 
     func size() -> Int64 {

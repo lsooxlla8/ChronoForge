@@ -6,6 +6,7 @@ private final class ChronoForgeAppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         if !CommandLine.arguments.contains("--ui-acceptance") {
             SessionRecoveryStore.remove()
+            try? CacheManager.clearOnTermination()
         }
     }
 }

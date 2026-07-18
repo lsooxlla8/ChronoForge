@@ -49,7 +49,7 @@ The editor presents one ordered effect stack and automatically reconnects every 
 
 `RandomStackGenerator` uses injectable SplitMix64 state, the per-effect `RandomizationProfile`, and reusable uniform, triangular, logarithmic, signed-magnitude and fixed distributions. It produces one to three nodes with 35/45/20 percent length weights, rejects a second global-cost node, requires a real B source for two-input effects, forces shape-safe modes for partial Amount and keeps Seamless Loop last. Axis Datamosh incorporates its stored seed in both RAM and mapped implementations, so Reseed changes the pattern without breaking proxy/full parity.
 
-There is no user project format in the 1.0 workflow. A hidden `SessionRecoverySnapshot` is written while a session is active, removed by normal application termination, and offered once after a crash or force quit. The internal recovery JSON is not registered with Launch Services and is not a long-term document contract.
+There is no user project format in the 1.0 workflow. A hidden `SessionRecoverySnapshot` is written while a session is active, removed by normal application termination, and offered once after a crash or force quit. Normal application termination also removes the complete `ChronoForge` cache root; abnormal termination leaves both recovery and cache data available for the next launch. The internal recovery JSON is not registered with Launch Services and is not a long-term document contract.
 
 ## Out-of-core strategy
 
@@ -104,7 +104,7 @@ Spatial and Temporal Prefilter are project-level output settings rather than edi
 
 The test build also provides `chronoforge-visual-regression`. It creates a copyright-free procedural A/B corpus and a Wave A contact sheet with source, standard and alternate/seeded columns under `build/visual-regression`; CTest verifies that this visual QA artifact remains generatable.
 
-`chronoforge-performance-smoke` profiles all Wave A effects on the specified 10-second Standard proxy (320 × 180 at 10 fps). It applies the 1-second local/channel and 4-second temporal/memory budgets from the phase specification and exits nonzero when a target is exceeded; it is intentionally run on release hardware rather than as a machine-independent CTest.
+`chronoforge-performance-smoke` profiles all Wave A effects plus the FFT-backed Seamless Loop Spectral Morph on the specified 10-second Standard proxy (320 × 180 at 10 fps). It applies the 1-second local/channel and 4-second temporal/memory budgets from the phase specification and exits nonzero when a target is exceeded; it is intentionally run on release hardware rather than as a machine-independent CTest.
 
 The macOS executable also has an internal `--ui-acceptance` launch mode. It generates
 two copyright-free procedural movies in the temporary directory and loads them as A/B,

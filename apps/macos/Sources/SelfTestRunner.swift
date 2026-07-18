@@ -25,6 +25,13 @@ enum SelfTestRunner {
         guard await cacheManager.size() <= 1024 else {
             throw IntegrationSelfTestError.message("Automatic cache trimming did not enforce its limit")
         }
+        let terminationCacheRoot = root.appendingPathComponent("termination-cache", isDirectory: true)
+        try FileManager.default.createDirectory(at: terminationCacheRoot, withIntermediateDirectories: true)
+        try Data(repeating: 3, count: 1024).write(to: terminationCacheRoot.appendingPathComponent("preview.cft"))
+        try CacheManager.clearOnTermination(root: terminationCacheRoot)
+        guard !FileManager.default.fileExists(atPath: terminationCacheRoot.path) else {
+            throw IntegrationSelfTestError.message("Normal termination did not remove the cache root")
+        }
         let snapshotURL = root.appendingPathComponent("recovery.json")
         let projectSource = DecodedProxy(
             tensor: VideoTensorData(values: [0, 0, 0, 1], frames: 1, height: 1, width: 1, channels: 4, framesPerSecond: 8, duration: 0.125),

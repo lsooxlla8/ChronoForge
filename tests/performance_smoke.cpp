@@ -61,6 +61,11 @@ int main() {
     passed &= measure("Chroma Carrier Drift", 4000, [&] {
         return chronoforge::chroma_carrier_drift(source, {12, 4, 2, 8, chronoforge::ChromaDriftMode::SplitCbCr, chronoforge::EdgeBehavior::Wrap});
     });
+    passed &= measure("Seamless Loop Spectral", 4000, [&] {
+        return chronoforge::seamless_loop(
+            source,
+            {10, 0.12F, chronoforge::SeamlessLoopMode::SpectralMorph, 1.0F, 0.35F});
+    });
     passed &= measure("Stride Error", 1000, [&] {
         return chronoforge::stride_error(source, {0.08F, 0.06F, 0.01F, chronoforge::StrideChannelMode::SeparateChannels, chronoforge::AddressEdge::Mirror});
     });
