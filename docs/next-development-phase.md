@@ -742,6 +742,46 @@ effectiveAmount(t, y, x) = amount × mask(t, y, x)
 - searchable glossary терминов alpha, premultiplied, proxy, luma, chroma, FFT, stride, block address и datamosh;
 - документацию, сгенерированную или проверяемую против EffectDefinition, чтобы UI и Help не расходились.
 
+### 14.4. Metal/GPU и дальнейшая оптимизация — отложенный контракт
+
+Не входит в обязательный scope текущей фазы. Существующий C++ CPU backend остаётся эталонной реализацией, fallback для неподдерживаемого hardware и основой parity-тестов. Перенос на GPU выполняется только после профилирования полного пользовательского сценария, включая upload/download, а не по времени одного kernel.
+
+Обязательные архитектурные принципы будущего GPU backend:
+
+- effect semantics, descriptor, cache key и premultiplied-linear alpha policy не зависят от backend;
+- Preview и full render могут выбирать CPU или GPU, но одинаковый seed и параметры дают совпадающий результат в заранее установленном tolerance;
+- CPU path не удаляется после появления Metal и используется как reference oracle в автоматических тестах;
+- adjacent GPU-compatible nodes по возможности выполняются одним command-buffer pipeline без промежуточного возврата tensor на CPU;
+- pipeline states компилируются и кэшируются заранее, чтобы первый Auto Update не тратил время на runtime compilation;
+- на Apple Silicon используются shared/unified-memory buffers и zero-copy interop с `CVPixelBuffer`/IOSurface там, где это действительно исключает копирование;
+- full-resolution out-of-core render читает SSD tensor ограниченными tiles/chunks через bounded staging buffers; GPU не должен требовать размещения всего клипа в памяти;
+- двойная или тройная буферизация перекрывает SSD read, GPU execution и SSD write, сохраняя существующие cancellation и free-space guardrails;
+- число одновременных command buffers ограничивается RAM/GPU working-set budget, а не количеством ядер;
+- при memory pressure, unsupported device, kernel failure либо невыгодном размере задачи backend автоматически возвращается на CPU без изменения проекта или эффекта.
+
+Рекомендуемый порядок переноса:
+
+1. Общие инфраструктурные passes: prefilter, Amount, blend modes, alpha flatten и простые resize/sample primitives.
+2. Локальные и хорошо распараллеливаемые эффекты: Sync Loss, RGB Time Slip, Chroma Carrier Drift, Bitplane Forge, Block Address Corruption, Signal Weave, Block Graft и простые displacement modes.
+3. Эффекты с ограниченным temporal neighbourhood: Axis Datamosh, Optical Flow Time Warp, Time Feedback и другие kernels, которым нужен небольшой ring buffer кадров.
+4. Глобальные операции только отдельным этапом: Spectral Morph, 3D FFT Transform, Pixel Sort по Time и Space-Time Transform. Для них сначала измерить стоимость transpose, FFT scratch, GPU sorting и обмена с SSD; не переносить их ценой скрытого многократного копирования.
+
+Дополнительные CPU-оптимизации до или параллельно Metal:
+
+- сохранять release performance-smoke для representative Standard и High proxy fixtures;
+- устранять повторные coordinate/alpha samples и временные allocations только с proxy/full parity-тестом;
+- переиспользовать scratch buffers и FFT plans, если профилирование подтверждает значимую долю allocation/setup;
+- рассмотреть постоянный bounded thread pool вместо создания потоков на каждый pass, но только после замера коротких и длинных задач;
+- не усложнять алгоритм ради микрооптимизации, если wall-clock выигрыш теряется на decode, SSD I/O или cache serialization.
+
+Критерии приёмки GPU-этапа:
+
+- отдельные cold/warm benchmarks измеряют import → Preview и full render → export, а не только kernel time;
+- regression corpus сравнивает CPU/GPU для alpha edges, edge modes, random seeds, shape-changing effects и driver B;
+- GPU backend даёт устойчивое ускорение на целевых Apple Silicon машинах с учётом передач данных и не увеличивает peak memory сверх установленного budget;
+- UI остаётся отзывчивым, отмена Preview не отменяет export, а fallback проверяется принудительно;
+- Metal-specific код находится за backend boundary, чтобы будущий Windows backend мог использовать Direct3D 12, Vulkan или другую реализацию без переписывания effect semantics.
+
 ---
 
 ## 15. Кэш, детерминизм и совместимость рендера
@@ -986,4 +1026,4 @@ swift run ChronoForgeMac --self-test
 - смена FPS в первой версии переинтерпретирует кадры, не конвертирует их;
 - MP4 всегда непрозрачный и композитится на чёрный;
 - ProRes import остаётся возможностью AVFoundation, ProRes export не добавляется;
-- keyframes, Apply To masks, Temporal Brush, встроенная Help и Wave B отложены.
+- keyframes, Apply To masks, Temporal Brush, встроенная Help, Metal/GPU backend и Wave B отложены.
