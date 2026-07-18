@@ -475,8 +475,26 @@ void test_cross_tensor_and_flow_effects() {
     }
     const auto spectral_loop = chronoforge::seamless_loop(
         textured, {4, 0.12F, chronoforge::SeamlessLoopMode::SpectralMorph});
+    const auto spectral_direct_dissolve = chronoforge::seamless_loop(
+        textured, {4, 0.12F, chronoforge::SeamlessLoopMode::SpectralMorph, 0.0F});
+    const auto matching_crossfade = chronoforge::seamless_loop(
+        textured, {4, 0.12F, chronoforge::SeamlessLoopMode::Crossfade});
+    const auto spectral_blurred = chronoforge::seamless_loop(
+        textured, {4, 0.12F, chronoforge::SeamlessLoopMode::SpectralMorph, 1.0F, 0.8F});
+    const auto spectral_tail_phase = chronoforge::seamless_loop(
+        textured,
+        {4, 0.12F, chronoforge::SeamlessLoopMode::SpectralMorph, 1.0F, 0.0F,
+         chronoforge::LoopTransitionPlacement::Start, chronoforge::SpectralPhaseMode::TailBiased});
+    const auto spectral_head_phase = chronoforge::seamless_loop(
+        textured,
+        {4, 0.12F, chronoforge::SeamlessLoopMode::SpectralMorph, 1.0F, 0.0F,
+         chronoforge::LoopTransitionPlacement::Start, chronoforge::SpectralPhaseMode::HeadBiased});
     const auto difference_loop = chronoforge::seamless_loop(
         textured, {4, 0.18F, chronoforge::SeamlessLoopMode::DifferenceWeave});
+    const auto end_placed_loop = chronoforge::seamless_loop(
+        textured,
+        {3, 0.12F, chronoforge::SeamlessLoopMode::Crossfade, 1.0F, 0.0F,
+         chronoforge::LoopTransitionPlacement::End});
     require(spectral_loop.shape() == chronoforge::TensorShape{4, 2, 2, 4}, "Spectral Morph uses the overlap loop duration");
     require(difference_loop.shape() == spectral_loop.shape(), "Difference Weave uses the overlap loop duration");
     for (const auto* candidate : {&spectral_loop, &difference_loop}) {
@@ -484,6 +502,15 @@ void test_cross_tensor_and_flow_effects() {
         require_near(candidate->at(3, 0, 0, 0), textured.at(3, 0, 0, 0), "Advanced loop preserves the head-side boundary");
         for (const auto value : candidate->values()) require(std::isfinite(value), "Advanced loop output stays finite");
     }
+    for (std::size_t index = 0; index < matching_crossfade.values().size(); ++index) {
+        require_near(
+            spectral_direct_dissolve.values()[index], matching_crossfade.values()[index],
+            "Zero Spectral Amount is the direct overlap dissolve");
+    }
+    require(spectral_blurred.values() != spectral_loop.values(), "Frequency Blur changes the spectral overlap interior");
+    require(spectral_tail_phase.values() != spectral_head_phase.values(), "Phase timing changes the spectral motion path");
+    require_near(end_placed_loop.at(0, 0, 0, 0), textured.at(3, 0, 0, 0), "End placement starts after the overlap");
+    require_near(end_placed_loop.at(4, 0, 0, 0), textured.at(2, 0, 0, 0), "End placement finishes with the generated overlap");
 }
 
 void test_file_backed_cross_tensor() {
@@ -766,14 +793,24 @@ void test_file_backed_effect_chain() {
     }
     for (const auto mode : {chronoforge::SeamlessLoopMode::SpectralMorph, chronoforge::SeamlessLoopMode::DifferenceWeave}) {
         const auto mode_index = static_cast<std::int32_t>(mode);
+        const auto is_spectral = mode == chronoforge::SeamlessLoopMode::SpectralMorph;
+        const auto spectral_amount = is_spectral ? 0.72F : 1.0F;
+        const auto frequency_blur = is_spectral ? 0.35F : 0.0F;
+        const auto placement = is_spectral ? 1 : 0;
+        const auto phase_mode = is_spectral ? 2 : 0;
         const auto mode_path = root / ("loop-mode-" + std::to_string(mode_index) + ".raw");
         const std::vector<chronoforge::EffectSpec> mode_effects{
-            {chronoforge::EffectOperation::SeamlessLoop, {3, 0.15F}, {mode_index}},
+            {chronoforge::EffectOperation::SeamlessLoop,
+             {3, 0.15F, spectral_amount, frequency_blur}, {mode_index, placement, phase_mode}},
         };
         const auto mode_result = chronoforge::render_file_effect_chain(
             loop_input_path, mode_path, root / ("loop-mode-scratch-" + std::to_string(mode_index)),
             loop_input.shape(), loop_input.metadata(), mode_effects, 64 * 1024 * 1024, {});
-        const auto mode_expected = chronoforge::seamless_loop(loop_input, {3, 0.15F, mode});
+        const auto mode_expected = chronoforge::seamless_loop(
+            loop_input,
+            {3, 0.15F, mode, spectral_amount, frequency_blur,
+             static_cast<chronoforge::LoopTransitionPlacement>(placement),
+             static_cast<chronoforge::SpectralPhaseMode>(phase_mode)});
         const auto mode_output = chronoforge::MappedTensor::open(
             mode_path, mode_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
         require(mode_result.shape == mode_expected.shape(), "Advanced out-of-core loop reports the expected duration");

@@ -71,12 +71,17 @@ std::vector<float> spectral_morph_frames(
     std::size_t height,
     std::size_t width,
     std::size_t channels,
-    float mix) {
+    float mix,
+    float spectral_amount,
+    float frequency_blur,
+    SpectralMorphPhaseMode phase_mode) {
     const auto count = height * width * channels;
     if (height == 0 || width == 0 || channels == 0 || tail.size() != count || head.size() != count) {
         throw std::invalid_argument("Spectral morph frames must have matching non-empty shapes");
     }
     mix = std::clamp(mix, 0.0F, 1.0F);
+    spectral_amount = std::clamp(spectral_amount, 0.0F, 1.0F);
+    frequency_blur = std::clamp(frequency_blur, 0.0F, 1.0F);
     if (mix == 0.0F) return {tail.begin(), tail.end()};
     if (mix == 1.0F) return {head.begin(), head.end()};
 
@@ -105,15 +110,48 @@ std::vector<float> spectral_morph_frames(
         }
         fft_2d(a, padded_height, padded_width, false);
         fft_2d(b, padded_height, padded_width, false);
-        for (std::size_t index = 0; index < spectral_count; ++index) {
-            const auto magnitude = std::abs(a[index]) + (std::abs(b[index]) - std::abs(a[index])) * mix;
-            const auto delta = std::remainder(std::arg(b[index]) - std::arg(a[index]), 2.0F * std::numbers::pi_v<float>);
-            a[index] = std::polar(magnitude, std::arg(a[index]) + delta * mix);
+        for (std::size_t y = 0; y < padded_height; ++y) {
+            for (std::size_t x = 0; x < padded_width; ++x) {
+                const auto index = y * padded_width + x;
+                auto magnitude = std::abs(a[index]) + (std::abs(b[index]) - std::abs(a[index])) * mix;
+                const auto frequency_y = static_cast<float>(std::min(y, padded_height - y)) /
+                                         static_cast<float>(std::max<std::size_t>(1, padded_height / 2));
+                const auto frequency_x = static_cast<float>(std::min(x, padded_width - x)) /
+                                         static_cast<float>(std::max<std::size_t>(1, padded_width / 2));
+                const auto frequency = std::min(1.0F, std::sqrt(frequency_x * frequency_x + frequency_y * frequency_y));
+                const auto interior = 4.0F * mix * (1.0F - mix);
+                magnitude *= std::exp(-10.0F * frequency_blur * frequency * frequency * interior);
+                float phase_progress{};
+                switch (phase_mode) {
+                    case SpectralMorphPhaseMode::Even:
+                        phase_progress = mix;
+                        break;
+                    case SpectralMorphPhaseMode::TailBiased:
+                        phase_progress = mix * mix;
+                        break;
+                    case SpectralMorphPhaseMode::HeadBiased:
+                        phase_progress = 1.0F - (1.0F - mix) * (1.0F - mix);
+                        break;
+                }
+                const auto delta = std::remainder(
+                    std::arg(b[index]) - std::arg(a[index]), 2.0F * std::numbers::pi_v<float>);
+                const auto phase = std::arg(a[index]) + delta * phase_progress;
+                a[index] = std::polar(magnitude, phase);
+            }
         }
         fft_2d(a, padded_height, padded_width, true);
         for (std::size_t y = 0; y < height; ++y) {
             for (std::size_t x = 0; x < width; ++x) {
-                output[(y * width + x) * channels + channel] = a[y * padded_width + x].real();
+                const auto pixel = y * width + x;
+                const auto index = pixel * channels + channel;
+                const auto tail_alpha = has_alpha ? std::clamp(tail[pixel * channels + 3], 0.0F, 1.0F) : 1.0F;
+                const auto head_alpha = has_alpha ? std::clamp(head[pixel * channels + 3], 0.0F, 1.0F) : 1.0F;
+                const auto tail_value = channel < 3 && has_alpha && tail_alpha > 0.00001F
+                    ? tail[index] / tail_alpha : tail[index];
+                const auto head_value = channel < 3 && has_alpha && head_alpha > 0.00001F
+                    ? head[index] / head_alpha : head[index];
+                const auto linear = tail_value + (head_value - tail_value) * mix;
+                output[index] = linear + (a[y * padded_width + x].real() - linear) * spectral_amount;
             }
         }
     }

@@ -20,6 +20,10 @@ struct ChronoForgeMacApp: App {
         if Self.globalShortcutMonitor == nil {
             Self.globalShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
                 let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                let isUnmodifiedBackslash = event.type == .keyDown &&
+                    event.charactersIgnoringModifiers == "\\" &&
+                    modifiers.intersection([.command, .option, .control, .shift]).isEmpty
+                if isUnmodifiedBackslash && event.isARepeat { return nil }
                 guard !event.isARepeat else { return event }
 
                 guard event.type == .keyDown else { return event }
@@ -400,7 +404,7 @@ private struct WorkspaceView: View {
                     .onEnded { _ in isComparingSource = false }
             )
             .disabled(project.source == nil || project.output == nil)
-            .help("Hold to show Before; release for After. Keyboard: \\ toggles Before / After.")
+            .help("Hold the button to show Before; release for After. Press \\ once to toggle and again to return.")
             .fixedSize(horizontal: true, vertical: false)
     }
 
@@ -795,6 +799,7 @@ private struct EffectInspector: View {
             optionPicker("Loop method", value: option(0), options: ["Crossfade", "Luma Weave", "Ping-Pong", "Spectral Morph", "Difference Weave"])
             if node.options[0] != 2 {
                 valueSlider("Transition", index: 0, range: 2...600, format: "%.0f frames")
+                optionPicker("Transition position", value: option(1), options: ["Start", "End"])
                 if node.options[0] == 1 || node.options[0] == 4 {
                     valueSlider("Weave softness", index: 1, range: 0.01...0.5, format: "%.4f")
                     Text(node.options[0] == 1
@@ -802,12 +807,19 @@ private struct EffectInspector: View {
                          : "Difference Weave finds the least-visible crossover moment independently for every pixel, then controls its transition width with Weave Softness.")
                         .font(.caption).foregroundStyle(.secondary)
                 } else if node.options[0] == 3 {
-                    Text("Spectral Morph interpolates spatial FFT magnitude and shortest phase through the overlap. It creates a texture morph rather than a transparent dissolve while retaining the exact loop boundary.")
+                    valueSlider("Spectral amount", index: 2, range: 0...1, format: "%.4f")
+                    valueSlider("Frequency blur", index: 3, range: 0...1, format: "%.4f")
+                    optionPicker("Phase timing", value: option(2), options: ["Even", "Hold Tail", "Hold Head"])
+                    Text("Spectral Amount mixes between a normal dissolve and FFT texture morphing. Frequency Blur suppresses high-frequency detail near the middle of the overlap. Phase can travel by the shortest path or stay locked to either endpoint texture.")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
                     Text("Overlaps the end with the beginning and shortens the result by the transition length.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                Text(node.options[1] == 0
+                     ? "Start places the generated overlap in the first Transition frames."
+                     : "End rotates the same seamless result so the generated overlap occupies the final Transition frames.")
+                    .font(.caption).foregroundStyle(.secondary)
             } else {
                 Text("Plays forward and then backward. This always closes cleanly, but the direction reverses at both ends.")
                     .font(.caption).foregroundStyle(.secondary)

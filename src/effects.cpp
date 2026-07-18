@@ -1480,6 +1480,14 @@ VideoTensor seamless_loop(const VideoTensor& input, const SeamlessLoopParams& pa
         const auto normalized = std::clamp((value - edge0) / std::max(0.0001F, edge1 - edge0), 0.0F, 1.0F);
         return normalized * normalized * (3.0F - 2.0F * normalized);
     };
+    const auto move_transition_to_end = [&] {
+        if (params.placement != LoopTransitionPlacement::End || transition >= output_shape.t) return;
+        const auto frame_values = output_shape.h * output_shape.w * output_shape.c;
+        std::rotate(
+            output.values().begin(),
+            output.values().begin() + static_cast<std::ptrdiff_t>(transition * frame_values),
+            output.values().end());
+    };
     if (params.mode == SeamlessLoopMode::SpectralMorph) {
         const auto frame_values = shape.h * shape.w * shape.c;
         parallel_for(output_shape.t, [&](std::size_t t) {
@@ -1498,9 +1506,12 @@ VideoTensor seamless_loop(const VideoTensor& input, const SeamlessLoopParams& pa
             const auto morphed = spectral_morph_frames(
                 std::span<const float>(input.values().data() + tail_t * frame_values, frame_values),
                 std::span<const float>(input.values().data() + t * frame_values, frame_values),
-                shape.h, shape.w, shape.c, smoothstep(0.0F, 1.0F, progress));
+                shape.h, shape.w, shape.c, smoothstep(0.0F, 1.0F, progress),
+                params.spectral_amount, params.frequency_blur,
+                static_cast<SpectralMorphPhaseMode>(params.phase_mode));
             std::copy(morphed.begin(), morphed.end(), destination);
         });
+        move_transition_to_end();
         return output;
     }
 
@@ -1560,6 +1571,7 @@ VideoTensor seamless_loop(const VideoTensor& input, const SeamlessLoopParams& pa
             }
         }
     });
+    move_transition_to_end();
     return output;
 }
 

@@ -25,6 +25,8 @@ enum class FeedbackBlendMode { Add, Screen, Multiply, Lighten, Difference, Displ
 enum class FreezeAxis { Time, Horizontal, Vertical };
 enum class FreezeTrigger { Edge, Luma, Random };
 enum class SeamlessLoopMode { Crossfade, LumaWeave, PingPong, SpectralMorph, DifferenceWeave };
+enum class LoopTransitionPlacement { Start, End };
+enum class SpectralPhaseMode { Even, TailBiased, HeadBiased };
 enum class SplitAxis { Horizontal, Vertical, Radial };
 enum class SyncLossDriver { DeterministicNoise, Luma, Edges };
 enum class SyncLossAxis { Horizontal, Vertical };
@@ -131,6 +133,10 @@ struct SeamlessLoopParams {
     std::size_t transition_frames{15};
     float weave_softness{0.12F};
     SeamlessLoopMode mode{SeamlessLoopMode::Crossfade};
+    float spectral_amount{1.0F};
+    float frequency_blur{};
+    LoopTransitionPlacement placement{LoopTransitionPlacement::Start};
+    SpectralPhaseMode phase_mode{SpectralPhaseMode::Even};
 };
 
 struct RGBTimeSlipParams {

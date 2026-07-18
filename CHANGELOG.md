@@ -2,6 +2,9 @@
 
 ## 1.0.0 — in development
 
+- Made the backslash Before/After shortcut a latched toggle by ignoring key-repeat events while the key is held.
+- Expanded Seamless Loop with start/end transition placement plus Spectral Amount, Frequency Blur and phase-timing controls for Spectral Morph.
+- Raised High Preview to 30 fps, kept proxy rate at or below the source rate, and moved playback to monotonic deadlines with overdue-frame catch-up.
 - Added Polar Time Warp coordinate rotation and an optional periodic angular time field that removes the Time Loom branch-cut seam.
 - Added Spectral Morph and Difference Weave to Seamless Loop with matching in-memory and SSD-backed rendering.
 - Fixed Random Stack assigning Partial Amount to Fit Source Size Space-Time Transform, which preserves the canvas but still changes timeline extent.

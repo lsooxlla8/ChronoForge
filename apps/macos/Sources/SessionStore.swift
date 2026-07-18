@@ -1049,12 +1049,25 @@ final class SessionStore: ObservableObject {
         guard let tensor = displayedTensor, tensor.frames > 1 else { return }
         stopPlayback()
         isPlaying = true
+        let framesPerSecond = max(0.1, tensor.framesPerSecond)
+        let startingFrame = currentFrame
+        let startedAt = ProcessInfo.processInfo.systemUptime
         playbackTask = Task {
+            var nextStep = 1
             while !Task.isCancelled {
-                let fps = displayedTensor?.framesPerSecond ?? tensor.framesPerSecond
-                try? await Task.sleep(for: .seconds(1 / max(0.1, fps)))
+                // Schedule against a monotonic start time instead of adding one
+                // frame after every sleep. If the UI misses a deadline, catch up
+                // on the following tick rather than permanently slowing playback.
+                let deadline = startedAt + Double(nextStep) / framesPerSecond
+                let delay = deadline - ProcessInfo.processInfo.systemUptime
+                if delay > 0 {
+                    try? await Task.sleep(for: .seconds(delay))
+                }
                 guard !Task.isCancelled, let latest = displayedTensor else { break }
-                currentFrame = (currentFrame + 1) % latest.frames
+                let elapsed = max(0, ProcessInfo.processInfo.systemUptime - startedAt)
+                let elapsedSteps = max(nextStep, Int(floor(elapsed * framesPerSecond)))
+                currentFrame = (startingFrame + elapsedSteps) % latest.frames
+                nextStep = elapsedSteps + 1
             }
         }
     }

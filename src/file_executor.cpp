@@ -386,6 +386,8 @@ void report(const FileRenderProgress& progress, double fraction, std::string_vie
             return {input.h, input.w, input.t, input.c};
         case EffectOperation::SeamlessLoop: {
             require_option(effect.options[0], 4, "seamless loop mode");
+            require_option(effect.options[1], 1, "loop transition placement");
+            require_option(effect.options[2], 2, "spectral phase mode");
             if (effect.options[0] == static_cast<std::int32_t>(SeamlessLoopMode::PingPong)) {
                 return {input.t <= 1 ? 1 : input.t * 2 - 2, input.h, input.w, input.c};
             }
@@ -1664,7 +1666,11 @@ void feedback(const MappedTensor& input, MappedTensor& output, const EffectSpec&
 
 void seamless_loop(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
     require_option(effect.options[0], 4, "seamless loop mode");
+    require_option(effect.options[1], 1, "loop transition placement");
+    require_option(effect.options[2], 2, "spectral phase mode");
     const auto mode = static_cast<SeamlessLoopMode>(effect.options[0]);
+    const auto placement = static_cast<LoopTransitionPlacement>(effect.options[1]);
+    const auto phase_mode = static_cast<SpectralPhaseMode>(effect.options[2]);
     const auto& source_shape = input.shape();
     const auto& result_shape = output.shape();
     auto* destination = output.mutable_data();
@@ -1687,6 +1693,14 @@ void seamless_loop(const MappedTensor& input, MappedTensor& output, const Effect
         const auto normalized = std::clamp((value - edge0) / std::max(0.0001F, edge1 - edge0), 0.0F, 1.0F);
         return normalized * normalized * (3.0F - 2.0F * normalized);
     };
+    const auto move_transition_to_end = [&] {
+        if (placement != LoopTransitionPlacement::End || transition >= result_shape.t) return;
+        const auto frame_values = result_shape.h * result_shape.w * result_shape.c;
+        std::rotate(
+            destination,
+            destination + transition * frame_values,
+            destination + result_shape.t * frame_values);
+    };
     if (mode == SeamlessLoopMode::SpectralMorph) {
         const auto frame_values = source_shape.h * source_shape.w * source_shape.c;
         parallel_for(result_shape.t, progress, [&](std::size_t t) {
@@ -1705,9 +1719,11 @@ void seamless_loop(const MappedTensor& input, MappedTensor& output, const Effect
             const auto morphed = spectral_morph_frames(
                 std::span<const float>(input.data() + tail_t * frame_values, frame_values),
                 std::span<const float>(input.data() + t * frame_values, frame_values),
-                source_shape.h, source_shape.w, source_shape.c, smoothstep(0.0F, 1.0F, fraction));
+                source_shape.h, source_shape.w, source_shape.c, smoothstep(0.0F, 1.0F, fraction),
+                effect.values[2], effect.values[3], static_cast<SpectralMorphPhaseMode>(phase_mode));
             std::copy(morphed.begin(), morphed.end(), frame_destination);
         });
+        move_transition_to_end();
         return;
     }
 
@@ -1769,6 +1785,7 @@ void seamless_loop(const MappedTensor& input, MappedTensor& output, const Effect
             }
         }
     });
+    move_transition_to_end();
 }
 
 void datamosh(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {

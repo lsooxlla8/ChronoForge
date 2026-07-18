@@ -136,9 +136,9 @@ struct ChronoForgeIntegration {
             (9, descriptor(kind: 9, values: [0.02, 4, 0, 180], options: [0])),
             (10, descriptor(kind: 10, values: [2, 0.35, 2, 0.15], options: [1])),
             (11, descriptor(kind: 11, values: [0.2, 8, 0.05], options: [0, 0, 0], seed: 42)),
-            (12, descriptor(kind: 12, values: [2, 0.12], options: [0])),
-            (12, descriptor(kind: 12, values: [3, 0.12], options: [3])),
-            (12, descriptor(kind: 12, values: [3, 0.18], options: [4])),
+            (12, descriptor(kind: 12, values: [2, 0.12, 1, 0], options: [0, 0, 0])),
+            (12, descriptor(kind: 12, values: [3, 0.12, 0.85, 0.2], options: [3, 1, 0])),
+            (12, descriptor(kind: 12, values: [3, 0.18, 1, 0], options: [4, 0, 0])),
         ]
         for (kind, requested) in singleInputPreviewDescriptors {
             let output = try renderAny(requested)

@@ -71,7 +71,7 @@ void enforce_budget(const VideoTensor& tensor, uint64_t budget) {
         case CF_EFFECT_OPTICAL_FLOW_TIME_WARP: return {4, 1};
         case CF_EFFECT_CHRONO_FEEDBACK: return {4, 1};
         case CF_EFFECT_STRUCTURAL_DATAMOSH: return {3, 3};
-        case CF_EFFECT_SEAMLESS_LOOP: return {2, 1};
+        case CF_EFFECT_SEAMLESS_LOOP: return {4, 3};
         case CF_EFFECT_RGB_TIME_SLIP: return {4, 2};
         case CF_EFFECT_HORIZONTAL_SYNC_LOSS: return {4, 3};
         case CF_EFFECT_CHROMA_CARRIER_DRIFT: return {4, 2};
@@ -270,6 +270,10 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptorV2& d
                     static_cast<std::size_t>(std::max(1.0F, std::round(descriptor.values[0]))),
                     descriptor.values[1],
                     checked_enum<chronoforge::SeamlessLoopMode>(descriptor.options[0], 4, "seamless loop mode"),
+                    descriptor.values[2],
+                    descriptor.values[3],
+                    checked_enum<chronoforge::LoopTransitionPlacement>(descriptor.options[1], 1, "loop transition placement"),
+                    checked_enum<chronoforge::SpectralPhaseMode>(descriptor.options[2], 2, "spectral phase mode"),
                 });
         case CF_EFFECT_RGB_TIME_SLIP:
             return chronoforge::rgb_time_slip(

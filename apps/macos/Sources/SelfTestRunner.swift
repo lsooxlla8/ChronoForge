@@ -412,6 +412,7 @@ enum SelfTestRunner {
         try await verifyAutoUpdateDebounce(source: projectSource)
         let proxy = try await VideoDecoder.decodeProxy(from: source)
         guard proxy.tensor.width == 48, proxy.tensor.height == 64, proxy.sourceFrameCount == 8, proxy.sourceFrameCountIsExact,
+              abs(proxy.tensor.framesPerSecond - 8) < 0.001, abs(proxy.tensor.duration - 1) < 0.001,
               proxy.tensor.values.count == proxy.tensor.valueCount else {
             throw IntegrationSelfTestError.message(
                 "Proxy metadata mismatch: \(proxy.tensor.width)x\(proxy.tensor.height), frames=\(proxy.sourceFrameCount), exact=\(proxy.sourceFrameCountIsExact)"

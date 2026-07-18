@@ -185,9 +185,18 @@ enum RandomStackGenerator {
             node.options = [Int32(random.integer(in: 0...2)), trigger, trigger == 1 && random.chance(0.5) ? 1 : 0]
         case "seamless":
             let sourceFrames = mediaPool.first?.tensor.frames ?? 30
-            node.values = [Float(random.integer(in: 2...max(2, min(60, sourceFrames / 2)))),
-                           .triangular(0.03...0.3, preferred: 0.12, using: &random)]
-            node.options = [weighted([0, 0, 1, 1, 2, 3, 4, 4], using: &random)]
+            let mode = weighted([0, 0, 1, 1, 2, 3, 4, 4], using: &random)
+            node.values = [
+                Float(random.integer(in: 2...max(2, min(60, sourceFrames / 2)))),
+                .triangular(0.03...0.3, preferred: 0.12, using: &random),
+                .triangular(0.55...1, preferred: 0.9, using: &random),
+                .triangular(0...0.75, preferred: 0.15, using: &random),
+            ]
+            node.options = [
+                mode,
+                random.chance(0.5) ? 1 : 0,
+                mode == 3 ? Int32(random.integer(in: 0...2)) : 0,
+            ]
         case "rgb-time-slip":
             let stationary = random.integer(in: 0...2)
             var offsets = [Float](repeating: 0, count: 3)

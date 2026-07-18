@@ -292,7 +292,7 @@ enum ProxyQuality: String, CaseIterable, Identifiable, Codable, Sendable {
 
     var id: String { rawValue }
     var title: String { self == .standard ? "Standard" : "High" }
-    var detail: String { self == .standard ? "Up to 320 × 180 · 10 fps" : "Up to 480 × 270 · 15 fps" }
+    var detail: String { self == .standard ? "Up to 320 × 180 · 10 fps" : "Up to 480 × 270 · 30 fps" }
 }
 
 enum PrefilterStrength: Int32, CaseIterable, Identifiable, Codable, Sendable {

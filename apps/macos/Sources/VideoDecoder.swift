@@ -77,7 +77,9 @@ enum VideoDecoder {
         let maximumProxyFrames = 180
         let maximumWidth = quality == .standard ? 320 : 480
         let maximumHeight = quality == .standard ? 180 : 270
-        let maximumFPS = quality == .standard ? 10.0 : 15.0
+        // High-quality proxies keep ordinary source cadence. The frame-count
+        // limit below still bounds memory for long or high-frame-rate clips.
+        let maximumFPS = quality == .standard ? 10.0 : 30.0
         let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw VideoDecoderError.noVideoTrack
@@ -91,7 +93,7 @@ enum VideoDecoder {
         let nominalFPS = max(1.0, Double(try await track.load(.nominalFrameRate)))
         let estimatedFrameCount = max(1, Int((duration * nominalFPS).rounded()))
         let targetSize = proxySize(for: sourceSize, maximumWidth: maximumWidth, maximumHeight: maximumHeight)
-        let proxyFPS = min(maximumFPS, max(0.1, Double(maximumProxyFrames) / duration))
+        let proxyFPS = min(nominalFPS, maximumFPS, max(0.1, Double(maximumProxyFrames) / duration))
 
         let reader = try AVAssetReader(asset: asset)
         let settings: [String: Any] = [

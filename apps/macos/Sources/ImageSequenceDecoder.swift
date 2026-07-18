@@ -107,7 +107,9 @@ enum ImageSequenceDecoder {
             let maximumFrames = 180
             let maximumWidth = quality == .standard ? 320 : 480
             let maximumHeight = quality == .standard ? 180 : 270
-            let maximumFPS = quality == .standard ? 10.0 : 15.0
+            // Match movie proxies: High preserves common 24/25/30 fps
+            // sources, while the frame-count limit caps long sequences.
+            let maximumFPS = quality == .standard ? 10.0 : 30.0
             let duration = Double(inspection.frameCount) / source.framesPerSecond
             let proxyFPS = min(source.framesPerSecond, maximumFPS, Double(maximumFrames) / max(duration, 0.001))
             let size = proxySize(
