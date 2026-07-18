@@ -591,18 +591,23 @@ private struct WorkspaceView: View {
     @ViewBuilder
     private var selectedEffectCompareControls: some View {
         let isAvailable = project.selectedEffectCaptureForSelection != nil
+        let canRequest = project.selectedNodeID != nil && project.output != nil && !project.isPreviewStale
         Toggle("Compare Selected Effect", isOn: Binding(
             get: { isComparingSelectedEffect },
             set: { enabled in
                 isComparingSelectedEffect = enabled
-                if !enabled { isShowingSelectedEffectInput = false }
+                if enabled {
+                    project.captureSelectedEffectForComparison()
+                } else {
+                    isShowingSelectedEffectInput = false
+                }
             }
         ))
         .toggleStyle(.switch)
-        .disabled(!isAvailable)
+        .disabled(!canRequest)
         .help(isAvailable
             ? "Compare the selected effect's immediate input and output."
-            : "The comparison becomes available after the preview finishes updating.")
+            : "The comparison is prepared only when requested, so normal preview updates use less memory.")
         if isComparingSelectedEffect, isAvailable {
             Button("Selected Effect Input", systemImage: "rectangle.on.rectangle") {}
                 .simultaneousGesture(

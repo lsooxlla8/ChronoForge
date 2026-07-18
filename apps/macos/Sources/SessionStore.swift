@@ -39,6 +39,7 @@ final class SessionStore: ObservableObject {
 
     private var task: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
+    private var selectedEffectCaptureTask: Task<Void, Never>?
     private var autoPreviewTask: Task<Void, Never>?
     private var playbackTask: Task<Void, Never>?
     private var recoveryTask: Task<Void, Never>?
@@ -554,6 +555,8 @@ final class SessionStore: ObservableObject {
     func markEdited(invalidatePreview: Bool = true) {
         if invalidatePreview, source != nil {
             isPreviewStale = true
+            selectedEffectCaptureTask?.cancel()
+            selectedEffectCaptureTask = nil
             selectedEffectCapture = nil
             scheduleAutoPreview()
         }
@@ -738,6 +741,9 @@ final class SessionStore: ObservableObject {
         previewLaunchCountForDiagnostics += 1
         autoPreviewTask?.cancel()
         previewTask?.cancel()
+        selectedEffectCaptureTask?.cancel()
+        selectedEffectCaptureTask = nil
+        selectedEffectCapture = nil
         let generation = UUID()
         previewGeneration = generation
         isRendering = true
@@ -754,7 +760,6 @@ final class SessionStore: ObservableObject {
         let driverSources = graph.compactMap { effect in
             effect.driverMediaID.flatMap { id in mediaPool.first(where: { $0.id == id })?.mediaSource }
         }
-        let selectedEffectID = selectedNodeID
         let cacheKey = ProxyCache.key(source: source!.mediaSource, input: input, effects: graph, drivers: driverSources)
         previewTask = Task {
             defer {
@@ -763,34 +768,20 @@ final class SessionStore: ObservableObject {
             do {
                 let drivers = Dictionary(uniqueKeysWithValues: mediaPool.map { ($0.id, $0.tensor) })
                 if let cached = await ProxyCache.shared.load(key: cacheKey) {
-                    let capture: SelectedEffectCapture? = if let selectedEffectID {
-                        try await CoreRenderer.captureSelectedEffect(
-                            input: input,
-                            effects: graph,
-                            drivers: drivers,
-                            selectedNodeID: selectedEffectID
-                        )
-                    } else {
-                        nil
-                    }
                     try Task.checkCancellation()
                     output = cached
-                    selectedEffectCapture = capture
                     isPreviewStale = false
                     currentFrame = min(currentFrame, max(0, cached.frames - 1))
                     statusMessage = "Loaded from render cache"
                     return
                 }
-                let preview = try await CoreRenderer.renderCapturingSelectedEffect(
+                let result = try await CoreRenderer.render(
                     input: input,
                     effects: graph,
-                    drivers: drivers,
-                    selectedNodeID: selectedEffectID
+                    drivers: drivers
                 )
                 try Task.checkCancellation()
-                let result = preview.output
                 output = result
-                selectedEffectCapture = preview.selectedEffect
                 isPreviewStale = false
                 currentFrame = min(currentFrame, max(0, result.frames - 1))
                 statusMessage = "Rendered · \(result.frames) × \(result.width) × \(result.height)"
@@ -807,6 +798,41 @@ final class SessionStore: ObservableObject {
             }
             _ = try? await CacheManager.shared.trim()
             await refreshCacheSize()
+        }
+    }
+
+    func captureSelectedEffectForComparison() {
+        guard !isPreviewStale,
+              let input = source?.tensor,
+              let selectedNodeID else { return }
+        let graph: [EffectNode]
+        do {
+            graph = try renderEffectChain()
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        guard graph.contains(where: { $0.id == selectedNodeID }) else { return }
+        selectedEffectCaptureTask?.cancel()
+        let generation = previewGeneration
+        selectedEffectCaptureTask = Task {
+            do {
+                let drivers = Dictionary(uniqueKeysWithValues: mediaPool.map { ($0.id, $0.tensor) })
+                let capture = try await CoreRenderer.captureSelectedEffect(
+                    input: input,
+                    effects: graph,
+                    drivers: drivers,
+                    selectedNodeID: selectedNodeID
+                )
+                try Task.checkCancellation()
+                guard previewGeneration == generation, self.selectedNodeID == selectedNodeID else { return }
+                selectedEffectCapture = capture
+            } catch is CancellationError {
+                return
+            } catch {
+                guard previewGeneration == generation else { return }
+                errorMessage = "Selected-effect comparison failed: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -1008,6 +1034,8 @@ final class SessionStore: ObservableObject {
         autoPreviewTask = nil
         previewTask?.cancel()
         previewTask = nil
+        selectedEffectCaptureTask?.cancel()
+        selectedEffectCaptureTask = nil
         task?.cancel()
         task = nil
         if isRendering { isRendering = false }

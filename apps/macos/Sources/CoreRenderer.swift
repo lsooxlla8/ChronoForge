@@ -35,6 +35,14 @@ enum CoreRenderer {
         drivers: [UUID: VideoTensorData] = [:],
         budget: UInt64 = defaultBudget
     ) async throws -> VideoTensorData {
+        if shouldRenderDiskBacked(input: input, effects: effects, drivers: drivers, budget: budget) {
+            return try await renderDiskBacked(
+                input: input,
+                effects: effects,
+                drivers: drivers,
+                budget: budget
+            )
+        }
         if effects.contains(where: { $0.enabled && $0.kind.requiresDriver }) {
             var current = input
             for effect in effects where effect.enabled {
@@ -51,7 +59,7 @@ enum CoreRenderer {
             return current
         }
         if effects.contains(where: { $0.enabled && $0.kind == .spectralFFTSwap }) {
-            return try await renderDiskBacked(input: input, effects: effects, budget: budget)
+            return try await renderDiskBacked(input: input, effects: effects, drivers: drivers, budget: budget)
         }
         return try await Task.detached(priority: .userInitiated) {
             try Task.checkCancellation()
@@ -161,19 +169,12 @@ enum CoreRenderer {
             try Task.checkCancellation()
             let effectInput = current
             if effect.enabled {
-                if effect.kind.requiresDriver {
-                    guard let id = effect.driverMediaID, let driver = drivers[id] else {
-                        throw CoreRendererError.missingDriver
-                    }
-                    current = try await renderCrossEffect(
-                        source: current,
-                        driver: driver,
-                        effect: effect,
-                        budget: budget
-                    )
-                } else {
-                    current = try await render(input: current, effects: [effect], budget: budget)
-                }
+                current = try await render(
+                    input: current,
+                    effects: [effect],
+                    drivers: drivers,
+                    budget: budget
+                )
             }
             if effect.id == selectedNodeID {
                 capture = SelectedEffectCapture(nodeID: effect.id, input: effectInput, output: current)
@@ -232,15 +233,15 @@ enum CoreRenderer {
     private static func renderDiskBacked(
         input: VideoTensorData,
         effects: [EffectNode],
+        drivers: [UUID: VideoTensorData] = [:],
         budget: UInt64
     ) async throws -> VideoTensorData {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ChronoForge-Proxy-FFT-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("ChronoForge-Preview-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let inputURL = root.appendingPathComponent("input.raw")
-        let inputData = input.values.withUnsafeBytes { Data($0) }
-        try inputData.write(to: inputURL, options: .atomic)
+        try writeRawValues(input.values, to: inputURL)
         let diskInput = DiskTensorData(
             fileURL: inputURL,
             frames: input.frames,
@@ -251,10 +252,30 @@ enum CoreRenderer {
             duration: input.duration,
             timestamps: nil
         )
+        let requiredDriverIDs = Set(effects.compactMap { effect in
+            effect.enabled && effect.kind.requiresDriver ? effect.driverMediaID : nil
+        })
+        var diskDrivers: [UUID: DiskTensorData] = [:]
+        for id in requiredDriverIDs {
+            guard let driver = drivers[id] else { throw CoreRendererError.missingDriver }
+            let driverURL = root.appendingPathComponent("driver-\(id.uuidString).raw")
+            try writeRawValues(driver.values, to: driverURL)
+            diskDrivers[id] = DiskTensorData(
+                fileURL: driverURL,
+                frames: driver.frames,
+                height: driver.height,
+                width: driver.width,
+                channels: driver.channels,
+                framesPerSecond: driver.framesPerSecond,
+                duration: driver.duration,
+                timestamps: nil
+            )
+        }
         let outputURL = root.appendingPathComponent("output.raw")
         let diskOutput = try await FileCoreRenderer.render(
             input: diskInput,
             effects: effects,
+            drivers: diskDrivers,
             outputURL: outputURL,
             scratchDirectory: root.appendingPathComponent("scratch"),
             budget: budget
@@ -277,5 +298,54 @@ enum CoreRenderer {
             framesPerSecond: diskOutput.framesPerSecond,
             duration: diskOutput.duration
         )
+    }
+
+    private static func shouldRenderDiskBacked(
+        input: VideoTensorData,
+        effects: [EffectNode],
+        drivers: [UUID: VideoTensorData],
+        budget: UInt64
+    ) -> Bool {
+        let active = effects.filter(\.enabled)
+        guard !active.isEmpty else { return false }
+
+        // The in-memory bridge holds the Swift input, a C++ input copy, the
+        // effected tensor and the Swift result copy at the same time. A cross
+        // effect additionally holds both Swift and C++ copies of every driver.
+        // Account for those live buffers instead of comparing only one tensor
+        // with the nominal core budget.
+        let estimatedLiveBytes = UInt64(clamping: input.byteCount).multipliedReportingOverflow(by: 4)
+        if estimatedLiveBytes.overflow { return true }
+        var total = estimatedLiveBytes.partialValue
+        let requiredDriverIDs = Set(active.compactMap { effect in
+            effect.kind.requiresDriver ? effect.driverMediaID : nil
+        })
+        for id in requiredDriverIDs {
+            guard let driver = drivers[id] else { continue }
+            let driverBytes = UInt64(clamping: driver.byteCount).multipliedReportingOverflow(by: 2)
+            if driverBytes.overflow { return true }
+            let addition = total.addingReportingOverflow(driverBytes.partialValue)
+            if addition.overflow { return true }
+            total = addition.partialValue
+        }
+        return total > budget
+    }
+
+    private static func writeRawValues(_ values: [Float], to url: URL) throws {
+        guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path])
+        }
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        try values.withUnsafeBytes { bytes in
+            guard let baseAddress = bytes.baseAddress else { return }
+            let data = Data(
+                bytesNoCopy: UnsafeMutableRawPointer(mutating: baseAddress),
+                count: bytes.count,
+                deallocator: .none
+            )
+            try handle.write(contentsOf: data)
+        }
+        try handle.synchronize()
     }
 }

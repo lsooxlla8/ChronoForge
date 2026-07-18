@@ -24,7 +24,9 @@ struct ChronoForgeIntegration {
             }
         }
 
-        func render(_ requested: CFEffectDescriptorV2) throws -> [Float] {
+        func renderAny(_ requested: CFEffectDescriptorV2) throws -> (
+            values: [Float], frames: Int, height: Int, width: Int, channels: Int
+        ) {
             var descriptor = requested
             var output: OpaquePointer?
             var error = [CChar](repeating: 0, count: 1024)
@@ -49,14 +51,46 @@ struct ChronoForgeIntegration {
                 throw IntegrationFailure.message(String(cString: error))
             }
             defer { cf_video_buffer_destroy(output) }
-            guard cf_video_buffer_frames(output) == UInt64(tensor.frames),
-                  cf_video_buffer_width(output) == 64,
-                  cf_video_buffer_height(output) == 48,
-                  cf_video_buffer_value_count(output) == UInt64(tensor.values.count),
-                  let values = cf_video_buffer_values(output) else {
+            let valueCount = Int(cf_video_buffer_value_count(output))
+            guard valueCount > 0, let values = cf_video_buffer_values(output) else {
                 throw IntegrationFailure.message("Core returned an unexpected output tensor")
             }
-            return Array(UnsafeBufferPointer(start: values, count: tensor.values.count))
+            return (
+                Array(UnsafeBufferPointer(start: values, count: valueCount)),
+                Int(cf_video_buffer_frames(output)),
+                Int(cf_video_buffer_height(output)),
+                Int(cf_video_buffer_width(output)),
+                Int(cf_video_buffer_channels(output))
+            )
+        }
+
+        func render(_ requested: CFEffectDescriptorV2) throws -> [Float] {
+            let output = try renderAny(requested)
+            guard output.frames == tensor.frames,
+                  output.width == 64,
+                  output.height == 48,
+                  output.channels == 4,
+                  output.values.count == tensor.values.count else {
+                throw IntegrationFailure.message("Core returned an unexpected output tensor")
+            }
+            return output.values
+        }
+
+        func descriptor(
+            kind: Int32,
+            values: [Float],
+            options: [Int32],
+            seed: UInt64 = 0
+        ) -> CFEffectDescriptorV2 {
+            values.withUnsafeBufferPointer { valueBuffer in
+                options.withUnsafeBufferPointer { optionBuffer in
+                    cf_effect_descriptor_v2_make(
+                        kind, 1, 0, seed,
+                        valueBuffer.baseAddress, UInt32(values.count),
+                        optionBuffer.baseAddress, UInt32(options.count)
+                    )
+                }
+            }
         }
 
         func renderCross(_ requested: CFEffectDescriptorV2) throws -> [Float] {
@@ -86,6 +120,40 @@ struct ChronoForgeIntegration {
         let second = try render(effect)
         guard first == second else {
             throw IntegrationFailure.message("Identical descriptor and seed must render deterministically")
+        }
+
+        // Exercise every single-input preview dispatch that is not covered by the
+        // more specific assertions below. This catches a missing or rejected
+        // in-memory bridge path before it can silently break a large part of the
+        // Preview menu while file rendering still works.
+        let singleInputPreviewDescriptors: [(Int32, CFEffectDescriptorV2)] = [
+            (0, descriptor(kind: 0, values: [], options: [0, 1])),
+            (2, descriptor(kind: 2, values: [0.5, 0.5, 0.08, 0.75], options: [1, 0])),
+            (3, descriptor(kind: 3, values: [0, 0], options: [0, 0])),
+            (4, descriptor(kind: 4, values: [0, 15, 0], options: [3])),
+            (5, descriptor(kind: 5, values: [0], options: [0, 1, 1, 0])),
+            (6, descriptor(kind: 6, values: [], options: [0, 0])),
+            (9, descriptor(kind: 9, values: [0.02, 4, 0, 180], options: [0])),
+            (10, descriptor(kind: 10, values: [2, 0.35, 2, 0.15], options: [1])),
+            (11, descriptor(kind: 11, values: [0.2, 8, 0.05], options: [0, 0, 0], seed: 42)),
+            (12, descriptor(kind: 12, values: [2, 0.12], options: [0])),
+        ]
+        for (kind, requested) in singleInputPreviewDescriptors {
+            let output = try renderAny(requested)
+            guard output.frames > 0, output.height > 0, output.width > 0, output.channels == 4,
+                  output.values.allSatisfy(\.isFinite) else {
+                throw IntegrationFailure.message("Single-input preview dispatch failed for effect kind \(kind)")
+            }
+        }
+
+        for requested in [
+            descriptor(kind: 7, values: [], options: [0, 1, 2, 1]),
+            descriptor(kind: 8, values: [12, 24, 24], options: [0, 1, 0]),
+        ] {
+            let output = try renderCross(requested)
+            guard output.count == tensor.values.count, output.allSatisfy(\.isFinite) else {
+                throw IntegrationFailure.message("Two-input preview dispatch returned an invalid tensor")
+            }
         }
 
         let dryEffect = effectValues.withUnsafeBufferPointer { values in
