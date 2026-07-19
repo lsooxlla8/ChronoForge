@@ -103,6 +103,10 @@ struct ChronoForgeMacApp: App {
                     .keyboardShortcut(.space, modifiers: [])
             }
             CommandGroup(after: .saveItem) {
+                Button("Export Current Frame…") { project.chooseCurrentFrameExportLocation() }
+                    .keyboardShortcut("e", modifiers: [.command, .shift])
+                    .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
+                Divider()
                 Button("Clear Render Cache…") { project.showsClearCacheConfirmation = true }
                     .disabled(project.isRendering || project.isImporting || project.isExporting)
             }
@@ -114,14 +118,26 @@ struct ChronoForgeMacApp: App {
                 Button("Before / After") {
                     NotificationCenter.default.post(name: .toggleSourceComparison, object: nil)
                 }
-                .keyboardShortcut("\\", modifiers: [])
+                    .keyboardShortcut("\\", modifiers: [])
+            }
+            CommandGroup(replacing: .help) {
+                Button("ChronoForge Help") {
+                    project.helpSelection = .overview
+                    NotificationCenter.default.post(name: .showChronoForgeHelp, object: nil)
+                }
+                .keyboardShortcut("?", modifiers: .command)
             }
         }
+        Window("ChronoForge Help", id: "help") {
+            ChronoForgeHelpView().environmentObject(project)
+        }
+        .defaultSize(width: 1040, height: 760)
     }
 }
 
 private struct WorkspaceView: View {
     @EnvironmentObject private var project: SessionStore
+    @Environment(\.openWindow) private var openWindow
     @AppStorage("ChronoForge.darkAppearance") private var darkAppearance = false
     @State private var isComparingSource = false
     @State private var isComparingSelectedEffect = false
@@ -146,6 +162,9 @@ private struct WorkspaceView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .toggleSourceComparison)) { _ in
             isComparingSource.toggle()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showChronoForgeHelp)) { _ in
+            openWindow(id: "help")
         }
         .onChange(of: project.selectedNodeID) { _, _ in
             isComparingSelectedEffect = false
@@ -187,6 +206,8 @@ private struct WorkspaceView: View {
                 }
                     .disabled(project.source == nil || project.isRendering || project.isImporting || project.isExporting)
                 Menu {
+                    Button("Current Frame as PNG…", systemImage: "photo") { project.chooseCurrentFrameExportLocation() }
+                    Divider()
                     Button("MP4 Video…", systemImage: "film") { project.chooseExportLocation() }
                     Button("PNG Sequence…", systemImage: "photo.stack") { project.choosePNGSequenceExportLocation() }
                 } label: {
@@ -565,7 +586,20 @@ private struct WorkspaceView: View {
     private var inspector: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Inspector").font(.headline)
+                HStack {
+                    Text("Inspector").font(.headline)
+                    Spacer()
+                    if let nodeID = project.selectedNodeID, let node = project.effect(withID: nodeID) {
+                        Button {
+                            project.helpSelection = .effect(node.kind)
+                            openWindow(id: "help")
+                        } label: {
+                            Image(systemName: "questionmark.circle")
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open Help for \(node.kind.title)")
+                    }
+                }
                 if let nodeID = project.selectedNodeID, let selectedNode = project.effect(withID: nodeID) {
                     LabeledContent("Input", value: project.nodeName(selectedNode.inputNodeID))
                         .font(.caption)
@@ -661,6 +695,7 @@ private struct WorkspaceView: View {
 private extension Notification.Name {
     static let togglePreviewPlayback = Notification.Name("ChronoForge.togglePreviewPlayback")
     static let toggleSourceComparison = Notification.Name("ChronoForge.toggleSourceComparison")
+    static let showChronoForgeHelp = Notification.Name("ChronoForge.showHelp")
 }
 
 private struct EffectInspector: View {

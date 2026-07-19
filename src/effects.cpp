@@ -1076,6 +1076,18 @@ VideoTensor dimensional_splicer(
                             source, source_coordinates[2], source_coordinates[1], source_coordinates[0], c, EdgeBehavior::Clamp);
                     }
                 }
+                if (params.interpolation == TensorInterpolation::Cubic &&
+                    source.metadata().alpha == AlphaRepresentation::Premultiplied) {
+                    const auto alpha = output_shape.c >= 4
+                                           ? std::clamp(output.at(t, y, x, 3), 0.0F, 1.0F)
+                                           : 1.0F;
+                    for (std::size_t c = 0; c < std::min<std::size_t>(3, output_shape.c); ++c) {
+                        output.at(t, y, x, c) = std::clamp(output.at(t, y, x, c), 0.0F, alpha);
+                    }
+                    for (std::size_t c = 3; c < output_shape.c; ++c) {
+                        output.at(t, y, x, c) = std::clamp(output.at(t, y, x, c), 0.0F, 1.0F);
+                    }
+                }
             }
         }
     });
@@ -1445,6 +1457,13 @@ VideoTensor chrono_feedback(const VideoTensor& input, const ChronoFeedbackParams
                         auto value = current + (blend(current, past) - current) * past_amount;
                         value += (blend(value, future) - value) * future_amount;
                         output.at(t, y, x, c) = value;
+                    }
+                }
+                if (shape.c >= 4 && input.metadata().alpha == AlphaRepresentation::Premultiplied) {
+                    const auto alpha = std::clamp(output.at(t, y, x, 3), 0.0F, 1.0F);
+                    output.at(t, y, x, 3) = alpha;
+                    for (std::size_t c = 0; c < 3; ++c) {
+                        output.at(t, y, x, c) = std::clamp(output.at(t, y, x, c), 0.0F, alpha);
                     }
                 }
             }

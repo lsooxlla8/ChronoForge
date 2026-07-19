@@ -168,6 +168,17 @@ void blend_amount(
     for (std::size_t index = 0; index < output.size(); ++index) {
         output[index] = source[index] + (composite(source[index], output[index]) - source[index]) * amount;
     }
+    const auto& shape = input.shape();
+    if (shape.c >= 4 && input.metadata().alpha == chronoforge::AlphaRepresentation::Premultiplied) {
+        for (std::size_t pixel = 0; pixel < shape.t * shape.h * shape.w; ++pixel) {
+            const auto offset = pixel * shape.c;
+            const auto alpha = std::clamp(output[offset + 3], 0.0F, 1.0F);
+            output[offset + 3] = alpha;
+            for (std::size_t c = 0; c < 3; ++c) {
+                output[offset + c] = std::clamp(output[offset + c], 0.0F, alpha);
+            }
+        }
+    }
 }
 
 VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptorV2& descriptor, uint64_t budget) {
@@ -450,7 +461,7 @@ CFEffectDescriptorV2 cf_effect_descriptor_v2_make(
     return descriptor;
 }
 
-const char* cf_core_version(void) { return "1.0.1"; }
+const char* cf_core_version(void) { return "1.1.0"; }
 
 int32_t cf_render_effect_chain(
     const float* input,

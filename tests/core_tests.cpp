@@ -404,6 +404,34 @@ void test_cross_tensor_and_flow_effects() {
          chronoforge::TensorAxisSource::BT, chronoforge::TensorInterpolation::Nearest});
     require(repaired_axes.shape() == chronoforge::TensorShape{2, 2, 3, 1}, "Space-Time Map repairs duplicate axis semantics without throwing");
 
+    chronoforge::VideoTensor alpha_source(
+        {2, 2, 3, 4}, 0.0F,
+        {24, 1, chronoforge::ColorTransfer::Linear, chronoforge::AlphaRepresentation::Premultiplied});
+    for (std::size_t t = 0; t < 2; ++t) {
+        for (std::size_t y = 0; y < 2; ++y) {
+            for (std::size_t x = 0; x < 3; ++x) {
+                const auto alpha = static_cast<float>((t + y + x) % 3) * 0.5F;
+                alpha_source.at(t, y, x, 0) = alpha;
+                alpha_source.at(t, y, x, 1) = alpha * 0.75F;
+                alpha_source.at(t, y, x, 2) = alpha * 0.25F;
+                alpha_source.at(t, y, x, 3) = alpha;
+            }
+        }
+    }
+    const auto cubic_alpha = chronoforge::dimensional_splicer(
+        alpha_source, coordinate_map,
+        {chronoforge::TensorAxisSource::BX, chronoforge::TensorAxisSource::AY,
+         chronoforge::TensorAxisSource::AT, chronoforge::TensorInterpolation::Cubic});
+    for (std::size_t pixel = 0; pixel < cubic_alpha.shape().t * cubic_alpha.shape().h * cubic_alpha.shape().w; ++pixel) {
+        const auto offset = pixel * cubic_alpha.shape().c;
+        const auto alpha = cubic_alpha.values()[offset + 3];
+        require(alpha >= 0.0F && alpha <= 1.0F, "Cubic Space-Time Map clamps interpolated alpha");
+        for (std::size_t channel = 0; channel < 3; ++channel) {
+            require(cubic_alpha.values()[offset + channel] >= 0.0F && cubic_alpha.values()[offset + channel] <= alpha,
+                    "Cubic Space-Time Map preserves premultiplied RGB");
+        }
+    }
+
     chronoforge::VideoTensor timeline({3, 1, 1, 1});
     timeline.at(0, 0, 0, 0) = 0.0F;
     timeline.at(1, 0, 0, 0) = 0.5F;
@@ -469,6 +497,18 @@ void test_cross_tensor_and_flow_effects() {
     const auto difference = chronoforge::chrono_feedback(
         layers, {0, 0, 1, 1.0F, chronoforge::FeedbackBlendMode::Difference});
     require_near(difference.at(0, 0, 0, 0), 0.5F, "Difference feedback blends the absolute channel difference");
+
+    chronoforge::VideoTensor alpha_layers(
+        {2, 1, 1, 4}, 0.0F,
+        {24, 1, chronoforge::ColorTransfer::Linear, chronoforge::AlphaRepresentation::Premultiplied});
+    alpha_layers.at(0, 0, 0, 0) = 0.1F;
+    alpha_layers.at(0, 0, 0, 3) = 0.1F;
+    alpha_layers.at(1, 0, 0, 0) = 0.8F;
+    alpha_layers.at(1, 0, 0, 3) = 1.0F;
+    const auto alpha_difference = chronoforge::chrono_feedback(
+        alpha_layers, {0, 0, 1, 1.0F, chronoforge::FeedbackBlendMode::Difference});
+    require(alpha_difference.at(0, 0, 0, 0) <= alpha_difference.at(0, 0, 0, 3),
+            "Difference feedback keeps RGB premultiplied by its output alpha");
 
     chronoforge::VideoTensor displacement_layers({2, 3, 1, 1});
     for (std::size_t y = 0; y < 3; ++y) displacement_layers.at(0, y, 0, 0) = static_cast<float>(y) / 2.0F;
