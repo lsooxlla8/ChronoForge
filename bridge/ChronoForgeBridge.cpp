@@ -450,7 +450,7 @@ CFEffectDescriptorV2 cf_effect_descriptor_v2_make(
     return descriptor;
 }
 
-const char* cf_core_version(void) { return "1.0.1"; }
+const char* cf_core_version(void) { return "1.1.0"; }
 
 int32_t cf_render_effect_chain(
     const float* input,

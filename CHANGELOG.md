@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0 — 2026-07-19
+
+- Added Export Current Frame as a full-resolution 8-bit RGBA PNG using the exact full-render graph and cache rather than the Viewer proxy.
+- Map the selected Viewer position to the rendered timeline after shape-changing effects, preserving first, middle and last positions without artificial upscaling.
+- Added overwrite confirmation through the macOS save panel, six-digit suggested frame names, cancellable progress and byte-for-byte parity coverage against PNG Sequence export.
+- Added searchable built-in Help covering the disposable session workflow, Preview, A/B, comparison, AA, FPS, queue/export, Amount blend modes and a glossary.
+- Added contextual Help buttons and a visual principle, safe starting point and control reference for every production effect.
+- Added self-test validation that the Help catalog and centralized EffectDefinition registry remain in sync.
+- Bumped app, core and render-cache compatibility to 1.1.0.
+
 ## 1.0.1 — 2026-07-19
 
 - Added Affinity Migration as a production single-source effect with normalized cell sizing, neighbour-majority migration, motion response and palette-class controls.

@@ -6,6 +6,17 @@ import UniformTypeIdentifiers
 
 enum SelfTestRunner {
     static func run() async throws {
+        let helpErrors = HelpCatalog.validationErrors()
+        guard helpErrors.isEmpty else {
+            throw IntegrationSelfTestError.message("Help catalog validation failed: \(helpErrors.joined(separator: "; "))")
+        }
+        guard FullRenderPipeline.frameIndex(normalizedPosition: 0, frameCount: 7) == 0,
+              FullRenderPipeline.frameIndex(normalizedPosition: 0.5, frameCount: 7) == 3,
+              FullRenderPipeline.frameIndex(normalizedPosition: 1, frameCount: 7) == 6,
+              FullRenderPipeline.frameIndex(normalizedPosition: -1, frameCount: 7) == 0,
+              FullRenderPipeline.frameIndex(normalizedPosition: 2, frameCount: 7) == 6 else {
+            throw IntegrationSelfTestError.message("Current-frame normalized timeline mapping is incorrect")
+        }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ChronoForge-SelfTest-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -138,6 +149,22 @@ enum SelfTestRunner {
         guard exportedRoundTrip.tensor.values.count == pngProxy.tensor.values.count,
               zip(exportedRoundTrip.tensor.values, pngProxy.tensor.values).allSatisfy({ abs($0 - $1) < 0.01 }) else {
             throw IntegrationSelfTestError.message("PNG sequence export did not preserve premultiplied RGBA through an 8-bit round-trip")
+        }
+        let currentFramePNG = root.appendingPathComponent("ChronoForge_Frame_000002.png")
+        try await PNGSequenceExporter.exportFrame(pngFull, frame: 1, to: currentFramePNG)
+        let sequenceFramePNG = pngExportDirectory.appendingPathComponent("ChronoForge_000002.png")
+        guard try Data(contentsOf: currentFramePNG) == Data(contentsOf: sequenceFramePNG) else {
+            throw IntegrationSelfTestError.message("Current-frame PNG did not match the same PNG Sequence frame")
+        }
+        do {
+            try await PNGSequenceExporter.exportFrame(pngFull, frame: 0, to: currentFramePNG)
+            throw IntegrationSelfTestError.message("Current-frame export silently replaced an existing file")
+        } catch PNGSequenceExporterError.destinationExists {
+            // Expected: only an explicit save-panel replacement may overwrite a destination.
+        }
+        try await PNGSequenceExporter.exportFrame(pngFull, frame: 0, to: currentFramePNG, allowReplacing: true)
+        guard try Data(contentsOf: currentFramePNG) == Data(contentsOf: pngExportDirectory.appendingPathComponent("ChronoForge_000001.png")) else {
+            throw IntegrationSelfTestError.message("Confirmed current-frame replacement did not atomically write the selected frame")
         }
         do {
             try await PNGSequenceExporter.export(pngFull, to: pngExportDirectory) { _, _ in }
