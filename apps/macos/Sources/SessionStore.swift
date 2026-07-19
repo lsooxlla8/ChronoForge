@@ -34,6 +34,7 @@ final class SessionStore: ObservableObject {
     @Published var isPreviewStale = false
     @Published private(set) var canUndo = false
     @Published private(set) var canRedo = false
+    @Published var helpSelection = HelpSelection.overview
     private(set) var previewLaunchCountForDiagnostics = 0
     var mediaReplacementID: UUID?
 
@@ -863,6 +864,19 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func chooseCurrentFrameExportLocation() {
+        guard let tensor = displayedTensor, tensor.frames > 0 else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = String(format: "ChronoForge_Frame_%06d.png", currentFrame + 1)
+        panel.message = "Export the selected Viewer position from the full-resolution effect result."
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            self?.exportCurrentFrame(to: url)
+        }
+    }
+
     func exportVideo(to url: URL) {
         exportCurrent(to: url, format: .mp4)
     }
@@ -908,6 +922,57 @@ final class SessionStore: ObservableObject {
             }
             _ = try? await CacheManager.shared.trim()
             await refreshCacheSize()
+        }
+    }
+
+    private func exportCurrentFrame(to url: URL) {
+        guard let source, let viewerTensor = displayedTensor else { return }
+        let normalizedPosition = viewerTensor.frames <= 1
+            ? 0
+            : Double(currentFrame) / Double(viewerTensor.frames - 1)
+        cancelWork()
+        isExporting = true
+        renderProgress = 0
+        errorMessage = nil
+        statusMessage = "Exporting current frame…"
+        let destinationAccess = url.startAccessingSecurityScopedResource()
+        task = Task {
+            defer {
+                if destinationAccess { url.stopAccessingSecurityScopedResource() }
+                isExporting = false
+                renderProgress = nil
+            }
+            do {
+                let renderEffects = try renderEffectChain()
+                let accessed = mediaPool.map { ($0.mediaSource, $0.mediaSource.startAccessingSecurityScopedResource()) }
+                defer {
+                    for (mediaSource, granted) in accessed where granted {
+                        mediaSource.stopAccessingSecurityScopedResource()
+                    }
+                }
+                let frame = try await FullRenderPipeline.exportCurrentFrame(
+                    source: source,
+                    effects: renderEffects,
+                    mediaPool: mediaPool,
+                    normalizedPosition: normalizedPosition,
+                    to: url,
+                    allowReplacing: true
+                ) { fraction, stage in
+                    Task { @MainActor in
+                        self.renderProgress = fraction
+                        self.statusMessage = stage
+                    }
+                }
+                statusMessage = "Frame \(frame + 1) exported · \(url.lastPathComponent)"
+                _ = try? await CacheManager.shared.trim()
+                await refreshCacheSize()
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } catch is CancellationError {
+                statusMessage = "Current-frame export cancelled"
+            } catch {
+                errorMessage = error.localizedDescription
+                statusMessage = "Current-frame export failed"
+            }
         }
     }
 

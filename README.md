@@ -2,7 +2,7 @@
 
 **Break video across space and time.**
 
-ChronoForge 1.0.1 is a native offline macOS app for glitch art.
+ChronoForge 1.1 is a native offline macOS app for glitch art.
 Import movies or PNG image sequences, stack strange time-based effects, watch a fast proxy preview, then export the result at full resolution.
 
 The 1.0 workflow is deliberately session-based: every normal launch starts empty, and a clean quit discards media, effect settings and the render queue. Only finished videos remain the thing you save.
@@ -17,6 +17,7 @@ No formulas required. If you have used an effect stack, displacement map or rend
 - Use a second clip as an RGB coordinate map or a space-time displacement map.
 - Build recursive past/future feedback, spectral FFT glitches and directional datamosh trails.
 - Queue several full-quality renders and let ChronoForge process them one after another.
+- Export the exact Viewer position as a full-resolution alpha-preserving PNG and learn every control from searchable built-in Help.
 
 ## Why it exists
 
@@ -62,9 +63,11 @@ ChronoForge began with one idea: treat a video as a three-dimensional volume and
 3. Adjust **Amount** and its Normal/Add/Screen/Multiply/Difference/Displace/XOR Glitch mode, or press **Random** to replace the chain with 1–3 compatible effects. One Undo restores the previous stack.
 4. Preview updates automatically after a short pause. It is always a smaller proxy so experimentation stays responsive.
 5. For a two-video effect, add another clip to Media and choose it as **Driver video (B)**.
-6. Use **Export** for an H.264 MP4 or alpha-preserving PNG sequence. Choose FPS to reinterpret the finished frames without resampling them. **Add to Queue** remains available for MP4 batches; press **Shift–Command–R** to start the queue.
+6. Use **Export** for the current frame, an H.264 MP4, or an alpha-preserving PNG sequence. Current Frame evaluates the same full-resolution stack and cache as a complete render. Choose FPS to reinterpret finished frames without resampling them. **Add to Queue** remains available for MP4 batches; press **Shift–Command–R** to start the queue.
 
-Useful shortcuts: **Space** plays or pauses Preview, **Command–Z** / **Shift–Command–Z** undo and redo, **\\** toggles Before/After, **Shift–S** toggles the sidebar, **Shift–R** generates a random stack, **Shift–Delete** clears it, **Shift–Command–I** imports a PNG sequence, and **Option–Command–R** adds the current render to the queue.
+Useful shortcuts: **Space** plays or pauses Preview, **Command–Z** / **Shift–Command–Z** undo and redo, **\\** toggles Before/After, **Shift–S** toggles the sidebar, **Shift–R** generates a random stack, **Shift–Delete** clears it, **Shift–Command–I** imports a PNG sequence, **Shift–Command–E** exports the current frame, and **Option–Command–R** adds the current render to the queue.
+
+Open **Help → ChronoForge Help** (Command–?) for a searchable workflow guide, control reference, glossary and a page for every production effect. Contextual `?` buttons in the toolbar and Inspector open the relevant section.
 
 ## Download and requirements
 

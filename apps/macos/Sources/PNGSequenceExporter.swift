@@ -5,12 +5,15 @@ import UniformTypeIdentifiers
 
 enum PNGSequenceExporterError: LocalizedError {
     case destinationNotEmpty
+    case destinationExists
     case cannotCreateFrame(Int)
 
     var errorDescription: String? {
         switch self {
         case .destinationNotEmpty:
             "Choose a new or empty folder for PNG sequence export. Existing files were not changed."
+        case .destinationExists:
+            "A file already exists at that location. Choose another name or confirm replacement in the save panel."
         case .cannotCreateFrame(let frame):
             "ChronoForge could not write PNG frame \(frame). Any earlier frames remain in the destination folder."
         }
@@ -51,6 +54,38 @@ enum PNGSequenceExporter {
                     Double(frame + 1) / Double(tensor.frames),
                     "Writing PNG frame \(frame + 1) of \(tensor.frames)"
                 )
+            }
+        }.value
+    }
+
+    static func exportFrame(
+        _ tensor: DiskTensorData,
+        frame: Int,
+        to url: URL,
+        allowReplacing: Bool = false
+    ) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            guard tensor.isValidOnDisk(), tensor.frames > 0 else { throw CoreRendererError.invalidOutput }
+            try Task.checkCancellation()
+            let destinationExists = FileManager.default.fileExists(atPath: url.path)
+            if destinationExists && !allowReplacing { throw PNGSequenceExporterError.destinationExists }
+            let safeFrame = min(max(frame, 0), tensor.frames - 1)
+            let mapped = try Data(contentsOf: tensor.fileURL, options: .mappedIfSafe)
+            let rgba = mapped.withUnsafeBytes { raw in
+                makeRGBA8(tensor: tensor, frame: safeFrame, values: raw.bindMemory(to: Float.self))
+            }
+            try Task.checkCancellation()
+            let temporary = url.deletingLastPathComponent()
+                .appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
+            defer { try? FileManager.default.removeItem(at: temporary) }
+            guard writePNG(rgba, width: tensor.width, height: tensor.height, to: temporary) else {
+                throw PNGSequenceExporterError.cannotCreateFrame(safeFrame + 1)
+            }
+            try Task.checkCancellation()
+            if destinationExists {
+                _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
+            } else {
+                try FileManager.default.moveItem(at: temporary, to: url)
             }
         }.value
     }
