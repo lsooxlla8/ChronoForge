@@ -8,7 +8,8 @@
 - Added searchable built-in Help covering the disposable session workflow, Preview, A/B, comparison, AA, FPS, queue/export, Amount blend modes and a glossary.
 - Added contextual Inspector Help plus a visual principle, safe starting point and control reference for every production effect; general Help stays in the standard macOS menu.
 - Added self-test validation that the Help catalog and centralized EffectDefinition registry remain in sync.
-- Added an end-to-end Current Frame matrix for all 21 effects across movie and alpha-bearing PNG sources, first/middle/last positions, two-input graphs and cold/warm cache paths.
+- Added an exhaustive Current Frame release gate covering 2,149 configurations: every effect-specific discrete mode and valid mode combination, hidden 3D Rotation and Output Prefilter path, plus every Amount Blend combined with every compatible effect configuration. It runs across movie and alpha-bearing PNG sources, first/middle/last positions, two-input graphs and cold/warm cache paths for 12,894 byte-for-byte PNG comparisons.
+- Fixed premultiplied-alpha output in Cubic Space-Time Map, non-displacement Time Feedback blends and the shared Amount compositor after the exhaustive mode matrix exposed invalid RGBA combinations.
 - Canonicalized cache signature JSON before hashing so unchanged sources and effect graphs always reuse the same full-render cache.
 - Bumped app, core and render-cache compatibility to 1.1.0.
 

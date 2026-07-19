@@ -174,11 +174,19 @@ struct ChronoForgeIntegration {
             }
         }
         let differenceOutput = try render(differenceEffect)
-        guard zip(differenceOutput, zip(tensor.values, first)).allSatisfy({ element in
-            let (output, pair) = element
-            return abs(output - abs(pair.0 - pair.1)) < 0.0001
-        }) else {
-            throw IntegrationFailure.message("Difference Amount mode was not applied by the proxy bridge")
+        for pixel in 0..<(tensor.frames * 48 * 64) {
+            let offset = pixel * 4
+            let alpha = min(max(abs(tensor.values[offset + 3] - first[offset + 3]), 0), 1)
+            guard abs(differenceOutput[offset + 3] - alpha) < 0.0001 else {
+                throw IntegrationFailure.message("Difference Amount mode did not produce its expected alpha")
+            }
+            for channel in 0..<3 {
+                let rawDifference = abs(tensor.values[offset + channel] - first[offset + channel])
+                let expected = min(max(rawDifference, 0), alpha)
+                guard abs(differenceOutput[offset + channel] - expected) < 0.0001 else {
+                    throw IntegrationFailure.message("Difference Amount mode did not preserve premultiplied RGB")
+                }
+            }
         }
 
         let displaceEffect = effectValues.withUnsafeBufferPointer { values in

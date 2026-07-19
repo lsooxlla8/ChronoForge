@@ -14,6 +14,11 @@ enum SelfTestRunner {
         func snapshot() -> [String] { lock.withLock { stages } }
     }
 
+    private struct ExportModeCase {
+        let name: String
+        let effect: EffectNode
+    }
+
     static func run() async throws {
         let helpErrors = HelpCatalog.validationErrors()
         guard helpErrors.isEmpty else {
@@ -495,7 +500,7 @@ enum SelfTestRunner {
             root: root.appendingPathComponent("current-frame-alpha-matrix", isDirectory: true),
             verifyPremultipliedAlpha: true
         )
-        print("Current-frame export matrix passed: 21 effects × movie/alpha × first/middle/last × cold/warm cache")
+        print("Current-frame export matrix passed: 2,149 modes × movie/alpha × first/middle/last × cold/warm cache")
         var splicer = EffectNode.make(.dimensionalSplicer)
         splicer.driverMediaID = proxy.id
         let crossProxy = try await CoreRenderer.render(
@@ -608,13 +613,13 @@ enum SelfTestRunner {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let cacheRoot = root.appendingPathComponent("cache", isDirectory: true)
         var coveredKinds = Set<EffectKind>()
+        let modeCases = currentFrameExportModeCases(driverID: driver.id)
 
-        for kind in EffectKind.addableKinds {
-            var effect = EffectNode.make(kind)
-            if kind.requiresDriver { effect.driverMediaID = driver.id }
-            if kind == .seamlessLoop { effect.values[0] = 2 }
+        for modeCase in modeCases {
+            let effect = modeCase.effect
+            let kind = effect.kind
             let mediaPool = [source, driver]
-            let effectRoot = root.appendingPathComponent("effect-\(kind.rawValue)", isDirectory: true)
+            let effectRoot = root.appendingPathComponent(modeCase.name, isDirectory: true)
             try FileManager.default.createDirectory(at: effectRoot, withIntermediateDirectories: true)
             let sourceKeyBeforeCold = ProxyCache.key(source: source.mediaSource, input: source.tensor, effects: [])
             let graphDrivers = kind.requiresDriver ? [driver.mediaSource] : []
@@ -657,13 +662,13 @@ enum SelfTestRunner {
                 guard let data = try? Data(contentsOf: metadataURL),
                       let metadata = try? JSONDecoder().decode(DiskTensorData.self, from: data) else {
                     throw IntegrationSelfTestError.message(
-                        "\(kind.title) left unreadable \(label) cache metadata at \(metadataURL.path)"
+                        "\(kind.title) [\(modeCase.name)] left unreadable \(label) cache metadata at \(metadataURL.path)"
                     )
                 }
                 guard metadata.isValidOnDisk() else {
                     let actualSize = (try? metadata.fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
                     throw IntegrationSelfTestError.message(
-                        "\(kind.title) left invalid \(label) tensor \(metadata.fileURL.path): actual=\(actualSize) expected=\(metadata.byteCount)"
+                        "\(kind.title) [\(modeCase.name)] left invalid \(label) tensor \(metadata.fileURL.path): actual=\(actualSize) expected=\(metadata.byteCount)"
                     )
                 }
             }
@@ -684,11 +689,11 @@ enum SelfTestRunner {
                     drivers: kind.requiresDriver ? [driver.mediaSource] : []
                 )
                 throw IntegrationSelfTestError.message(
-                    "\(kind.title) did not reuse its full-render cache source=\(sourceKey) graph=\(graphKey): \(warmProgress.snapshot().joined(separator: " | "))"
+                    "\(kind.title) [\(modeCase.name)] did not reuse its full-render cache source=\(sourceKey) graph=\(graphKey): \(warmProgress.snapshot().joined(separator: " | "))"
                 )
             }
             if verifyPremultipliedAlpha {
-                try verifyPremultipliedTensor(rendered, effectName: kind.title)
+                try verifyPremultipliedTensor(rendered, effectName: "\(kind.title) [\(modeCase.name)]")
             }
 
             let sequenceDirectory = effectRoot.appendingPathComponent("sequence", isDirectory: true)
@@ -716,7 +721,7 @@ enum SelfTestRunner {
                         cacheRootOverride: cacheRoot
                     ) { _, stage in progress.record(stage) }
                     guard progress.contains("Using full-resolution render cache") else {
-                        throw IntegrationSelfTestError.message("\(kind.title) \(position.name) frame missed the warm cache path")
+                        throw IntegrationSelfTestError.message("\(kind.title) [\(modeCase.name)] \(position.name) frame missed the warm cache path")
                     }
                 } else {
                     actualFrame = coldFrame
@@ -727,15 +732,129 @@ enum SelfTestRunner {
                 guard actualFrame == expectedFrame,
                       try Data(contentsOf: destination) == Data(contentsOf: expectedPNG) else {
                     throw IntegrationSelfTestError.message(
-                        "\(kind.title) \(position.name) current-frame PNG differs from PNG Sequence frame \(expectedFrame + 1)"
+                        "\(kind.title) [\(modeCase.name)] \(position.name) current-frame PNG differs from PNG Sequence frame \(expectedFrame + 1)"
                     )
                 }
             }
             coveredKinds.insert(kind)
         }
 
-        guard coveredKinds == Set(EffectKind.addableKinds), coveredKinds.count == 21 else {
-            throw IntegrationSelfTestError.message("Current-frame export matrix did not cover all 21 production effects")
+        let expectedKinds = Set(EffectKind.addableKinds + [.tensor3DRotation, .selectivePrefilter])
+        guard coveredKinds == expectedKinds,
+              Set(modeCases.map(\.name)).count == modeCases.count,
+              modeCases.count == 2_149 else {
+            throw IntegrationSelfTestError.message(
+                "Current-frame export mode catalog is incomplete: effects=\(coveredKinds.count)/\(expectedKinds.count), cases=\(modeCases.count)/2149"
+            )
+        }
+    }
+
+    private static func currentFrameExportModeCases(driverID: UUID) -> [ExportModeCase] {
+        var cases: [ExportModeCase] = []
+
+        func add(
+            _ kind: EffectKind,
+            _ label: String,
+            options: [Int32]? = nil,
+            configure: (inout EffectNode) -> Void = { _ in }
+        ) {
+            var effect = EffectNode.make(kind)
+            if let options { effect.options = options }
+            if kind.requiresDriver { effect.driverMediaID = driverID }
+            if kind == .seamlessLoop { effect.values[0] = 2 }
+            configure(&effect)
+            cases.append(ExportModeCase(name: "effect-\(kind.rawValue)-\(label)", effect: effect))
+        }
+
+        func addProduct(
+            _ kind: EffectKind,
+            _ prefix: String,
+            domains: [[Int32]],
+            include: ([Int32]) -> Bool = { _ in true },
+            configure: (inout EffectNode, [Int32]) -> Void = { _, _ in }
+        ) {
+            for options in cartesianProduct(domains) where include(options) {
+                add(kind, "\(prefix)-\(options.map(String.init).joined(separator: "-"))", options: options) {
+                    configure(&$0, options)
+                }
+            }
+        }
+
+        addProduct(.spaceTimeTranspose, "axis-output", domains: [[0, 1], [0, 1]])
+        addProduct(.tensor3DRotation, "fill", domains: [Array(0...3)])
+        addProduct(.lumaTimeShift, "source-edge", domains: [Array(0...4), Array(0...2)])
+        addProduct(.radialChronoFunnel, "edge-topology-seam", domains: [Array(0...2), Array(0...2), [0, 1]]) {
+            $0[1] == 0 || $0[2] == 0
+        }
+        addProduct(.temporalPixelSort, "criterion-order", domains: [Array(0...2), Array(0...3)])
+        addProduct(.spectralFFTSwap, "axis-normalize-size-transform", domains: [Array(0...2), [0, 1], [0, 1], [0, 1]])
+
+        let axisPermutations: [[Int32]] = [
+            [0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0],
+        ]
+        for permutation in axisPermutations {
+            for sourceMask in 0..<8 {
+                for interpolation in Int32(0)...2 {
+                    let axes = permutation.enumerated().map { index, axis in
+                        axis + ((sourceMask & (1 << index)) == 0 ? 0 : 3)
+                    }
+                    add(.dimensionalSplicer, "axes-\(axes.map(String.init).joined(separator: "-"))-interpolation-\(interpolation)",
+                        options: axes + [interpolation])
+                }
+            }
+        }
+
+        addProduct(.tensorDisplacement, "channel-size-edge", domains: [Array(0...4), Array(0...2), Array(0...2)])
+        addProduct(.opticalFlowTimeWarp, "edge", domains: [Array(0...2)])
+        addProduct(.chronoFeedback, "blend", domains: [Array(0...5)])
+        addProduct(.structuralDatamosh, "axis-trigger-dark", domains: [Array(0...2), Array(0...2), [0, 1]]) {
+            $0[1] == 1 || $0[2] == 0
+        }
+
+        for method in Int32(0)...4 {
+            if method == 2 {
+                add(.seamlessLoop, "method-2-ping-pong", options: [method, 0, 0])
+            } else if method == 3 {
+                addProduct(.seamlessLoop, "method-3-position-phase", domains: [[method], [0, 1], Array(0...2)], configure: { effect, _ in
+                    effect.values[0] = 2
+                })
+            } else {
+                addProduct(.seamlessLoop, "method-\(method)-position", domains: [[method], [0, 1], [0]], configure: { effect, _ in
+                    effect.values[0] = 2
+                })
+            }
+        }
+
+        addProduct(.rgbTimeSlip, "axis-edge", domains: [Array(0...2), Array(0...2)])
+        addProduct(.horizontalSyncLoss, "driver-edge-direction", domains: [Array(0...2), Array(0...2), [0, 1]])
+        addProduct(.chromaCarrierDrift, "mode-edge", domains: [Array(0...2), Array(0...2)])
+        addProduct(.strideError, "channel-edge", domains: [Array(0...2), [0, 1]])
+        addProduct(.blockAddressCorruption, "mapping-edge", domains: [Array(0...3), Array(0...2)])
+        addProduct(.bitplaneForge, "operation-channel", domains: [Array(0...3), Array(0...5)])
+        addProduct(.signalWeave, "pattern-size", domains: [Array(0...3), Array(0...2)])
+        addProduct(.blockGraft, "trigger-size", domains: [Array(0...4), Array(0...2)])
+        addProduct(.channelTransplant, "components-model-size", domains: [[0, 1], [0, 1], [0, 1], [0, 1], Array(0...2)])
+        addProduct(.affinityMigration, "classes", domains: [Array(0...6)])
+        addProduct(.selectivePrefilter, "spatial-temporal", domains: [Array(0...2), Array(0...2)]) {
+            $0 != [0, 0]
+        }
+
+        let effectModeCases = cases
+        for modeCase in effectModeCases where modeCase.effect.kind != .selectivePrefilter && modeCase.effect.supportsAmount {
+            for mode in AmountBlendMode.allCases {
+                var effect = modeCase.effect
+                effect.amount = 0.5
+                effect.amountBlendMode = mode
+                cases.append(ExportModeCase(name: "\(modeCase.name)-amount-\(mode.rawValue)", effect: effect))
+            }
+        }
+
+        return cases
+    }
+
+    private static func cartesianProduct(_ domains: [[Int32]]) -> [[Int32]] {
+        domains.reduce([[]]) { partial, domain in
+            partial.flatMap { prefix in domain.map { prefix + [$0] } }
         }
     }
 

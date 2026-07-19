@@ -294,7 +294,12 @@ void require_amount(float amount) {
     }
 }
 
-void blend_amount(const MappedTensor& input, MappedTensor& output, float amount, AmountBlendMode mode) {
+void blend_amount(
+    const MappedTensor& input,
+    MappedTensor& output,
+    float amount,
+    AmountBlendMode mode,
+    bool preserve_premultiplied_alpha) {
     if (input.shape() != output.shape()) {
         throw std::invalid_argument("Partial Amount requires an effect that preserves tensor shape");
     }
@@ -348,6 +353,17 @@ void blend_amount(const MappedTensor& input, MappedTensor& output, float amount,
         const auto end = start + frame_values;
         for (auto index = start; index < end; ++index) {
             destination[index] = source[index] + (composite(source[index], destination[index]) - source[index]) * amount;
+        }
+        if (shape.c >= 4 && preserve_premultiplied_alpha) {
+            const auto frame_pixels = shape.h * shape.w;
+            for (std::size_t pixel = 0; pixel < frame_pixels; ++pixel) {
+                const auto offset = start + pixel * shape.c;
+                const auto alpha = std::clamp(destination[offset + 3], 0.0F, 1.0F);
+                destination[offset + 3] = alpha;
+                for (std::size_t c = 0; c < 3; ++c) {
+                    destination[offset + c] = std::clamp(destination[offset + c], 0.0F, alpha);
+                }
+            }
         }
     });
 }
@@ -1599,7 +1615,12 @@ void optical_flow_warp(const MappedTensor& input, MappedTensor& output, const Ef
     });
 }
 
-void feedback(const MappedTensor& input, MappedTensor& output, const EffectSpec& effect, const LocalProgress& progress) {
+void feedback(
+    const MappedTensor& input,
+    MappedTensor& output,
+    const EffectSpec& effect,
+    bool preserve_premultiplied_alpha,
+    const LocalProgress& progress) {
     require_option(effect.options[0], 5, "feedback blend mode");
     const auto mode = static_cast<FeedbackBlendMode>(effect.options[0]);
     const auto past_delay = static_cast<std::size_t>(std::max(0.0F, std::round(effect.values[0])));
@@ -1658,6 +1679,15 @@ void feedback(const MappedTensor& input, MappedTensor& output, const EffectSpec&
                         auto value = current + (blend(current, past) - current) * past_amount;
                         value += (blend(value, future) - value) * future_amount;
                         destination[linear(t, y, x, c, shape)] = value;
+                    }
+                }
+                if (shape.c >= 4 && preserve_premultiplied_alpha) {
+                    const auto alpha_index = linear(t, y, x, 3, shape);
+                    const auto alpha = std::clamp(destination[alpha_index], 0.0F, 1.0F);
+                    destination[alpha_index] = alpha;
+                    for (std::size_t c = 0; c < 3; ++c) {
+                        const auto index = linear(t, y, x, c, shape);
+                        destination[index] = std::clamp(destination[index], 0.0F, alpha);
                     }
                 }
             }
@@ -1976,7 +2006,7 @@ void apply(
             optical_flow_warp(input, output, effect, progress);
             return;
         case EffectOperation::ChronoFeedback:
-            feedback(input, output, effect, progress);
+            feedback(input, output, effect, metadata.alpha == AlphaRepresentation::Premultiplied, progress);
             return;
         case EffectOperation::StructuralDatamosh:
             datamosh(input, output, effect, progress);
@@ -2120,7 +2150,9 @@ FileRenderResult render_file_effect_chain(
                 };
                 apply(input, output, effect, max_working_set_bytes, metadata, local_progress);
                 if (needs_amount_blend) {
-                    blend_amount(input, output, effect.amount, effect.amount_blend_mode);
+                    blend_amount(
+                        input, output, effect.amount, effect.amount_blend_mode,
+                        metadata.alpha == AlphaRepresentation::Premultiplied);
                 }
                 output.sync();
             }
@@ -2279,6 +2311,20 @@ FileRenderResult render_file_cross_tensor_effect(
                             value = sample_mapped(source, source_coordinates[2], source_coordinates[1], source_coordinates[0], c, EdgeBehavior::Clamp);
                         }
                         destination[linear(t, y, x, c, result_shape)] = value;
+                    }
+                    if (effect.options[3] == static_cast<std::int32_t>(TensorInterpolation::Cubic) &&
+                        metadata.alpha == AlphaRepresentation::Premultiplied) {
+                        const auto alpha = result_shape.c >= 4
+                                               ? std::clamp(destination[linear(t, y, x, 3, result_shape)], 0.0F, 1.0F)
+                                               : 1.0F;
+                        for (std::size_t c = 0; c < std::min<std::size_t>(3, result_shape.c); ++c) {
+                            const auto index = linear(t, y, x, c, result_shape);
+                            destination[index] = std::clamp(destination[index], 0.0F, alpha);
+                        }
+                        for (std::size_t c = 3; c < result_shape.c; ++c) {
+                            const auto index = linear(t, y, x, c, result_shape);
+                            destination[index] = std::clamp(destination[index], 0.0F, 1.0F);
+                        }
                     }
                 }
             }
@@ -2495,7 +2541,9 @@ FileRenderResult render_file_cross_tensor_effect(
         });
     }
     if (needs_amount_blend) {
-        blend_amount(source, output, effect.amount, effect.amount_blend_mode);
+        blend_amount(
+            source, output, effect.amount, effect.amount_blend_mode,
+            metadata.alpha == AlphaRepresentation::Premultiplied);
     }
     output.sync();
     report(progress, 1.0, stage_name(effect.kind));
