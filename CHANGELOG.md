@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1 — 2026-07-19
+
+- Added Affinity Migration as a production single-source effect with normalized cell sizing, neighbour-majority migration, motion response and palette-class controls.
+- Kept temporal state limited to cell-coordinate offsets: final colour and alpha are always sampled from the current input frame, preventing feedback blur and ghosting.
+- Made Reseed deterministically select among compatible neighbouring source cells with matching RAM and SSD-backed rendering.
+- Added Affinity Migration to the categorized effect menu, Inspector, Random Stack, bridge validation, visual regression, performance smoke and full release self-tests.
+- Bumped app, core and render-cache compatibility to 1.0.1.
+
 ## 1.0.0 — 2026-07-18
 
 - Clear proxy and full-render caches automatically after a normal app termination while retaining crash recovery after abnormal exits.

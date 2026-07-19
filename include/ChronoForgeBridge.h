@@ -43,6 +43,7 @@ typedef enum CFEffectKind {
     CF_EFFECT_SIGNAL_WEAVE = 19,
     CF_EFFECT_BLOCK_GRAFT = 20,
     CF_EFFECT_CHANNEL_TRANSPLANT = 21,
+    CF_EFFECT_AFFINITY_MIGRATION = 23,
 } CFEffectKind;
 
 enum { CF_EFFECT_DESCRIPTOR_VERSION = 2, CF_EFFECT_PARAMETER_CAPACITY = 8 };
@@ -65,6 +66,7 @@ enum { CF_EFFECT_DESCRIPTOR_VERSION = 2, CF_EFFECT_PARAMETER_CAPACITY = 8 };
 // signal weave:             values = normalized band size, phase drift, irregularity, B time offset; options = pattern, size matching
 // block graft:              values = normalized block size, density/threshold, hold, B time offset; options = trigger, size matching
 // channel transplant:       values = B time/X/Y offsets; options = component 1/2/3 source, colour model, size matching
+// affinity migration:       values = normalized cell scale, neighbour agreement, iterations, motion response; options = palette classes
 typedef struct CFEffectDescriptorV2 {
     int32_t kind;
     uint32_t descriptor_version;

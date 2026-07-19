@@ -66,8 +66,8 @@ enum RandomStackGenerator {
         else { targetCount = 3 }
 
         let driverIDs = mediaPool.map(\.id).filter { $0 != primaryMediaID }
-        let eligible = EffectRegistry.definitions.filter { definition in
-            definition.isAddable && definition.randomization != nil &&
+        let eligible = EffectRegistry.addableDefinitions.filter { definition in
+            definition.randomization != nil &&
                 (definition.inputArity == .one || !driverIDs.isEmpty)
         }
         guard !eligible.isEmpty else {
@@ -270,6 +270,14 @@ enum RandomStackGenerator {
                 RandomFloatDistribution.signedMagnitude(1...240, deadZone: 1).sample(using: &random),
             ]
             node.options = mappings + [Int32(random.integer(in: 0...1)), weighted([0, 0, 1, 1, 2], using: &random)]
+        case "affinity-migration":
+            node.values = [
+                RandomFloatDistribution.logarithmic(0.01...0.22).sample(using: &random),
+                .triangular(0.25...0.95, preferred: 0.65, using: &random),
+                Float(random.integer(in: 1...8)),
+                .triangular(0...0.8, preferred: 0.2, using: &random),
+            ]
+            node.options = [Int32(random.integer(in: 0...6))]
         default:
             break
         }

@@ -922,6 +922,14 @@ private struct EffectInspector: View {
             Text("Each destination component independently stays with A or comes from a time- and space-offset sample of B. Alpha remains A's.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        case .affinityMigration:
+            valueSlider("Cell Scale", index: 0, range: 0...0.5, format: "%.3f × frame")
+            valueSlider("Required Neighbour Majority", index: 1, range: 0...1, format: "%.0f%%", displayMultiplier: 100)
+            valueSlider("Rounds", index: 2, range: 1...12, format: "%.0f")
+            valueSlider("Motion Response", index: 3, range: 0...1, format: "%.3f")
+            optionPicker("Palette Classes", value: option(0), options: ["2", "3", "4", "5", "6", "7", "8"])
+            Text("Cell Scale is a fraction of the larger frame dimension. Required Neighbour Majority is the share of nearby cells in another colour class needed before this cell migrates. Motion Response makes moving areas flow into the new state faster.")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -991,7 +999,13 @@ private struct EffectInspector: View {
         }
     }
 
-    private func valueSlider(_ title: String, index: Int, range: ClosedRange<Float>, format: String) -> some View {
+    private func valueSlider(
+        _ title: String,
+        index: Int,
+        range: ClosedRange<Float>,
+        format: String,
+        displayMultiplier: Float = 1
+    ) -> some View {
         let binding = Binding<Float>(
             get: { node.values[index] },
             set: { node.values[index] = min(max($0, range.lowerBound), range.upperBound) }
@@ -1002,7 +1016,7 @@ private struct EffectInspector: View {
                 Text(title)
                 Spacer()
                 ExactValueField(value: binding, range: range)
-                    .help(String(format: format, binding.wrappedValue))
+                    .help(String(format: format, binding.wrappedValue * displayMultiplier))
             }
             Slider(value: binding, in: range, onEditingChanged: { editing in
                 onContinuousEditChanged(editing)
@@ -1011,7 +1025,7 @@ private struct EffectInspector: View {
                 .contextMenu {
                     Button("Reset to Default") { binding.wrappedValue = defaultValue }
                 }
-            Text(String(format: format, binding.wrappedValue))
+            Text(String(format: format, binding.wrappedValue * displayMultiplier))
                 .font(.caption2)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)

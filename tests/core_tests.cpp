@@ -218,6 +218,48 @@ void test_block_address_corruption() {
             "Zero corruption is exact identity even when Time Reach is nonzero");
 }
 
+void test_affinity_migration() {
+    chronoforge::VideoTensor input({4, 16, 20, 4}, 0.0F);
+    for (std::size_t t = 0; t < input.shape().t; ++t) for (std::size_t y = 0; y < input.shape().h; ++y) for (std::size_t x = 0; x < input.shape().w; ++x) {
+        const auto alpha = 0.35F + 0.65F * static_cast<float>((x + y) % 5) / 4.0F;
+        input.at(t, y, x, 0) = alpha * static_cast<float>((x * 7 + y * 3 + t) % 19) / 18.0F;
+        input.at(t, y, x, 1) = alpha * static_cast<float>((x * 2 + y * 11 + t * 3) % 17) / 16.0F;
+        input.at(t, y, x, 2) = alpha * static_cast<float>((x * 5 + y + t * 7) % 13) / 12.0F;
+        input.at(t, y, x, 3) = alpha;
+    }
+    const chronoforge::AffinityMigrationParams params{0.12F, 0.25F, 5, 0.3F, 4, 11};
+    const auto migration = chronoforge::affinity_migration(input, params);
+    require(migration.shape() == input.shape() && migration.values() != input.values(),
+            "Affinity Migration uses a normalized cell scale and preserves tensor shape");
+    require(migration.values() == chronoforge::affinity_migration(input, params).values(),
+            "Affinity Migration is deterministic for a stored seed");
+    auto changed_seed = params;
+    changed_seed.random_seed = 12;
+    require(migration.values() != chronoforge::affinity_migration(input, changed_seed).values(),
+            "Affinity Migration Reseed changes deterministic neighbour selection");
+    for (std::size_t index = 0; index < migration.values().size(); index += 4) {
+        require(migration.values()[index] <= migration.values()[index + 3] + 0.0001F &&
+                migration.values()[index + 1] <= migration.values()[index + 3] + 0.0001F &&
+                migration.values()[index + 2] <= migration.values()[index + 3] + 0.0001F,
+                "Affinity Migration preserves premultiplied alpha");
+    }
+
+    chronoforge::VideoTensor temporal({2, 4, 4, 4}, 0.0F);
+    for (std::size_t y = 0; y < 4; ++y) for (std::size_t x = 0; x < 4; ++x) {
+        temporal.at(0, y, x, 0) = 1.0F;
+        temporal.at(0, y, x, 3) = 1.0F;
+        temporal.at(1, y, x, 1) = 1.0F;
+        temporal.at(1, y, x, 3) = 1.0F;
+    }
+    const auto current_frame_colour = chronoforge::affinity_migration(temporal, {0.25F, 0.0F, 3, 1.0F, 4, 99});
+    for (std::size_t y = 0; y < 4; ++y) for (std::size_t x = 0; x < 4; ++x) {
+        require_near(current_frame_colour.at(1, y, x, 0), 0.0F,
+                     "Affinity Migration does not feed previous-frame RGB into the current frame");
+        require_near(current_frame_colour.at(1, y, x, 1), 1.0F,
+                     "Affinity Migration samples final colour from the current input frame");
+    }
+}
+
 void test_bitplane_forge() {
     chronoforge::VideoTensor impulse({1, 1, 1, 1}, 1.0F / 255.0F);
     const auto rotated = chronoforge::bitplane_forge(
@@ -923,6 +965,21 @@ void test_file_backed_effect_chain() {
         {chronoforge::FreezeAxis::Horizontal, chronoforge::FreezeTrigger::Random, 0.2F, 3, 0.37F, 0});
     require(different_seed.values() != seeded_expected.values(), "Changing the random seed changes the datamosh pattern");
 
+    const auto affinity_path = root / "affinity-migration.raw";
+    const std::vector<chronoforge::EffectSpec> affinity_effects{
+        {chronoforge::EffectOperation::AffinityMigration, {0.15F, 0.25F, 4.0F, 0.5F}, {2}, 1.0F, 0xA11F1},
+    };
+    const auto affinity_result = chronoforge::render_file_effect_chain(
+        seeded_input_path, affinity_path, root / "affinity-migration-scratch",
+        seeded_input.shape(), seeded_input.metadata(), affinity_effects, 64 * 1024 * 1024, {});
+    const auto affinity_expected = chronoforge::affinity_migration(
+        seeded_input, {0.15F, 0.25F, 4.0F, 0.5F, 4, 0xA11F1});
+    const auto affinity_output = chronoforge::MappedTensor::open(
+        affinity_path, affinity_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
+    require(
+        std::equal(affinity_expected.values().begin(), affinity_expected.values().end(), affinity_output.data()),
+        "Affinity Migration uses identical RAM and out-of-core state and seed semantics");
+
     bool partial_shape_change_rejected = false;
     try {
         const std::vector<chronoforge::EffectSpec> invalid_amount{
@@ -968,6 +1025,7 @@ int main() {
         test_chroma_carrier_drift();
         test_stride_error();
         test_block_address_corruption();
+        test_affinity_migration();
         test_bitplane_forge();
         test_sort_and_rotation();
         test_fft_swap();

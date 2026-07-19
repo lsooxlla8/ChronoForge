@@ -8,6 +8,7 @@ enum EffectCategory: String, CaseIterable, Identifiable, Sendable {
     case dataAndChannels
     case multiSource
     case outputAndUtility
+    case organicSystems
 
     var id: String { rawValue }
     var title: String {
@@ -19,6 +20,7 @@ enum EffectCategory: String, CaseIterable, Identifiable, Sendable {
         case .dataAndChannels: "Data & Channels"
         case .multiSource: "Multi-Source · A + B"
         case .outputAndUtility: "Output & Utility"
+        case .organicSystems: "Organic Systems"
         }
     }
 }
@@ -151,9 +153,13 @@ enum EffectRegistry {
                    shape: .preservingForOptions(index: 4, values: [0, 1]),
                    values: [0, 0, 0], options: [1, 0, 1, 0, 0],
                    randomization: .init(identifier: "channel-transplant", amount: .triangular(0.3...1, preferred: 0.8))),
+        definition(.affinityMigration, "Affinity Migration", "circle.grid.cross", .purple, .organicSystems,
+                   cost: .temporal, usesRandomSeed: true, values: [0.06, 0.65, 3, 0.2], options: [2],
+                   randomization: .init(identifier: "affinity-migration", amount: .triangular(0.35...1, preferred: 0.7))),
     ]
 
     private static let byKind = Dictionary(uniqueKeysWithValues: definitions.map { ($0.kind, $0) })
+    static let addableDefinitions = definitions.filter(\.isAddable)
 
     static func definition(for kind: EffectKind) -> EffectDefinition {
         guard let definition = byKind[kind] else { preconditionFailure("Missing EffectDefinition for \(kind)") }
@@ -161,7 +167,7 @@ enum EffectRegistry {
     }
 
     static func definitions(in category: EffectCategory) -> [EffectDefinition] {
-        definitions.filter { $0.category == category && $0.isAddable }
+        addableDefinitions.filter { $0.category == category }
     }
 
     private static func definition(

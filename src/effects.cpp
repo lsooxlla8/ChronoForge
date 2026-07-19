@@ -1643,4 +1643,105 @@ VideoTensor structural_datamosh(const VideoTensor& input, const StructuralDatamo
     return output;
 }
 
+VideoTensor affinity_migration(const VideoTensor& input, const AffinityMigrationParams& params) {
+    const auto& shape = input.shape();
+    VideoTensor output(shape, 0.0F, input.metadata());
+    const auto cell_size = 1 + static_cast<std::size_t>(std::round(
+        std::clamp(params.cell_scale, 0.0F, 1.0F) * static_cast<float>(std::max(shape.w, shape.h) - 1)));
+    const auto rounds = std::clamp<std::size_t>(static_cast<std::size_t>(std::round(params.iterations)), 1, 12);
+    const auto classes = std::clamp(params.palette_classes, 2, 8);
+    const auto agreement = std::clamp(params.neighbour_agreement, 0.0F, 1.0F);
+    const auto motion_response = std::clamp(params.motion_response, 0.0F, 1.0F);
+    const auto rows = (shape.h + cell_size - 1) / cell_size;
+    const auto columns = (shape.w + cell_size - 1) / cell_size;
+    const auto cell_count = rows * columns;
+    std::vector<float> remembered_offset_y(cell_count, 0.0F);
+    std::vector<float> remembered_offset_x(cell_count, 0.0F);
+    const auto index_of = [columns](std::size_t row, std::size_t column) { return row * columns + column; };
+    const auto candidate_index = [&](std::size_t t, std::size_t round, std::size_t row, std::size_t column,
+                                     std::size_t count) {
+        auto hash = params.random_seed;
+        hash ^= (static_cast<std::uint64_t>(t) + 1) * 0x9E3779B185EBCA87ULL;
+        hash ^= (static_cast<std::uint64_t>(round) + 1) * 0xD6E8FEB86659FD93ULL;
+        hash ^= (static_cast<std::uint64_t>(row) + 1) * 0xC2B2AE3D27D4EB4FULL;
+        hash ^= (static_cast<std::uint64_t>(column) + 1) * 0x165667B19E3779F9ULL;
+        hash ^= hash >> 30U;
+        hash *= 0xBF58476D1CE4E5B9ULL;
+        hash ^= hash >> 27U;
+        hash *= 0x94D049BB133111EBULL;
+        hash ^= hash >> 31U;
+        return static_cast<std::size_t>(hash % count);
+    };
+    for (std::size_t t = 0; t < shape.t; ++t) {
+        std::vector<int> cell_classes(cell_count);
+        std::vector<std::size_t> content_origin(cell_count);
+        for (std::size_t row = 0; row < rows; ++row) for (std::size_t column = 0; column < columns; ++column) {
+            const auto index = index_of(row, column);
+            const auto y = std::min(shape.h - 1, row * cell_size);
+            const auto x = std::min(shape.w - 1, column * cell_size);
+            cell_classes[index] = std::min(classes - 1, static_cast<int>(std::clamp(luma(input, t, y, x), 0.0F, 1.0F) * classes));
+            content_origin[index] = index;
+        }
+        for (std::size_t round = 0; round < rounds; ++round) {
+            auto next_classes = cell_classes;
+            auto next_origin = content_origin;
+            for (std::size_t row = 0; row < rows; ++row) {
+                for (std::size_t column = 0; column < columns; ++column) {
+                    const auto index = index_of(row, column);
+                    const auto own = cell_classes[index];
+                    std::array<int, 8> neighbours{};
+                    for (int dy = -1; dy <= 1; ++dy) for (int dx = -1; dx <= 1; ++dx) {
+                        if (dy == 0 && dx == 0) continue;
+                        const auto neighbour_row = static_cast<std::size_t>(std::clamp<int>(static_cast<int>(row) + dy, 0, static_cast<int>(rows - 1)));
+                        const auto neighbour_column = static_cast<std::size_t>(std::clamp<int>(static_cast<int>(column) + dx, 0, static_cast<int>(columns - 1)));
+                        ++neighbours[cell_classes[index_of(neighbour_row, neighbour_column)]];
+                    }
+                    const auto best = static_cast<int>(std::distance(neighbours.begin(), std::max_element(neighbours.begin(), neighbours.end())));
+                    if (best == own || static_cast<float>(neighbours[best]) / 8.0F < agreement) continue;
+                    std::array<std::size_t, 8> candidates{};
+                    std::size_t candidate_count = 0;
+                    for (int dy = -1; dy <= 1; ++dy) for (int dx = -1; dx <= 1; ++dx) {
+                        if (dy == 0 && dx == 0) continue;
+                        const auto neighbour_row = static_cast<std::size_t>(std::clamp<int>(static_cast<int>(row) + dy, 0, static_cast<int>(rows - 1)));
+                        const auto neighbour_column = static_cast<std::size_t>(std::clamp<int>(static_cast<int>(column) + dx, 0, static_cast<int>(columns - 1)));
+                        const auto neighbour = index_of(neighbour_row, neighbour_column);
+                        if (cell_classes[neighbour] == best) {
+                            candidates[candidate_count++] = neighbour;
+                        }
+                    }
+                    const auto selected = candidates[candidate_index(t, round, row, column, candidate_count)];
+                    next_classes[index] = best;
+                    next_origin[index] = content_origin[selected];
+                }
+            }
+            cell_classes.swap(next_classes);
+            content_origin.swap(next_origin);
+        }
+        for (std::size_t row = 0; row < rows; ++row) for (std::size_t column = 0; column < columns; ++column) {
+            const auto index = index_of(row, column);
+            const auto y0 = row * cell_size;
+            const auto x0 = column * cell_size;
+            const auto origin_row = content_origin[index] / columns;
+            const auto origin_column = content_origin[index] % columns;
+            const auto motion = t == 0 ? 0.0F : std::clamp(
+                std::abs(luma(input, t, std::min(y0, shape.h - 1), std::min(x0, shape.w - 1))
+                    - luma(input, t - 1, std::min(y0, shape.h - 1), std::min(x0, shape.w - 1))) * 3.0F,
+                0.0F, 1.0F);
+            const auto response = std::clamp(0.06F + 0.12F * motion_response + motion * (0.12F + 0.52F * motion_response), 0.0F, 0.8F);
+            remembered_offset_y[index] += (static_cast<float>(origin_row * cell_size) - static_cast<float>(y0) - remembered_offset_y[index]) * response;
+            remembered_offset_x[index] += (static_cast<float>(origin_column * cell_size) - static_cast<float>(x0) - remembered_offset_x[index]) * response;
+            for (std::size_t y = y0; y < std::min(shape.h, y0 + cell_size); ++y) {
+                for (std::size_t x = x0; x < std::min(shape.w, x0 + cell_size); ++x) {
+                    for (std::size_t c = 0; c < shape.c; ++c) {
+                        output.at(t, y, x, c) = sample_tensor(input, static_cast<float>(t),
+                            static_cast<float>(y) + remembered_offset_y[index],
+                            static_cast<float>(x) + remembered_offset_x[index], c, EdgeBehavior::Clamp);
+                    }
+                }
+            }
+        }
+    }
+    return output;
+}
+
 }  // namespace chronoforge

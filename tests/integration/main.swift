@@ -139,6 +139,7 @@ struct ChronoForgeIntegration {
             (12, descriptor(kind: 12, values: [2, 0.12, 1, 0], options: [0, 0, 0])),
             (12, descriptor(kind: 12, values: [3, 0.12, 0.85, 0.2], options: [3, 1, 0])),
             (12, descriptor(kind: 12, values: [3, 0.18, 1, 0], options: [4, 0, 0])),
+            (23, descriptor(kind: 23, values: [0.08, 0.25, 5, 0.5], options: [2], seed: 73)),
         ]
         for (kind, requested) in singleInputPreviewDescriptors {
             let output = try renderAny(requested)
@@ -310,6 +311,15 @@ struct ChronoForgeIntegration {
             throw IntegrationFailure.message("Channel Transplant bridge path did not preserve A alpha")
         }
 
+        func affinityMigration(seed: UInt64) -> CFEffectDescriptorV2 {
+            descriptor(kind: 23, values: [0.08, 0.25, 5, 0.5], options: [2], seed: seed)
+        }
+        let affinityA = try render(affinityMigration(seed: 73))
+        guard affinityA == (try render(affinityMigration(seed: 73))),
+              affinityA != (try render(affinityMigration(seed: 74))) else {
+            throw IntegrationFailure.message("Affinity Migration bridge path ignored deterministic seed semantics")
+        }
+
         var outdated = effect
         outdated.descriptor_version = 1
         do {
@@ -320,7 +330,7 @@ struct ChronoForgeIntegration {
                 throw IntegrationFailure.message(message)
             }
         }
-        print("ChronoForge integration passed: descriptor V2 validation, Amount identity and Wave A bridge mappings")
+        print("ChronoForge integration passed: descriptor V2 validation, Amount identity and production effect mappings")
     }
 
     private static func makeMovie(at url: URL) async throws {
