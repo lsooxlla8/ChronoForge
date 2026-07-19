@@ -36,6 +36,7 @@ enum class EffectOperation : std::int32_t {
     SignalWeave = 19,
     BlockGraft = 20,
     ChannelTransplant = 21,
+    AffinityMigration = 23,
 };
 
 struct EffectSpec {

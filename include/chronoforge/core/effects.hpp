@@ -224,6 +224,18 @@ struct ChannelTransplantParams {
     TensorBroadcast size_matching{TensorBroadcast::Clamp};
 };
 
+struct AffinityMigrationParams {
+    // Fraction of the larger source dimension; 0 is one pixel.
+    float cell_scale{0.06F};
+    // Minimum fraction of neighbours sharing a class before a cell migrates.
+    float neighbour_agreement{0.65F};
+    float iterations{3.0F};
+    // Controls how strongly detected frame-to-frame motion accelerates migration.
+    float motion_response{0.2F};
+    int palette_classes{4};
+    std::uint64_t random_seed{};
+};
+
 VideoTensor space_time_transpose(const VideoTensor& input, SpatialAxis axis);
 VideoTensor space_time_transpose(const VideoTensor& input, const SpaceTimeTransposeParams& params);
 VideoTensor luma_time_shift(const VideoTensor& input, const LumaTimeShiftParams& params);
@@ -252,5 +264,6 @@ VideoTensor bitplane_forge(const VideoTensor& input, const BitplaneForgeParams& 
 VideoTensor signal_weave(const VideoTensor& source, const VideoTensor& driver, const SignalWeaveParams& params);
 VideoTensor block_graft(const VideoTensor& source, const VideoTensor& driver, const BlockGraftParams& params);
 VideoTensor channel_transplant(const VideoTensor& source, const VideoTensor& driver, const ChannelTransplantParams& params);
+VideoTensor affinity_migration(const VideoTensor& input, const AffinityMigrationParams& params);
 
 }  // namespace chronoforge

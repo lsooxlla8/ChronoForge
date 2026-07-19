@@ -118,6 +118,8 @@ int main(int argc, char** argv) {
              chronoforge::block_graft(source, driver, {0.12F, 0.22F, 2, -1, chronoforge::BlockGraftTrigger::Difference, chronoforge::TensorBroadcast::Clamp, 52})},
             {chronoforge::channel_transplant(source, driver, {{true, false, true}, 1, 3, -2, chronoforge::ChannelTransplantColourModel::Rgb, chronoforge::TensorBroadcast::Stretch}),
              chronoforge::channel_transplant(source, driver, {{false, true, true}, -2, -4, 3, chronoforge::ChannelTransplantColourModel::YCbCr, chronoforge::TensorBroadcast::Clamp})},
+            {chronoforge::affinity_migration(source, {0.10F, 0.55F, 3, 0.2F, 4, 71}),
+             chronoforge::affinity_migration(source, {0.05F, 0.8F, 6, 0.65F, 7, 72})},
         };
         const auto sheet_width = kWidth * 3;
         const auto sheet_height = kHeight * rows.size();
@@ -132,7 +134,8 @@ int main(int argc, char** argv) {
         std::ofstream manifest(output_directory / "README.txt", std::ios::trunc);
         manifest << "Columns: source A | standard parameters | alternate/seeded parameters\n"
                     "Rows: RGB Time Slip | Sync Loss | Chroma Carrier Drift | Stride Error | "
-                    "Block Address Corruption | Bitplane Forge | Signal Weave | Block Graft | Channel Transplant\n"
+                    "Block Address Corruption | Bitplane Forge | Signal Weave | Block Graft | Channel Transplant | "
+                    "Affinity Migration\n"
                     "Fixture: procedural RGBA gradient, moving geometry, portrait-like silhouette, noise, one-pixel lines; "
                     "two-source rows use a different B size, duration, motion and colour.\n";
         if (!manifest) throw std::runtime_error("Cannot create visual regression manifest");

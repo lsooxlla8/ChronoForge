@@ -81,6 +81,7 @@ void enforce_budget(const VideoTensor& tensor, uint64_t budget) {
         case CF_EFFECT_SIGNAL_WEAVE: return {4, 2};
         case CF_EFFECT_BLOCK_GRAFT: return {4, 2};
         case CF_EFFECT_CHANNEL_TRANSPLANT: return {3, 5};
+        case CF_EFFECT_AFFINITY_MIGRATION: return {4, 1};
     }
     throw std::invalid_argument("Unsupported effect kind");
 }
@@ -93,7 +94,7 @@ CFEffectKind validate_descriptor(const CFEffectDescriptorV2& descriptor) {
         throw std::invalid_argument("Effect amount must be between zero and one");
     }
     checked_enum<chronoforge::AmountBlendMode>(descriptor.amount_blend_mode, 6, "Amount blend mode");
-    const auto kind = checked_enum<CFEffectKind>(descriptor.kind, CF_EFFECT_CHANNEL_TRANSPLANT, "effect kind");
+    const auto kind = checked_enum<CFEffectKind>(descriptor.kind, CF_EFFECT_AFFINITY_MIGRATION, "effect kind");
     const auto [values, options] = expected_parameter_counts(kind);
     if (descriptor.value_count != values || descriptor.option_count != options) {
         throw std::invalid_argument("Effect descriptor parameter counts do not match its kind");
@@ -334,6 +335,11 @@ VideoTensor apply_effect(const VideoTensor& input, const CFEffectDescriptorV2& d
                     checked_enum<chronoforge::BitplaneChannel>(descriptor.options[1], 5, "bitplane channel"),
                     descriptor.random_seed,
                 });
+        case CF_EFFECT_AFFINITY_MIGRATION:
+            return chronoforge::affinity_migration(
+                input,
+                {descriptor.values[0], descriptor.values[1], descriptor.values[2], descriptor.values[3],
+                 std::clamp(descriptor.options[0] + 2, 2, 8), descriptor.random_seed});
         case CF_EFFECT_DIMENSIONAL_SPLICER:
         case CF_EFFECT_TENSOR_DISPLACEMENT:
         case CF_EFFECT_SIGNAL_WEAVE:
@@ -444,7 +450,7 @@ CFEffectDescriptorV2 cf_effect_descriptor_v2_make(
     return descriptor;
 }
 
-const char* cf_core_version(void) { return "1.0.0-dev-creative-controls"; }
+const char* cf_core_version(void) { return "1.0.1"; }
 
 int32_t cf_render_effect_chain(
     const float* input,
