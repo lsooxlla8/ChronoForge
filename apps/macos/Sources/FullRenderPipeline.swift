@@ -5,9 +5,10 @@ enum FullRenderPipeline {
         source: DecodedProxy,
         effects: [EffectNode],
         mediaPool: [DecodedProxy] = [],
+        cacheRootOverride: URL? = nil,
         progress: @escaping @Sendable (Double, String) -> Void
     ) async throws -> DiskTensorData {
-        let cacheRoot = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let cacheRoot = cacheRootOverride ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
             .appendingPathComponent("ChronoForge/Full", isDirectory: true)
         let sourceKey = ProxyCache.key(source: source.mediaSource, input: source.tensor, effects: [])
         let graphDrivers = effects.compactMap { effect in
@@ -130,12 +131,14 @@ enum FullRenderPipeline {
         normalizedPosition: Double,
         to destination: URL,
         allowReplacing: Bool = false,
+        cacheRootOverride: URL? = nil,
         progress: @escaping @Sendable (Double, String) -> Void
     ) async throws -> Int {
         let rendered = try await render(
             source: source,
             effects: effects,
-            mediaPool: mediaPool
+            mediaPool: mediaPool,
+            cacheRootOverride: cacheRootOverride
         ) { fraction, stage in progress(fraction * 0.95, stage) }
         let frame = frameIndex(normalizedPosition: normalizedPosition, frameCount: rendered.frames)
         try await PNGSequenceExporter.exportFrame(

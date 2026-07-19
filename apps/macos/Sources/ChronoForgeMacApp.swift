@@ -192,13 +192,6 @@ private struct WorkspaceView: View {
                 Spacer()
             }
             ToolbarItemGroup(placement: .confirmationAction) {
-                Button {
-                    project.helpSelection = .controls
-                    openWindow(id: "help")
-                } label: {
-                    Image(systemName: "questionmark.circle")
-                }
-                .help("Open ChronoForge Help")
                 if project.isRendering || project.isImporting || project.isExporting {
                     if let progress = project.renderProgress {
                         ProgressView(value: progress).frame(width: 72)
