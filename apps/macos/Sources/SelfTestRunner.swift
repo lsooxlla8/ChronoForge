@@ -5,6 +5,15 @@ import ImageIO
 import UniformTypeIdentifiers
 
 enum SelfTestRunner {
+    private final class ProgressRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stages: [String] = []
+
+        func record(_ stage: String) { lock.withLock { stages.append(stage) } }
+        func contains(_ stage: String) -> Bool { lock.withLock { stages.contains(stage) } }
+        func snapshot() -> [String] { lock.withLock { stages } }
+    }
+
     static func run() async throws {
         let helpErrors = HelpCatalog.validationErrors()
         guard helpErrors.isEmpty else {
@@ -21,11 +30,13 @@ enum SelfTestRunner {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let source = root.appendingPathComponent("source.mov")
+        let driverMovie = root.appendingPathComponent("driver.mov")
         let input = root.appendingPathComponent("input.raw")
         let output = root.appendingPathComponent("output.raw")
         let videoOnly = root.appendingPathComponent("video-only.mp4")
         let movie = root.appendingPathComponent("result.mp4")
         try await makeMovie(at: source)
+        try await makeMovie(at: driverMovie, phase: 5)
         let cacheRoot = root.appendingPathComponent("cache", isDirectory: true)
         let proxyCache = cacheRoot.appendingPathComponent("Proxy", isDirectory: true)
         try FileManager.default.createDirectory(at: proxyCache, withIntermediateDirectories: true)
@@ -463,6 +474,28 @@ enum SelfTestRunner {
                 "Proxy metadata mismatch: \(proxy.tensor.width)x\(proxy.tensor.height), frames=\(proxy.sourceFrameCount), exact=\(proxy.sourceFrameCountIsExact)"
             )
         }
+        let matrixDriver = try await VideoDecoder.decodeProxy(from: driverMovie)
+        try await verifyCurrentFrameExportMatrix(
+            source: proxy,
+            driver: matrixDriver,
+            root: root.appendingPathComponent("current-frame-movie-matrix", isDirectory: true),
+            verifyPremultipliedAlpha: false
+        )
+        let alphaSource = try await makeAlphaSequence(
+            at: root.appendingPathComponent("alpha-matrix-source", isDirectory: true),
+            phase: 0
+        )
+        let alphaDriver = try await makeAlphaSequence(
+            at: root.appendingPathComponent("alpha-matrix-driver", isDirectory: true),
+            phase: 3
+        )
+        try await verifyCurrentFrameExportMatrix(
+            source: alphaSource,
+            driver: alphaDriver,
+            root: root.appendingPathComponent("current-frame-alpha-matrix", isDirectory: true),
+            verifyPremultipliedAlpha: true
+        )
+        print("Current-frame export matrix passed: 21 effects × movie/alpha × first/middle/last × cold/warm cache")
         var splicer = EffectNode.make(.dimensionalSplicer)
         splicer.driverMediaID = proxy.id
         let crossProxy = try await CoreRenderer.render(
@@ -566,6 +599,195 @@ enum SelfTestRunner {
         store.startFreshSession()
     }
 
+    private static func verifyCurrentFrameExportMatrix(
+        source: DecodedProxy,
+        driver: DecodedProxy,
+        root: URL,
+        verifyPremultipliedAlpha: Bool
+    ) async throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let cacheRoot = root.appendingPathComponent("cache", isDirectory: true)
+        var coveredKinds = Set<EffectKind>()
+
+        for kind in EffectKind.addableKinds {
+            var effect = EffectNode.make(kind)
+            if kind.requiresDriver { effect.driverMediaID = driver.id }
+            if kind == .seamlessLoop { effect.values[0] = 2 }
+            let mediaPool = [source, driver]
+            let effectRoot = root.appendingPathComponent("effect-\(kind.rawValue)", isDirectory: true)
+            try FileManager.default.createDirectory(at: effectRoot, withIntermediateDirectories: true)
+            let sourceKeyBeforeCold = ProxyCache.key(source: source.mediaSource, input: source.tensor, effects: [])
+            let graphDrivers = kind.requiresDriver ? [driver.mediaSource] : []
+            let graphKeyBeforeCold = ProxyCache.key(
+                source: source.mediaSource,
+                input: source.tensor,
+                effects: [effect],
+                drivers: graphDrivers
+            )
+
+            let coldPNG = effectRoot.appendingPathComponent("cold-first.png")
+            let coldProgress = ProgressRecorder()
+            let coldFrame = try await FullRenderPipeline.exportCurrentFrame(
+                source: source,
+                effects: [effect],
+                mediaPool: mediaPool,
+                normalizedPosition: 0,
+                to: coldPNG,
+                cacheRootOverride: cacheRoot
+            ) { _, stage in coldProgress.record(stage) }
+            guard coldFrame == 0,
+                  !coldProgress.contains("Using full-resolution render cache") else {
+                throw IntegrationSelfTestError.message("\(kind.title) did not exercise the cold current-frame render path")
+            }
+            let sourceKeyAfterCold = ProxyCache.key(source: source.mediaSource, input: source.tensor, effects: [])
+            let graphKeyAfterCold = ProxyCache.key(
+                source: source.mediaSource,
+                input: source.tensor,
+                effects: [effect],
+                drivers: graphDrivers
+            )
+            guard sourceKeyBeforeCold == sourceKeyAfterCold,
+                  graphKeyBeforeCold == graphKeyAfterCold else {
+                throw IntegrationSelfTestError.message("\(kind.title) cache signature changed without an input or graph edit")
+            }
+            for (label, metadataURL) in [
+                ("source", cacheRoot.appendingPathComponent(sourceKeyAfterCold).appendingPathComponent("input.json")),
+                ("graph", cacheRoot.appendingPathComponent(graphKeyAfterCold).appendingPathComponent("output.json")),
+            ] {
+                guard let data = try? Data(contentsOf: metadataURL),
+                      let metadata = try? JSONDecoder().decode(DiskTensorData.self, from: data) else {
+                    throw IntegrationSelfTestError.message(
+                        "\(kind.title) left unreadable \(label) cache metadata at \(metadataURL.path)"
+                    )
+                }
+                guard metadata.isValidOnDisk() else {
+                    let actualSize = (try? metadata.fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
+                    throw IntegrationSelfTestError.message(
+                        "\(kind.title) left invalid \(label) tensor \(metadata.fileURL.path): actual=\(actualSize) expected=\(metadata.byteCount)"
+                    )
+                }
+            }
+
+            let warmProgress = ProgressRecorder()
+            let rendered = try await FullRenderPipeline.render(
+                source: source,
+                effects: [effect],
+                mediaPool: mediaPool,
+                cacheRootOverride: cacheRoot
+            ) { _, stage in warmProgress.record(stage) }
+            guard rendered.isValidOnDisk(), warmProgress.contains("Using full-resolution render cache") else {
+                let sourceKey = ProxyCache.key(source: source.mediaSource, input: source.tensor, effects: [])
+                let graphKey = ProxyCache.key(
+                    source: source.mediaSource,
+                    input: source.tensor,
+                    effects: [effect],
+                    drivers: kind.requiresDriver ? [driver.mediaSource] : []
+                )
+                throw IntegrationSelfTestError.message(
+                    "\(kind.title) did not reuse its full-render cache source=\(sourceKey) graph=\(graphKey): \(warmProgress.snapshot().joined(separator: " | "))"
+                )
+            }
+            if verifyPremultipliedAlpha {
+                try verifyPremultipliedTensor(rendered, effectName: kind.title)
+            }
+
+            let sequenceDirectory = effectRoot.appendingPathComponent("sequence", isDirectory: true)
+            try await PNGSequenceExporter.export(rendered, to: sequenceDirectory) { _, _ in }
+            let positions: [(name: String, value: Double, existing: URL?)] = [
+                ("first", 0, coldPNG),
+                ("middle", 0.5, nil),
+                ("last", 1, nil),
+            ]
+            for position in positions {
+                let expectedFrame = FullRenderPipeline.frameIndex(
+                    normalizedPosition: position.value,
+                    frameCount: rendered.frames
+                )
+                let destination = position.existing ?? effectRoot.appendingPathComponent("\(position.name).png")
+                let actualFrame: Int
+                if position.existing == nil {
+                    let progress = ProgressRecorder()
+                    actualFrame = try await FullRenderPipeline.exportCurrentFrame(
+                        source: source,
+                        effects: [effect],
+                        mediaPool: mediaPool,
+                        normalizedPosition: position.value,
+                        to: destination,
+                        cacheRootOverride: cacheRoot
+                    ) { _, stage in progress.record(stage) }
+                    guard progress.contains("Using full-resolution render cache") else {
+                        throw IntegrationSelfTestError.message("\(kind.title) \(position.name) frame missed the warm cache path")
+                    }
+                } else {
+                    actualFrame = coldFrame
+                }
+                let expectedPNG = sequenceDirectory.appendingPathComponent(
+                    String(format: "ChronoForge_%06d.png", expectedFrame + 1)
+                )
+                guard actualFrame == expectedFrame,
+                      try Data(contentsOf: destination) == Data(contentsOf: expectedPNG) else {
+                    throw IntegrationSelfTestError.message(
+                        "\(kind.title) \(position.name) current-frame PNG differs from PNG Sequence frame \(expectedFrame + 1)"
+                    )
+                }
+            }
+            coveredKinds.insert(kind)
+        }
+
+        guard coveredKinds == Set(EffectKind.addableKinds), coveredKinds.count == 21 else {
+            throw IntegrationSelfTestError.message("Current-frame export matrix did not cover all 21 production effects")
+        }
+    }
+
+    private static func verifyPremultipliedTensor(_ tensor: DiskTensorData, effectName: String) throws {
+        guard tensor.channels >= 4 else {
+            throw IntegrationSelfTestError.message("\(effectName) dropped alpha from the full-render tensor")
+        }
+        let mapped = try Data(contentsOf: tensor.fileURL, options: .mappedIfSafe)
+        try mapped.withUnsafeBytes { raw in
+            let values = raw.bindMemory(to: Float.self)
+            for pixel in 0..<(tensor.frames * tensor.height * tensor.width) {
+                let offset = pixel * tensor.channels
+                let alpha = values[offset + 3]
+                guard alpha.isFinite, alpha >= -0.000_1, alpha <= 1.000_1 else {
+                    throw IntegrationSelfTestError.message("\(effectName) produced invalid alpha")
+                }
+                for channel in 0..<3 {
+                    let value = values[offset + channel]
+                    guard value.isFinite, value >= -0.000_1, value <= alpha + 0.000_1 else {
+                        throw IntegrationSelfTestError.message("\(effectName) broke premultiplied alpha at pixel \(pixel)")
+                    }
+                }
+            }
+        }
+    }
+
+    private static func makeAlphaSequence(at directory: URL, phase: Int) async throws -> DecodedProxy {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var frameNames: [String] = []
+        for frame in 0..<8 {
+            let name = String(format: "alpha_%04d.png", frame + 1)
+            let url = directory.appendingPathComponent(name)
+            var pixels: [UInt8] = []
+            pixels.reserveCapacity(8 * 8 * 4)
+            for y in 0..<8 {
+                for x in 0..<8 {
+                    let alpha = UInt8(((x + y + frame + phase) % 4) * 85)
+                    let red = UInt8((Int(alpha) * ((x + frame * 2) % 8)) / 7)
+                    let green = UInt8((Int(alpha) * ((y + phase) % 8)) / 7)
+                    let blue = UInt8((Int(alpha) * ((x + y + frame) % 8)) / 7)
+                    pixels.append(contentsOf: [red, green, blue, alpha])
+                }
+            }
+            try makePNG(at: url, width: 8, height: 8, rgba: pixels)
+            frameNames.append(name)
+        }
+        return try await ImageSequenceDecoder.decodeProxy(
+            from: FrameSequenceSource(directoryURL: directory, frameNames: frameNames, framesPerSecond: 8),
+            quality: .high
+        )
+    }
+
     @MainActor
     private static func verifyProxyQualityRefresh(source: DecodedProxy) async throws {
         let store = SessionStore()
@@ -632,7 +854,12 @@ enum SelfTestRunner {
         height: Int,
         rgba: [UInt8]
     ) throws {
-        let pixels = Array(repeating: rgba, count: width * height).flatMap { $0 }
+        let pixels = rgba.count == width * height * 4
+            ? rgba
+            : Array(repeating: rgba, count: width * height).flatMap { $0 }
+        guard pixels.count == width * height * 4 else {
+            throw IntegrationSelfTestError.message("PNG self-test fixture has an invalid RGBA byte count")
+        }
         guard let provider = CGDataProvider(data: Data(pixels) as CFData),
               let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
               let image = CGImage(

@@ -6,8 +6,10 @@
 - Map the selected Viewer position to the rendered timeline after shape-changing effects, preserving first, middle and last positions without artificial upscaling.
 - Added overwrite confirmation through the macOS save panel, six-digit suggested frame names, cancellable progress and byte-for-byte parity coverage against PNG Sequence export.
 - Added searchable built-in Help covering the disposable session workflow, Preview, A/B, comparison, AA, FPS, queue/export, Amount blend modes and a glossary.
-- Added contextual Help buttons and a visual principle, safe starting point and control reference for every production effect.
+- Added contextual Inspector Help plus a visual principle, safe starting point and control reference for every production effect; general Help stays in the standard macOS menu.
 - Added self-test validation that the Help catalog and centralized EffectDefinition registry remain in sync.
+- Added an end-to-end Current Frame matrix for all 21 effects across movie and alpha-bearing PNG sources, first/middle/last positions, two-input graphs and cold/warm cache paths.
+- Canonicalized cache signature JSON before hashing so unchanged sources and effect graphs always reuse the same full-render cache.
 - Bumped app, core and render-cache compatibility to 1.1.0.
 
 ## 1.0.1 — 2026-07-19

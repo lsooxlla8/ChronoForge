@@ -67,7 +67,7 @@ ChronoForge began with one idea: treat a video as a three-dimensional volume and
 
 Useful shortcuts: **Space** plays or pauses Preview, **Command–Z** / **Shift–Command–Z** undo and redo, **\\** toggles Before/After, **Shift–S** toggles the sidebar, **Shift–R** generates a random stack, **Shift–Delete** clears it, **Shift–Command–I** imports a PNG sequence, **Shift–Command–E** exports the current frame, and **Option–Command–R** adds the current render to the queue.
 
-Open **Help → ChronoForge Help** (Command–?) for a searchable workflow guide, control reference, glossary and a page for every production effect. Contextual `?` buttons in the toolbar and Inspector open the relevant section.
+Open **Help → ChronoForge Help** (Command–?) for a searchable workflow guide, control reference, glossary and a page for every production effect. The contextual `?` in Inspector opens the selected effect directly.
 
 ## Download and requirements
 
