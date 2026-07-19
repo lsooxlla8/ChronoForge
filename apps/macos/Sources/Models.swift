@@ -62,6 +62,7 @@ enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
     case signalWeave = 19
     case blockGraft = 20
     case channelTransplant = 21
+    case affinityMigration = 23
 
     var id: Int32 { rawValue }
 
@@ -70,13 +71,13 @@ enum EffectKind: Int32, CaseIterable, Codable, Identifiable, Sendable {
     var symbol: String { definition.symbol }
     var tintName: String { definition.tint.rawValue }
 
-    static let singleInputKinds = EffectRegistry.definitions
+    static let singleInputKinds = EffectRegistry.addableDefinitions
         .filter { $0.isAddable && $0.inputArity == .one }
         .map(\.kind)
-    static let twoInputKinds = EffectRegistry.definitions
+    static let twoInputKinds = EffectRegistry.addableDefinitions
         .filter { $0.isAddable && $0.inputArity == .two }
         .map(\.kind)
-    static let addableKinds = EffectRegistry.definitions.filter(\.isAddable).map(\.kind)
+    static let addableKinds = EffectRegistry.addableDefinitions.map(\.kind)
 
     var requiresDriver: Bool { definition.inputArity == .two }
 }
@@ -182,6 +183,7 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
         case .signalWeave: ["Lines", "Interlaced Fields", "Bands", "Checker"][min(max(Int(options[0]), 0), 3)]
         case .blockGraft: ["Random", "A Luma", "B Luma", "Difference", "A Edges"][min(max(Int(options[0]), 0), 4)]
         case .channelTransplant: options[3] == 0 ? "RGB Components" : "YCbCr Components"
+        case .affinityMigration: "\(options[0] + 2)-class migration"
         }
     }
 }

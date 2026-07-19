@@ -320,13 +320,19 @@ enum SelfTestRunner {
                 throw IntegrationSelfTestError.message("Image sequence incorrectly allowed Original audio")
             }
             let store = SessionStore()
-            guard EffectKind.addableKinds.count == 20,
+            guard EffectKind.addableKinds.count == 21,
                   EffectKind.spaceTimeTranspose.title == EffectKind.tensor3DRotation.title,
                   EffectKind.spaceTimeTranspose.title == "Space-Time Transform",
-                  EffectKind.singleInputKinds.count == 15,
+                  EffectKind.singleInputKinds.count == 16,
                   EffectKind.twoInputKinds.count == 5,
-                  EffectKind.opticalFlowTimeWarp.symbol == "wind" else {
+                  EffectKind.opticalFlowTimeWarp.symbol == "wind",
+                  EffectKind.affinityMigration.title == "Affinity Migration" else {
                 throw IntegrationSelfTestError.message("Effect families were not exposed as a homogeneous effect stack")
+            }
+            guard EffectNode.make(.affinityMigration).values[0] == 0.06,
+                  EffectNode.make(.affinityMigration).values[3] == 0.2,
+                  EffectNode.make(.affinityMigration).options == [2] else {
+                throw IntegrationSelfTestError.message("Affinity Migration defaults drifted")
             }
             store.addEffect(.lumaTimeShift)
             store.addEffect(.tensor3DRotation)
@@ -361,6 +367,11 @@ enum SelfTestRunner {
             guard store.effects.isEmpty else {
                 throw IntegrationSelfTestError.message("Redo did not reapply a structural creative-state change")
             }
+            store.addEffect(.affinityMigration)
+            guard store.effects.count == 1, store.effects[0].kind == .affinityMigration else {
+                throw IntegrationSelfTestError.message("Affinity Migration could not be added to the production stack")
+            }
+            store.clearEffectStack()
             store.addEffect(.lumaTimeShift)
             let editedID = store.selectedNodeID!
             store.beginContinuousEffectEdit()

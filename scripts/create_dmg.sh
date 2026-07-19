@@ -2,7 +2,7 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-VERSION=${1:-1.0.0}
+VERSION=${1:-1.0.1}
 APP="$ROOT/dist/ChronoForge.app"
 STAGING="$ROOT/dist/dmg-staging"
 DMG="$ROOT/dist/ChronoForge-${VERSION}-arm64.dmg"

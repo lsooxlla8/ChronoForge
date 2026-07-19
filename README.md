@@ -2,7 +2,7 @@
 
 **Break video across space and time.**
 
-ChronoForge 1.0 is a native offline macOS app for glitch art.
+ChronoForge 1.0.1 is a native offline macOS app for glitch art.
 Import movies or PNG image sequences, stack strange time-based effects, watch a fast proxy preview, then export the result at full resolution.
 
 The 1.0 workflow is deliberately session-based: every normal launch starts empty, and a clean quit discards media, effect settings and the render queue. Only finished videos remain the thing you save.
@@ -43,6 +43,7 @@ ChronoForge began with one idea: treat a video as a three-dimensional volume and
 | **Time Feedback** | Recursive past and future echoes with colour and displacement blend modes. |
 | **Axis Datamosh** | Freeze and drag image data along time, horizontal or vertical lines, including bright- or dark-side luma triggering. |
 | **Seamless Loop** | Close a clip with start/end crossfade, luma/difference weave, controllable FFT spectral morph or a guaranteed ping-pong pass. |
+| **Affinity Migration** | Let colour-class neighbourhoods pull cell-sized regions toward nearby source coordinates, with motion-responsive migration and deterministic reseeding. |
 
 ### Two videos
 

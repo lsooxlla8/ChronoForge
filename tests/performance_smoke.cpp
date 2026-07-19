@@ -84,5 +84,8 @@ int main() {
     passed &= measure("Channel Transplant", 4000, [&] {
         return chronoforge::channel_transplant(source, driver, {{true, false, true}, 1, 4, -3, chronoforge::ChannelTransplantColourModel::YCbCr, chronoforge::TensorBroadcast::Stretch});
     });
+    passed &= measure("Affinity Migration", 4000, [&] {
+        return chronoforge::affinity_migration(source, {0.06F, 0.65F, 3, 0.2F, 4, 61});
+    });
     return passed ? 0 : 1;
 }
