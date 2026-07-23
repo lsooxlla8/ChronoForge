@@ -176,9 +176,9 @@ struct ChronoForgeIntegration {
         let differenceOutput = try render(differenceEffect)
         for pixel in 0..<(tensor.frames * 48 * 64) {
             let offset = pixel * 4
-            let alpha = min(max(abs(tensor.values[offset + 3] - first[offset + 3]), 0), 1)
+            let alpha = min(max(first[offset + 3], 0), 1)
             guard abs(differenceOutput[offset + 3] - alpha) < 0.0001 else {
-                throw IntegrationFailure.message("Difference Amount mode did not produce its expected alpha")
+                throw IntegrationFailure.message("Difference Amount mode changed the effect alpha")
             }
             for channel in 0..<3 {
                 let rawDifference = abs(tensor.values[offset + channel] - first[offset + channel])
@@ -187,6 +187,26 @@ struct ChronoForgeIntegration {
                     throw IntegrationFailure.message("Difference Amount mode did not preserve premultiplied RGB")
                 }
             }
+        }
+        guard differenceOutput.enumerated().contains(where: { index, value in
+            index % 4 != 3 && value > 0.0001
+        }) else {
+            throw IntegrationFailure.message("Difference Amount mode collapsed an opaque result to black")
+        }
+
+        var loopDifference = descriptor(
+            kind: 12,
+            values: [2, 0.12, 1, 0],
+            options: [0, 0, 0]
+        )
+        loopDifference.amount = 0.5
+        loopDifference.amount_blend_mode = 4
+        let loopDifferenceOutput = try renderAny(loopDifference)
+        guard loopDifferenceOutput.frames == tensor.frames - 2,
+              loopDifferenceOutput.height == 48,
+              loopDifferenceOutput.width == 64,
+              loopDifferenceOutput.values.allSatisfy(\.isFinite) else {
+            throw IntegrationFailure.message("Shape-changing Seamless Loop rejected Amount Blend")
         }
 
         let displaceEffect = effectValues.withUnsafeBufferPointer { values in
