@@ -280,8 +280,8 @@ enum SelfTestRunner {
             }
             for node in stack where node.kind == .spaceTimeTranspose {
                 spaceTimeTransformSamples += 1
-                guard node.amount == 1, !node.supportsAmount else {
-                    throw IntegrationSelfTestError.message("Random Stack assigned Partial Amount to a shape-changing Space-Time Transform")
+                guard node.supportsAmount, (0.25...1).contains(node.amount) else {
+                    throw IntegrationSelfTestError.message("Random Stack assigned an invalid Amount to Space-Time Transform")
                 }
             }
             if stack.contains(where: { $0.kind == .spaceTimeTranspose }),
@@ -500,7 +500,7 @@ enum SelfTestRunner {
             root: root.appendingPathComponent("current-frame-alpha-matrix", isDirectory: true),
             verifyPremultipliedAlpha: true
         )
-        print("Current-frame export matrix passed: 2,149 modes × movie/alpha × first/middle/last × cold/warm cache")
+        print("Current-frame export matrix passed: 3,640 modes × movie/alpha × first/middle/last × cold/warm cache")
         var splicer = EffectNode.make(.dimensionalSplicer)
         splicer.driverMediaID = proxy.id
         let crossProxy = try await CoreRenderer.render(
@@ -742,9 +742,9 @@ enum SelfTestRunner {
         let expectedKinds = Set(EffectKind.addableKinds + [.tensor3DRotation, .selectivePrefilter])
         guard coveredKinds == expectedKinds,
               Set(modeCases.map(\.name)).count == modeCases.count,
-              modeCases.count == 2_149 else {
+              modeCases.count == 3_640 else {
             throw IntegrationSelfTestError.message(
-                "Current-frame export mode catalog is incomplete: effects=\(coveredKinds.count)/\(expectedKinds.count), cases=\(modeCases.count)/2149"
+                "Current-frame export mode catalog is incomplete: effects=\(coveredKinds.count)/\(expectedKinds.count), cases=\(modeCases.count)/3640"
             )
         }
     }

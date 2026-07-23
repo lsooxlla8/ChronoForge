@@ -76,7 +76,7 @@ actor ProxyCache {
             width: input.width,
             effects: effects,
             drivers: driverSignatures,
-            engineVersion: "1.1.0"
+            engineVersion: "1.1.1"
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]

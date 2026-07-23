@@ -947,10 +947,29 @@ void test_file_backed_effect_chain() {
         const auto mode_output = chronoforge::MappedTensor::open(
             mode_path, mode_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
         for (std::size_t i = 0; i < input.values().size(); ++i) {
-            const auto expected_composite = composite(input.values()[i], fully_shifted.values()[i], mode);
+            const auto expected_composite = i % input.shape().c == 3
+                                                ? fully_shifted.values()[i]
+                                                : composite(input.values()[i], fully_shifted.values()[i], mode);
             require_near(mode_output.data()[i], input.values()[i] + (expected_composite - input.values()[i]) * 0.6F,
                          "Out-of-core Amount blend mode matches its compositing formula");
         }
+    }
+
+    const auto loop_amount_path = root / "loop-amount-difference.raw";
+    const std::vector<chronoforge::EffectSpec> loop_amount_effects{
+        {chronoforge::EffectOperation::SeamlessLoop, {3, 0.15F, 0, 0}, {0, 0, 0}, 0.5F, 42,
+         chronoforge::AmountBlendMode::Difference},
+    };
+    const auto loop_amount_result = chronoforge::render_file_effect_chain(
+        loop_input_path, loop_amount_path, root / "loop-amount-difference-scratch",
+        loop_input.shape(), loop_input.metadata(), loop_amount_effects, 64 * 1024 * 1024, {});
+    require(
+        loop_amount_result.shape == chronoforge::TensorShape{5, 2, 2, 1},
+        "Shape-changing Seamless Loop accepts Amount Blend");
+    const auto loop_amount_output = chronoforge::MappedTensor::open(
+        loop_amount_path, loop_amount_result.shape, chronoforge::MappedTensor::Access::ReadOnly);
+    for (std::size_t index = 0; index < loop_amount_result.shape.element_count(); ++index) {
+        require(std::isfinite(loop_amount_output.data()[index]), "Shape-changing Amount Blend stays finite");
     }
 
     const auto displace_path = root / "amount-displace.raw";
@@ -1019,19 +1038,6 @@ void test_file_backed_effect_chain() {
     require(
         std::equal(affinity_expected.values().begin(), affinity_expected.values().end(), affinity_output.data()),
         "Affinity Migration uses identical RAM and out-of-core state and seed semantics");
-
-    bool partial_shape_change_rejected = false;
-    try {
-        const std::vector<chronoforge::EffectSpec> invalid_amount{
-            {chronoforge::EffectOperation::SeamlessLoop, {3}, {0}, 0.5F, 0},
-        };
-        static_cast<void>(chronoforge::render_file_effect_chain(
-            loop_input_path, root / "invalid-amount.raw", root / "invalid-amount-scratch",
-            loop_input.shape(), loop_input.metadata(), invalid_amount, 64 * 1024 * 1024, {}));
-    } catch (const std::invalid_argument&) {
-        partial_shape_change_rejected = true;
-    }
-    require(partial_shape_change_rejected, "Partial Amount rejects shape-changing effects");
 
     bool cancelled = false;
     try {

@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+## 1.1.1 — 2026-07-23
+
+- Made both the Before/After toolbar button and `\` shortcut use the same latched toggle.
+- Fixed Difference Amount Blend collapsing opaque alpha to black, and preserved normal effect alpha for all colour blend operations.
+- Added Amount and all seven Amount Blend modes to shape-changing effects by fitting their input to the output tensor before compositing.
+- Added exact Amount entry plus direct double-click and right-click slider reset without a one-item context menu.
+- Moved Add Effect, Random and Clear directly below Effect Stack; clarified the empty Inspector state.
+- Restored the cache status as a compact full-width footer beneath its separator after moving the stack controls.
+- Pause Preview before AppKit begins dropdown or context-menu tracking to avoid input stalls during playback on affected Apple Silicon/macOS combinations.
+- Expanded the Current Frame release gate to 3,640 configurations and 21,840 movie/alpha/cache/PNG comparisons.
+
 ## 1.1.0 — 2026-07-19
 
 - Added Export Current Frame as a full-resolution 8-bit RGBA PNG using the exact full-render graph and cache rather than the Viewer proxy.

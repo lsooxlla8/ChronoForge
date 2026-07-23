@@ -117,31 +117,62 @@ void blend_amount(
     VideoTensor& effected,
     float amount,
     chronoforge::AmountBlendMode mode) {
-    if (input.shape() != effected.shape()) {
-        throw std::invalid_argument("Partial Amount requires an effect that preserves tensor shape");
-    }
     auto& output = effected.values();
-    const auto& source = input.values();
+    const auto& input_shape = input.shape();
+    const auto& output_shape = effected.shape();
+    const auto shapes_match = input_shape == output_shape;
+    const auto scaled_coordinate = [](std::size_t coordinate, std::size_t destination_extent, std::size_t source_extent) {
+        if (destination_extent <= 1 || source_extent <= 1) {
+            return 0.0F;
+        }
+        return static_cast<float>(coordinate) * static_cast<float>(source_extent - 1) /
+               static_cast<float>(destination_extent - 1);
+    };
+    const auto sample_input = [&](float t, float y, float x, std::size_t channel) {
+        const auto t0 = static_cast<std::size_t>(std::floor(t));
+        const auto y0 = static_cast<std::size_t>(std::floor(y));
+        const auto x0 = static_cast<std::size_t>(std::floor(x));
+        const auto t1 = std::min(t0 + 1, input_shape.t - 1);
+        const auto y1 = std::min(y0 + 1, input_shape.h - 1);
+        const auto x1 = std::min(x0 + 1, input_shape.w - 1);
+        const auto ft = t - static_cast<float>(t0);
+        const auto fy = y - static_cast<float>(y0);
+        const auto fx = x - static_cast<float>(x0);
+        const auto c00 = input.at(t0, y0, x0, channel) +
+                         (input.at(t0, y0, x1, channel) - input.at(t0, y0, x0, channel)) * fx;
+        const auto c01 = input.at(t0, y1, x0, channel) +
+                         (input.at(t0, y1, x1, channel) - input.at(t0, y1, x0, channel)) * fx;
+        const auto c10 = input.at(t1, y0, x0, channel) +
+                         (input.at(t1, y0, x1, channel) - input.at(t1, y0, x0, channel)) * fx;
+        const auto c11 = input.at(t1, y1, x0, channel) +
+                         (input.at(t1, y1, x1, channel) - input.at(t1, y1, x0, channel)) * fx;
+        return (c00 + (c01 - c00) * fy) +
+               ((c10 + (c11 - c10) * fy) - (c00 + (c01 - c00) * fy)) * ft;
+    };
+    const auto output_index = [&](std::size_t t, std::size_t y, std::size_t x, std::size_t c) {
+        return (((t * output_shape.h + y) * output_shape.w + x) * output_shape.c) + c;
+    };
     if (mode == chronoforge::AmountBlendMode::Displace) {
-        const auto field = output;
-        const auto& shape = input.shape();
-        const auto field_at = [&](std::size_t t, std::size_t y, std::size_t x, std::size_t c) {
-            return field[(((t * shape.h + y) * shape.w + x) * shape.c) + std::min(c, shape.c - 1)];
-        };
-        for (std::size_t t = 0; t < shape.t; ++t) {
-            for (std::size_t y = 0; y < shape.h; ++y) {
-                for (std::size_t x = 0; x < shape.w; ++x) {
+        for (std::size_t t = 0; t < output_shape.t; ++t) {
+            for (std::size_t y = 0; y < output_shape.h; ++y) {
+                for (std::size_t x = 0; x < output_shape.w; ++x) {
+                    const auto field_r = output[output_index(t, y, x, 0)];
+                    const auto field_g = output[output_index(t, y, x, std::min<std::size_t>(1, output_shape.c - 1))];
+                    const auto field_b = output[output_index(t, y, x, std::min<std::size_t>(2, output_shape.c - 1))];
+                    const auto base_t = scaled_coordinate(t, output_shape.t, input_shape.t);
+                    const auto base_y = scaled_coordinate(y, output_shape.h, input_shape.h);
+                    const auto base_x = scaled_coordinate(x, output_shape.w, input_shape.w);
                     const auto st = static_cast<std::size_t>(std::clamp(
-                        std::llround(static_cast<double>(t) + (field_at(t, y, x, 2) - 0.5F) * amount * 0.15F * static_cast<float>(shape.t)),
-                        0LL, static_cast<long long>(shape.t - 1)));
+                        std::llround(static_cast<double>(base_t) + (field_b - 0.5F) * amount * 0.15F * static_cast<float>(input_shape.t)),
+                        0LL, static_cast<long long>(input_shape.t - 1)));
                     const auto sy = static_cast<std::size_t>(std::clamp(
-                        std::llround(static_cast<double>(y) + (field_at(t, y, x, 1) - 0.5F) * amount * 0.15F * static_cast<float>(shape.h)),
-                        0LL, static_cast<long long>(shape.h - 1)));
+                        std::llround(static_cast<double>(base_y) + (field_g - 0.5F) * amount * 0.15F * static_cast<float>(input_shape.h)),
+                        0LL, static_cast<long long>(input_shape.h - 1)));
                     const auto sx = static_cast<std::size_t>(std::clamp(
-                        std::llround(static_cast<double>(x) + (field_at(t, y, x, 0) - 0.5F) * amount * 0.15F * static_cast<float>(shape.w)),
-                        0LL, static_cast<long long>(shape.w - 1)));
-                    for (std::size_t c = 0; c < shape.c; ++c) {
-                        output[(((t * shape.h + y) * shape.w + x) * shape.c) + c] = input.at(st, sy, sx, c);
+                        std::llround(static_cast<double>(base_x) + (field_r - 0.5F) * amount * 0.15F * static_cast<float>(input_shape.w)),
+                        0LL, static_cast<long long>(input_shape.w - 1)));
+                    for (std::size_t c = 0; c < output_shape.c; ++c) {
+                        output[output_index(t, y, x, c)] = input.at(st, sy, sx, c);
                     }
                 }
             }
@@ -165,13 +196,28 @@ void blend_amount(
         }
         return layer;
     };
-    for (std::size_t index = 0; index < output.size(); ++index) {
-        output[index] = source[index] + (composite(source[index], output[index]) - source[index]) * amount;
+    for (std::size_t t = 0; t < output_shape.t; ++t) {
+        const auto source_t = scaled_coordinate(t, output_shape.t, input_shape.t);
+        for (std::size_t y = 0; y < output_shape.h; ++y) {
+            const auto source_y = scaled_coordinate(y, output_shape.h, input_shape.h);
+            for (std::size_t x = 0; x < output_shape.w; ++x) {
+                const auto source_x = scaled_coordinate(x, output_shape.w, input_shape.w);
+                for (std::size_t c = 0; c < output_shape.c; ++c) {
+                    const auto index = output_index(t, y, x, c);
+                    const auto base = shapes_match
+                                          ? input.values()[index]
+                                          : sample_input(source_t, source_y, source_x, c);
+                    const auto target = output_shape.c >= 4 && c == 3
+                                            ? output[index]
+                                            : composite(base, output[index]);
+                    output[index] = base + (target - base) * amount;
+                }
+            }
+        }
     }
-    const auto& shape = input.shape();
-    if (shape.c >= 4 && input.metadata().alpha == chronoforge::AlphaRepresentation::Premultiplied) {
-        for (std::size_t pixel = 0; pixel < shape.t * shape.h * shape.w; ++pixel) {
-            const auto offset = pixel * shape.c;
+    if (output_shape.c >= 4 && input.metadata().alpha == chronoforge::AlphaRepresentation::Premultiplied) {
+        for (std::size_t pixel = 0; pixel < output_shape.t * output_shape.h * output_shape.w; ++pixel) {
+            const auto offset = pixel * output_shape.c;
             const auto alpha = std::clamp(output[offset + 3], 0.0F, 1.0F);
             output[offset + 3] = alpha;
             for (std::size_t c = 0; c < 3; ++c) {
@@ -461,7 +507,7 @@ CFEffectDescriptorV2 cf_effect_descriptor_v2_make(
     return descriptor;
 }
 
-const char* cf_core_version(void) { return "1.1.0"; }
+const char* cf_core_version(void) { return "1.1.1"; }
 
 int32_t cf_render_effect_chain(
     const float* input,
