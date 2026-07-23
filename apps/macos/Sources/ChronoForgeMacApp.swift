@@ -166,6 +166,12 @@ private struct WorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: .showChronoForgeHelp)) { _ in
             openWindow(id: "help")
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)) { _ in
+            // SwiftUI menu tracking and high-frequency @Published playback updates
+            // can deadlock older Apple Silicon/macOS combinations. Freeze the
+            // viewer at its current frame before AppKit enters menu tracking.
+            project.stopPlayback()
+        }
         .onChange(of: project.selectedNodeID) { _, _ in
             isComparingSelectedEffect = false
             isShowingSelectedEffectInput = false
@@ -308,7 +314,8 @@ private struct WorkspaceView: View {
                     }
                 }
             }
-            Section("Effect stack") {
+            Section {
+                effectStackControls
                 ForEach(project.effects) { node in
                     VStack(alignment: .leading, spacing: 2) {
                         Label(node.kind.title, systemImage: node.kind.symbol)
@@ -332,6 +339,8 @@ private struct WorkspaceView: View {
                         }
                 }
                 .onMove(perform: project.moveEffect)
+            } header: {
+                Text("Effect stack")
             }
             if !project.renderQueue.isEmpty {
                 Section("Render queue") {
@@ -353,43 +362,48 @@ private struct WorkspaceView: View {
                 }
             }
         }
-        .safeAreaInset(edge: .bottom) {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 6) {
-                    Menu("Add effect", systemImage: "plus") {
-                        ForEach(EffectCategory.allCases) { category in
-                            let definitions = EffectRegistry.definitions(in: category)
-                            if !definitions.isEmpty {
-                                Section(category.title) {
-                                    ForEach(definitions, id: \.kind) { definition in
-                                        Button(definition.title, systemImage: definition.symbol) {
-                                            project.addEffect(definition.kind)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    Button("Random", systemImage: "dice") { project.replaceWithRandomStack() }
-                        .labelStyle(.iconOnly)
-                        .disabled(project.source == nil)
-                        .help("Random: replace the stack with 1–3 compatible effects. Undo restores the previous stack.")
-                    Button("Clear", systemImage: "trash", role: .destructive) {
-                        project.clearEffectStack()
-                    }
-                    .labelStyle(.iconOnly)
-                    .disabled(project.effects.isEmpty)
-                    .help("Clear the effect stack")
-                }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(alignment: .leading, spacing: 5) {
                 Divider()
                 Text("Cache: \(project.cacheSizeDescription) · auto limit 8 GB")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            .padding(10)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(.bar)
+        }
+    }
+
+    private var effectStackControls: some View {
+        HStack(spacing: 6) {
+            Menu("Add effect", systemImage: "plus") {
+                ForEach(EffectCategory.allCases) { category in
+                    let definitions = EffectRegistry.definitions(in: category)
+                    if !definitions.isEmpty {
+                        Section(category.title) {
+                            ForEach(definitions, id: \.kind) { definition in
+                                Button(definition.title, systemImage: definition.symbol) {
+                                    project.addEffect(definition.kind)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Random", systemImage: "dice") { project.replaceWithRandomStack() }
+                .labelStyle(.iconOnly)
+                .disabled(project.source == nil)
+                .help("Random: replace the stack with 1–3 compatible effects. Undo restores the previous stack.")
+            Button("Clear", systemImage: "trash", role: .destructive) {
+                project.clearEffectStack()
+            }
+            .labelStyle(.iconOnly)
+            .disabled(project.effects.isEmpty)
+            .help("Clear the effect stack")
         }
     }
 
@@ -419,14 +433,12 @@ private struct WorkspaceView: View {
     }
 
     private var beforeAfterControl: some View {
-        Button("Before / After", systemImage: "rectangle.on.rectangle") {}
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in isComparingSource = true }
-                    .onEnded { _ in isComparingSource = false }
-            )
+        Toggle(isOn: $isComparingSource) {
+            Label("Before / After", systemImage: "rectangle.on.rectangle")
+        }
+            .toggleStyle(.button)
             .disabled(project.source == nil || project.output == nil)
-            .help("Hold the button to show Before; release for After. Press \\ once to toggle and again to return.")
+            .help("Toggle between the source Before view and the processed After view. The \\ key uses the same toggle.")
             .fixedSize(horizontal: true, vertical: false)
     }
 
@@ -618,7 +630,7 @@ private struct WorkspaceView: View {
                         project.reseedEffect(nodeID)
                     }
                 } else {
-                    ContentUnavailableView("Select an effect", systemImage: "slider.horizontal.3")
+                    ContentUnavailableView("No effect is selected", systemImage: "slider.horizontal.3")
                 }
                 Spacer()
             }
@@ -675,16 +687,17 @@ private struct WorkspaceView: View {
             }
             .font(.caption)
             if let tensor = project.displayedTensor {
-                Slider(
+                ResettableSlider(
                     value: Binding(
                         get: { Double(project.currentFrame) },
                         set: { project.currentFrame = Int($0.rounded()) }
                     ),
                     in: 0...Double(max(1, tensor.frames - 1)),
-                    step: 1
+                    step: 1,
+                    defaultValue: 0
                 )
             } else {
-                Slider(value: .constant(0), in: 0...1).disabled(true)
+                ResettableSlider(value: .constant(0), in: 0...1, defaultValue: 0).disabled(true)
             }
         }
         .padding(.horizontal, 16)
@@ -1004,33 +1017,34 @@ private struct EffectInspector: View {
             HStack {
                 Text("Amount")
                 Spacer()
-                Text(String(format: "%.0f%%", node.amount * 100))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                ExactValueField(value: $node.amount, range: 0...1)
+                    .help("Enter an exact Amount from 0 to 1.")
             }
-            Slider(value: $node.amount, in: 0...1, onEditingChanged: onContinuousEditChanged)
-                .disabled(!node.supportsAmount)
-                .contextMenu {
-                    Button("Reset to 100%") { node.amount = 1 }
+            ResettableSlider(
+                value: Binding(
+                    get: { Double(node.amount) },
+                    set: { node.amount = Float($0) }
+                ),
+                in: 0...1,
+                defaultValue: 1,
+                onEditingChanged: onContinuousEditChanged
+            )
+            Text(String(format: "%.0f%%", node.amount * 100))
+                .font(.caption2)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+            Picker("Amount Blend", selection: $node.amountBlendMode) {
+                ForEach(AmountBlendMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
                 }
-            if !node.supportsAmount {
-                Text("Partial Amount requires an output with the same tensor shape as the input.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                Picker("Amount Blend", selection: $node.amountBlendMode) {
-                    ForEach(AmountBlendMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                Text(node.amountBlendMode == .displace
-                     ? "The effect output becomes a 3D displacement field for the original image."
-                     : node.amountBlendMode == .xorGlitch
-                     ? "XOR Glitch combines quantized source and effect values into hard digital colour fractures."
-                     : "Amount mixes the effect using the selected compositing operation.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
+            Text(node.amountBlendMode == .displace
+                 ? "The effect output becomes a 3D displacement field for the original image."
+                 : node.amountBlendMode == .xorGlitch
+                 ? "XOR Glitch combines quantized source and effect values into hard digital colour fractures."
+                 : "Amount mixes the effect using the selected compositing operation. For shape-changing effects, the input is fitted to the effect output first.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -1053,13 +1067,18 @@ private struct EffectInspector: View {
                 ExactValueField(value: binding, range: range)
                     .help(String(format: format, binding.wrappedValue * displayMultiplier))
             }
-            Slider(value: binding, in: range, onEditingChanged: { editing in
-                onContinuousEditChanged(editing)
-                if editing { NSApp.keyWindow?.makeFirstResponder(nil) }
-            })
-                .contextMenu {
-                    Button("Reset to Default") { binding.wrappedValue = defaultValue }
+            ResettableSlider(
+                value: Binding(
+                    get: { Double(binding.wrappedValue) },
+                    set: { binding.wrappedValue = Float($0) }
+                ),
+                in: Double(range.lowerBound)...Double(range.upperBound),
+                defaultValue: Double(defaultValue),
+                onEditingChanged: { editing in
+                    onContinuousEditChanged(editing)
+                    if editing { NSApp.keyWindow?.makeFirstResponder(nil) }
                 }
+            )
             Text(String(format: format, binding.wrappedValue * displayMultiplier))
                 .font(.caption2)
                 .monospacedDigit()
@@ -1190,5 +1209,112 @@ private struct ExactValueField: View {
         while result.contains(".") && result.last == "0" { result.removeLast() }
         if result.last == "." { result.removeLast() }
         return result
+    }
+}
+
+private struct ResettableSlider: NSViewRepresentable {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    var step: Double?
+    let defaultValue: Double
+    var onEditingChanged: (Bool) -> Void
+
+    init(
+        value: Binding<Double>,
+        in range: ClosedRange<Double>,
+        step: Double? = nil,
+        defaultValue: Double,
+        onEditingChanged: @escaping (Bool) -> Void = { _ in }
+    ) {
+        _value = value
+        self.range = range
+        self.step = step
+        self.defaultValue = defaultValue
+        self.onEditingChanged = onEditingChanged
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(value: $value, onEditingChanged: onEditingChanged)
+    }
+
+    func makeNSView(context: Context) -> DirectResetNSSlider {
+        let slider = DirectResetNSSlider(
+            value: value,
+            minValue: range.lowerBound,
+            maxValue: range.upperBound,
+            target: context.coordinator,
+            action: #selector(Coordinator.valueChanged(_:))
+        )
+        slider.isContinuous = true
+        slider.resetValue = defaultValue
+        slider.editingChanged = context.coordinator.editingChanged
+        let doubleClick = NSClickGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.resetSlider(_:))
+        )
+        doubleClick.numberOfClicksRequired = 2
+        doubleClick.buttonMask = 1
+        slider.addGestureRecognizer(doubleClick)
+        let rightClick = NSClickGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.resetSlider(_:))
+        )
+        rightClick.numberOfClicksRequired = 1
+        rightClick.buttonMask = 2
+        slider.addGestureRecognizer(rightClick)
+        if let step {
+            slider.numberOfTickMarks = 0
+            slider.allowsTickMarkValuesOnly = false
+            slider.altIncrementValue = step
+        }
+        return slider
+    }
+
+    func updateNSView(_ slider: DirectResetNSSlider, context: Context) {
+        context.coordinator.value = $value
+        context.coordinator.onEditingChanged = onEditingChanged
+        slider.minValue = range.lowerBound
+        slider.maxValue = range.upperBound
+        slider.resetValue = defaultValue
+        slider.editingChanged = context.coordinator.editingChanged
+        slider.doubleValue = value
+    }
+
+    final class Coordinator: NSObject {
+        var value: Binding<Double>
+        var onEditingChanged: (Bool) -> Void
+
+        init(value: Binding<Double>, onEditingChanged: @escaping (Bool) -> Void) {
+            self.value = value
+            self.onEditingChanged = onEditingChanged
+        }
+
+        var editingChanged: (Bool) -> Void {
+            { [weak self] editing in self?.onEditingChanged(editing) }
+        }
+
+        @objc func valueChanged(_ sender: NSSlider) {
+            value.wrappedValue = sender.doubleValue
+        }
+
+        @objc func resetSlider(_ recognizer: NSClickGestureRecognizer) {
+            guard recognizer.state == .ended,
+                  let slider = recognizer.view as? DirectResetNSSlider else { return }
+            let resolvedValue = min(max(slider.resetValue, slider.minValue), slider.maxValue)
+            slider.doubleValue = resolvedValue
+            value.wrappedValue = resolvedValue
+            NSApp.keyWindow?.makeFirstResponder(nil)
+        }
+    }
+}
+
+private final class DirectResetNSSlider: NSSlider {
+    var resetValue = 0.0
+    var editingChanged: ((Bool) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        editingChanged?(true)
+        super.mouseDown(with: event)
+        editingChanged?(false)
     }
 }

@@ -163,7 +163,7 @@ struct ChronoForgeHelpView: View {
 
     private var controls: some View {
         helpPage("Controls & Export", subtitle: "What the shared toolbar and Inspector controls mean") {
-            helpSection("Amount", "0% is the original input and 100% is the effect result when the effect preserves tensor shape.")
+            helpSection("Amount", "0% is the original input and 100% is the effect result. For effects that change duration or dimensions, the input is fitted to the output before Amount and Amount Blend are applied.")
             helpSection("Amount Blend", "Normal mixes; Add and Screen brighten; Multiply darkens; Difference compares; Displace treats the effect result as a 3D coordinate field; XOR Glitch combines quantized values.")
             helpSection("Image AA / Time AA", "Optional spatial and temporal prefilters reduce resampling jaggies or flicker, but can soften hard glitches.")
             helpSection("FPS", "Result uses the rendered cadence. A preset or Custom value reinterprets completed frames without hidden frame synthesis. Original Audio is disabled when cadence changes.")

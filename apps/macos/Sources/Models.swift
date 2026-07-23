@@ -132,7 +132,9 @@ struct EffectNode: Identifiable, Codable, Equatable, Sendable {
         )
     }
 
-    var supportsAmount: Bool { kind.definition.shapeBehavior.supportsAmount(for: self) }
+    // The compositor fits the node input to a shape-changing output before
+    // applying Amount, so every effect can use Amount and Amount Blend.
+    var supportsAmount: Bool { true }
 
     private enum CodingKeys: String, CodingKey {
         case id, kind, enabled, inputNodeID, driverMediaID, amount, amountBlendMode, randomSeed, values, options

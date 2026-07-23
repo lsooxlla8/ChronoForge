@@ -300,31 +300,38 @@ void blend_amount(
     float amount,
     AmountBlendMode mode,
     bool preserve_premultiplied_alpha) {
-    if (input.shape() != output.shape()) {
-        throw std::invalid_argument("Partial Amount requires an effect that preserves tensor shape");
-    }
-    const auto& shape = input.shape();
-    const auto frame_values = shape.h * shape.w * shape.c;
-    const auto* source = input.data();
+    const auto& input_shape = input.shape();
+    const auto& output_shape = output.shape();
+    const auto shapes_match = input_shape == output_shape;
+    const auto scaled_coordinate = [](std::size_t coordinate, std::size_t destination_extent, std::size_t source_extent) {
+        if (destination_extent <= 1 || source_extent <= 1) {
+            return 0.0F;
+        }
+        return static_cast<float>(coordinate) * static_cast<float>(source_extent - 1) /
+               static_cast<float>(destination_extent - 1);
+    };
     auto* destination = output.mutable_data();
     if (mode == AmountBlendMode::Displace) {
-        parallel_for(shape.t, [](double) {}, [&](std::size_t t) {
-            for (std::size_t y = 0; y < shape.h; ++y) {
-                for (std::size_t x = 0; x < shape.w; ++x) {
+        parallel_for(output_shape.t, [](double) {}, [&](std::size_t t) {
+            for (std::size_t y = 0; y < output_shape.h; ++y) {
+                for (std::size_t x = 0; x < output_shape.w; ++x) {
                     const auto field_r = read(output, t, y, x, 0);
-                    const auto field_g = read(output, t, y, x, std::min<std::size_t>(1, shape.c - 1));
-                    const auto field_b = read(output, t, y, x, std::min<std::size_t>(2, shape.c - 1));
+                    const auto field_g = read(output, t, y, x, std::min<std::size_t>(1, output_shape.c - 1));
+                    const auto field_b = read(output, t, y, x, std::min<std::size_t>(2, output_shape.c - 1));
+                    const auto base_t = scaled_coordinate(t, output_shape.t, input_shape.t);
+                    const auto base_y = scaled_coordinate(y, output_shape.h, input_shape.h);
+                    const auto base_x = scaled_coordinate(x, output_shape.w, input_shape.w);
                     const auto st = static_cast<std::size_t>(std::clamp(
-                        std::llround(static_cast<double>(t) + (field_b - 0.5F) * amount * 0.15F * static_cast<float>(shape.t)),
-                        0LL, static_cast<long long>(shape.t - 1)));
+                        std::llround(static_cast<double>(base_t) + (field_b - 0.5F) * amount * 0.15F * static_cast<float>(input_shape.t)),
+                        0LL, static_cast<long long>(input_shape.t - 1)));
                     const auto sy = static_cast<std::size_t>(std::clamp(
-                        std::llround(static_cast<double>(y) + (field_g - 0.5F) * amount * 0.15F * static_cast<float>(shape.h)),
-                        0LL, static_cast<long long>(shape.h - 1)));
+                        std::llround(static_cast<double>(base_y) + (field_g - 0.5F) * amount * 0.15F * static_cast<float>(input_shape.h)),
+                        0LL, static_cast<long long>(input_shape.h - 1)));
                     const auto sx = static_cast<std::size_t>(std::clamp(
-                        std::llround(static_cast<double>(x) + (field_r - 0.5F) * amount * 0.15F * static_cast<float>(shape.w)),
-                        0LL, static_cast<long long>(shape.w - 1)));
-                    for (std::size_t c = 0; c < shape.c; ++c) {
-                        destination[linear(t, y, x, c, shape)] = read(input, st, sy, sx, c);
+                        std::llround(static_cast<double>(base_x) + (field_r - 0.5F) * amount * 0.15F * static_cast<float>(input_shape.w)),
+                        0LL, static_cast<long long>(input_shape.w - 1)));
+                    for (std::size_t c = 0; c < output_shape.c; ++c) {
+                        destination[linear(t, y, x, c, output_shape)] = read(input, st, sy, sx, c);
                     }
                 }
             }
@@ -348,16 +355,30 @@ void blend_amount(
         }
         return layer;
     };
-    parallel_for(shape.t, [](double) {}, [&](std::size_t t) {
-        const auto start = t * frame_values;
-        const auto end = start + frame_values;
-        for (auto index = start; index < end; ++index) {
-            destination[index] = source[index] + (composite(source[index], destination[index]) - source[index]) * amount;
+    parallel_for(output_shape.t, [](double) {}, [&](std::size_t t) {
+        const auto source_t = scaled_coordinate(t, output_shape.t, input_shape.t);
+        const auto start = t * output_shape.h * output_shape.w * output_shape.c;
+        for (std::size_t y = 0; y < output_shape.h; ++y) {
+            const auto source_y = scaled_coordinate(y, output_shape.h, input_shape.h);
+            for (std::size_t x = 0; x < output_shape.w; ++x) {
+                const auto source_x = scaled_coordinate(x, output_shape.w, input_shape.w);
+                for (std::size_t c = 0; c < output_shape.c; ++c) {
+                    const auto index = linear(t, y, x, c, output_shape);
+                    const auto base = shapes_match
+                                          ? input.data()[index]
+                                          : sample_mapped(
+                                                input, source_t, source_y, source_x, c, EdgeBehavior::Clamp);
+                    const auto target = output_shape.c >= 4 && c == 3
+                                            ? destination[index]
+                                            : composite(base, destination[index]);
+                    destination[index] = base + (target - base) * amount;
+                }
+            }
         }
-        if (shape.c >= 4 && preserve_premultiplied_alpha) {
-            const auto frame_pixels = shape.h * shape.w;
+        if (output_shape.c >= 4 && preserve_premultiplied_alpha) {
+            const auto frame_pixels = output_shape.h * output_shape.w;
             for (std::size_t pixel = 0; pixel < frame_pixels; ++pixel) {
-                const auto offset = start + pixel * shape.c;
+                const auto offset = start + pixel * output_shape.c;
                 const auto alpha = std::clamp(destination[offset + 3], 0.0F, 1.0F);
                 destination[offset + 3] = alpha;
                 for (std::size_t c = 0; c < 3; ++c) {
@@ -2130,9 +2151,6 @@ FileRenderResult render_file_effect_chain(
             require_option(static_cast<std::int32_t>(effect.amount_blend_mode), 6, "Amount blend mode");
             const auto needs_amount_blend = effect.amount < 1.0F || effect.amount_blend_mode != AmountBlendMode::Normal;
             const auto next_shape = output_shape(current_shape, effect);
-            if (needs_amount_blend && next_shape != current_shape) {
-                throw std::invalid_argument("Partial Amount requires an effect that preserves tensor shape");
-            }
             if (effect.amount == 0.0F) {
                 report(progress, static_cast<double>(index + 1) / static_cast<double>(effects.size() + 1), stage_name(effect.kind));
                 continue;
@@ -2252,9 +2270,6 @@ FileRenderResult render_file_cross_tensor_effect(
         throw std::invalid_argument("The selected effect does not accept a driver tensor");
     }
 
-    if (needs_amount_blend && result_shape != source_shape) {
-        throw std::invalid_argument("Partial Amount requires an effect that preserves tensor shape");
-    }
     if (effect.amount == 0.0F) {
         std::filesystem::create_directories(output_path.parent_path());
         std::filesystem::copy_file(source_path, output_path, std::filesystem::copy_options::overwrite_existing);
